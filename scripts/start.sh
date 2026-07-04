@@ -51,6 +51,7 @@ if [ -z "$(read_env_value NGROK_AUTHTOKEN || true)" ]; then
   exit 1
 fi
 
+touch .env
 mkdir -p auth workspace
 if [ ! -f auth/users.json ]; then
   printf '{\n  "users": []\n}\n' > auth/users.json

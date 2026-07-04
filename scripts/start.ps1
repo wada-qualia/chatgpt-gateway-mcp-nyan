@@ -40,6 +40,7 @@ if (-not (Read-EnvValue "NGROK_AUTHTOKEN")) {
     exit 1
 }
 
+if (-not (Test-Path ".env")) { New-Item -ItemType File -Path ".env" | Out-Null }
 New-Item -ItemType Directory -Force -Path "auth" | Out-Null
 New-Item -ItemType Directory -Force -Path "workspace" | Out-Null
 if (-not (Test-Path "auth/users.json")) {

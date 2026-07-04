@@ -1,0 +1,166 @@
+openapi: 3.1.0
+info:
+  title: ChatGPT MCP SSH Gateway API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8000
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        '200':
+          description: Health status
+  /ready:
+    get:
+      operationId: ready
+      responses:
+        '200':
+          description: Readiness status
+  /auth/login:
+    get:
+      operationId: authLogin
+      responses:
+        '307':
+          description: Redirect to Keycloak or dev callback
+  /auth/callback:
+    get:
+      operationId: authCallback
+      responses:
+        '307':
+          description: Session established
+  /auth/me:
+    get:
+      operationId: authMe
+      responses:
+        '200':
+          description: Current user
+  /auth/logout:
+    post:
+      operationId: authLogout
+      responses:
+        '200':
+          description: Session cleared
+  /.well-known/oauth-protected-resource:
+    get:
+      operationId: oauthProtectedResource
+      responses:
+        '200':
+          description: OAuth protected-resource metadata
+  /.well-known/oauth-protected-resource/mcp:
+    get:
+      operationId: oauthProtectedResourceMcp
+      responses:
+        '200':
+          description: MCP protected-resource metadata
+  /.well-known/oauth-authorization-server:
+    get:
+      operationId: oauthAuthorizationServer
+      responses:
+        '200':
+          description: OAuth authorization-server metadata
+  /oauth/register:
+    post:
+      operationId: oauthRegister
+      responses:
+        '201':
+          description: Dynamic client registration
+  /oauth/authorize:
+    get:
+      operationId: oauthAuthorize
+      responses:
+        '307':
+          description: Redirect with authorization code
+  /oauth/token:
+    post:
+      operationId: oauthToken
+      responses:
+        '200':
+          description: Access token response
+  /oauth/revoke:
+    post:
+      operationId: oauthRevoke
+      responses:
+        '200':
+          description: Token revoked
+  /mcp:
+    post:
+      operationId: mcp
+      responses:
+        '200':
+          description: JSON-RPC MCP facade response
+  /api/devices:
+    get:
+      operationId: listDevices
+      responses:
+        '200':
+          description: Devices
+    post:
+      operationId: createDevice
+      responses:
+        '201':
+          description: Device registered
+  /api/docker/images:
+    get:
+      operationId: listDockerImages
+      responses:
+        '200':
+          description: Allowlisted images
+  /api/docker/workspaces:
+    get:
+      operationId: listWorkspaces
+      responses:
+        '200':
+          description: Docker workspaces
+    post:
+      operationId: createWorkspace
+      responses:
+        '201':
+          description: Workspace created
+  /api/docker/workspaces/clone:
+    post:
+      operationId: cloneWorkspace
+      responses:
+        '201':
+          description: Workspace cloned
+  /api/thin-clients:
+    get:
+      operationId: listThinClients
+      responses:
+        '200':
+          description: Thin clients
+  /api/thin-clients/device-code:
+    post:
+      operationId: thinClientDeviceCode
+      responses:
+        '201':
+          description: Device code issued
+  /api/thin-clients/token:
+    post:
+      operationId: thinClientToken
+      responses:
+        '200':
+          description: Thin-client token response
+  /api/thin-clients/register:
+    post:
+      operationId: registerThinClient
+      responses:
+        '201':
+          description: Thin client enrolled
+  /api/access/grants:
+    get:
+      operationId: listAccessGrants
+      responses:
+        '200':
+          description: Access grants
+    post:
+      operationId: createAccessGrant
+      responses:
+        '201':
+          description: Access grant created
+  /api/audit/events:
+    get:
+      operationId: listAuditEvents
+      responses:
+        '200':
+          description: Audit events

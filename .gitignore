@@ -1,6 +1,14 @@
 .env
+.venv/
+.artifacts/
+.pytest_cache/
 __pycache__/
 *.pyc
+data/
+frontend/dist/
+frontend/node_modules/
+frontend/.vite/
+frontend/*.tsbuildinfo
 auth/jwt_secret.txt
 auth/users.json
 !auth/.gitkeep

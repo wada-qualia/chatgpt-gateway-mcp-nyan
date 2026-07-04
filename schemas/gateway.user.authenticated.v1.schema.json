@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.user.authenticated.v1",
+  "title": "UserAuthenticated",
+  "type": "object",
+  "required": ["event_id", "occurred_at", "subject", "username", "provider"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "subject": {"type": "string"},
+    "username": {"type": "string"},
+    "email": {"type": ["string", "null"]},
+    "provider": {"type": "string", "enum": ["keycloak", "dev"]}
+  },
+  "additionalProperties": false
+}

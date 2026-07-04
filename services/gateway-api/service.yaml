@@ -1,0 +1,35 @@
+apiVersion: galaxy.perpetus.io/v1
+kind: Service
+metadata:
+  name: gateway-api
+  displayName: Gateway API
+spec:
+  runtime: python
+  framework: fastapi
+  entrypoint: gateway_api.main:app
+  port: 8000
+  health:
+    path: /health
+  readiness:
+    path: /ready
+  identity:
+    provider: keycloak
+    realm: chatgpt-mcp
+    clientId: chatgpt-mcp-gateway
+  openapi: ../../openapi/gateway.openapi.yaml
+  asyncapi: ../../asyncapi/gateway-events.asyncapi.yaml
+  policies:
+    - ../../configs/policies/policy-bundle.yaml
+  secrets:
+    - name: GATEWAY_SECRET_KEY
+      description: Fernet master key used for encrypted credential blobs.
+    - name: KEYCLOAK_CLIENT_SECRET
+      description: OIDC confidential client secret.
+  emits:
+    - gateway.user.authenticated.v1
+    - gateway.device.registered.v1
+    - gateway.workspace.created.v1
+    - gateway.workspace.cloned.v1
+    - gateway.thin_client.enrolled.v1
+    - gateway.access_grant.changed.v1
+    - gateway.audit.recorded.v1

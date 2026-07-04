@@ -1,0 +1,21 @@
+apiVersion: galaxy.perpetus.io/v1
+kind: PolicyBundle
+metadata:
+  name: gateway-access
+spec:
+  engine: opa
+  entrypoint: data.gateway.allow
+  inputs:
+    subject:
+      source: keycloak
+      claims:
+        - sub
+        - preferred_username
+        - email
+        - realm_access.roles
+    resource:
+      source: route
+  modules:
+    - configs/policies/abac.rego
+  defaults:
+    denyByDefault: true

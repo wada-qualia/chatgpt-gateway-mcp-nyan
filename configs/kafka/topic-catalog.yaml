@@ -1,0 +1,54 @@
+apiVersion: galaxy.asc/v1alpha1
+kind: KafkaTopicCatalog
+metadata:
+  id: gateway-events
+  owner: k-lab
+spec:
+  defaults:
+    partitions: 12
+    replicationFactor: 3
+    minInSyncReplicas: 2
+    cleanupPolicy: delete
+  topics:
+    - name: gateway.user.authenticated.v1
+      owner: k-lab
+      partitions: 12
+      retention: 30d
+      replicationClass: regional
+      dataClassification: internal
+    - name: gateway.device.registered.v1
+      owner: k-lab
+      partitions: 12
+      retention: 180d
+      replicationClass: regional
+      dataClassification: sensitive
+    - name: gateway.workspace.created.v1
+      owner: k-lab
+      partitions: 12
+      retention: 180d
+      replicationClass: regional
+      dataClassification: internal
+    - name: gateway.workspace.cloned.v1
+      owner: k-lab
+      partitions: 12
+      retention: 180d
+      replicationClass: regional
+      dataClassification: internal
+    - name: gateway.thin_client.enrolled.v1
+      owner: k-lab
+      partitions: 12
+      retention: 180d
+      replicationClass: regional
+      dataClassification: sensitive
+    - name: gateway.access_grant.changed.v1
+      owner: k-lab
+      partitions: 12
+      retention: 365d
+      replicationClass: regional
+      dataClassification: sensitive
+    - name: gateway.audit.recorded.v1
+      owner: k-lab
+      partitions: 12
+      retention: 365d
+      replicationClass: regional
+      dataClassification: audit

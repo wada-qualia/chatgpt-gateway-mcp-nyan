@@ -1,45 +1,78 @@
 services:
-  mcp-app:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: gateway
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  gateway-api:
     build: .
     env_file:
       - .env
     environment:
-      MCP_HOST: 0.0.0.0
-      MCP_PORT: "8000"
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://gateway:gateway@postgres:5432/gateway}
       WORKSPACE_ROOT: /workspace
-      AUTH_USERS_PATH: /auth/users.json
-      AUTH_DEFAULT_SCOPES: "workspace:read workspace:write workspace:exec"
-      AUTH_SUPPORTED_SCOPES: "workspace:read workspace:write workspace:exec"
-      AUTH_ACCESS_TOKEN_TTL_SECONDS: "28800"
-      MAX_COMMAND_TIMEOUT_SECONDS: "120"
-      MAX_COMMAND_CHARS: "10000"
-      MAX_FILE_READ_BYTES: "200000"
-      MAX_FILE_WRITE_BYTES: "1000000"
-      MAX_OUTPUT_CHARS: "30000"
-      LOG_LEVEL: INFO
+      GATEWAY_DEV_AUTH: ${GATEWAY_DEV_AUTH:-true}
+      GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:-change-me-local-jwt-secret}
+      GATEWAY_SECRET_KEY: ${GATEWAY_SECRET_KEY:-}
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8080/realms/chatgpt-mcp}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-chatgpt-mcp-gateway}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      GATEWAY_DOCKER_ENABLED: ${GATEWAY_DOCKER_ENABLED:-false}
+      GATEWAY_DOCKER_ALLOWED_IMAGES: ${GATEWAY_DOCKER_ALLOWED_IMAGES:-ubuntu:24.04,ubuntu:22.04,ubuntu:20.04}
     volumes:
       - ./workspace:/workspace
-      - ./auth:/auth
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8000:8000"
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    pids_limit: 256
-    mem_limit: 2g
-    cpus: "2.0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  gateway-web:
+    image: node:22-bookworm
+    working_dir: /app/frontend
+    command: sh -lc "npm install && npm run dev -- --host 0.0.0.0"
+    volumes:
+      - .:/app
+      - frontend-node-modules:/app/frontend/node_modules
+    environment:
+      VITE_GATEWAY_API: http://gateway-api:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - gateway-api
     restart: unless-stopped
 
   ngrok:
     image: ngrok/ngrok:latest
-    command: http --log=stdout --log-format=logfmt --web-addr=0.0.0.0:4040 mcp-app:8000
+    profiles:
+      - public
+    command: http --log=stdout --log-format=logfmt --web-addr=0.0.0.0:4040 gateway-api:8000
     env_file:
       - .env
     environment:
-      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Set NGROK_AUTHTOKEN in environment or .env before starting}
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
     depends_on:
-      - mcp-app
+      - gateway-api
     ports:
       - "4040:4040"
     restart: unless-stopped
+
+volumes:
+  postgres-data:
+  frontend-node-modules:

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.workspace.cloned.v1",
+  "title": "WorkspaceCloned",
+  "type": "object",
+  "required": ["event_id", "occurred_at", "workspace_id", "source_workspace_id", "owner_subject", "image"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "workspace_id": {"type": "string"},
+    "source_workspace_id": {"type": "string"},
+    "owner_subject": {"type": "string"},
+    "image": {"type": "string"},
+    "container_id": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+auth/jwt_secret.txt
+auth/users.json
+!auth/.gitkeep
+!auth/users.example.json
+workspace/*
+!workspace/.gitkeep

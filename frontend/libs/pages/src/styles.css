@@ -1,0 +1,113 @@
+.workspace {
+  display: grid;
+  grid-template-rows: 80px 86px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: minmax(620px, 1fr) 420px;
+  min-height: 0;
+}
+
+.main-pane {
+  min-width: 0;
+  overflow: auto;
+  padding: 26px 28px 32px;
+}
+
+.section-title {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.subview {
+  display: grid;
+  gap: 18px;
+}
+
+.cards-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.remote-page {
+  background: #ffffff;
+  min-height: 100vh;
+  padding: 26px 28px 32px;
+}
+
+@media (max-width: 1180px) {
+  .app-shell {
+    grid-template-columns: 86px minmax(0, 1fr);
+  }
+
+  .brand-row strong,
+  .nav-item span,
+  .collapse-button span {
+    display: none;
+  }
+
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-panel {
+    border-left: 0;
+    border-top: 1px solid #dfe4ea;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .workspace {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .topbar,
+  .toolbar,
+  .list-controls,
+  .pager {
+    align-items: stretch;
+    flex-wrap: wrap;
+    height: auto;
+    padding: 14px;
+  }
+
+  .realm-control,
+  .realm-control button,
+  .toolbar button,
+  .list-controls button {
+    width: 100%;
+  }
+
+  .main-pane,
+  .remote-page {
+    padding: 18px 14px;
+  }
+
+  .form-grid,
+  .detail-actions,
+  .details {
+    grid-template-columns: 1fr;
+  }
+
+  .table-frame {
+    overflow-x: auto;
+  }
+
+  table {
+    min-width: 840px;
+  }
+}

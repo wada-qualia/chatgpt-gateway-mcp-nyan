@@ -1,1 +1,1 @@
-export { App as default } from '../../App';
+export { default } from '@gateway/pages/remotes/ThinClientsRemote';

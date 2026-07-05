@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import federation from '@originjs/vite-plugin-federation';
+import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
   plugins: [
@@ -26,6 +27,15 @@ export default defineConfig({
       '/auth': 'http://127.0.0.1:8000',
       '/oauth': 'http://127.0.0.1:8000',
       '/mcp': 'http://127.0.0.1:8000'
+    }
+  },
+  resolve: {
+    alias: {
+      '@gateway/ui': fileURLToPath(new URL('./libs/ui/src', import.meta.url)),
+      '@gateway/components': fileURLToPath(new URL('./libs/components/src', import.meta.url)),
+      '@gateway/pages': fileURLToPath(new URL('./libs/pages/src', import.meta.url)),
+      '@gateway/generated': fileURLToPath(new URL('./src/generated', import.meta.url)),
+      '@gateway/shared': fileURLToPath(new URL('./src/shared', import.meta.url))
     }
   },
   build: {

@@ -1,0 +1,28 @@
+apiVersion: galaxy.asc/v1alpha1
+kind: FrontendLibrary
+metadata:
+  name: "@gateway/components"
+  version: 0.1.0
+  galaxy: chatgpt-mcp-ssh-gateway
+  owner: k-lab
+spec:
+  nx:
+    projectName: gateway-components
+    tags:
+      - scope:chatgpt-mcp-ssh-gateway
+      - type:component
+      - layer:components
+      - visibility:public
+  exports:
+    - name: GatewaySidebar
+      type: component
+      contractVersion: 0.1.0
+    - name: DeviceTable
+      type: component
+      contractVersion: 0.1.0
+    - name: DockerWorkspaceGrid
+      type: component
+      contractVersion: 0.1.0
+  dependencies:
+    components:
+      - "@gateway/ui"

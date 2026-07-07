@@ -2,7 +2,9 @@
   background: #ffffff;
   display: grid;
   grid-template-columns: 286px minmax(0, 1fr);
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -137,6 +139,120 @@
 
 .pager button {
   height: 38px;
+}
+
+.selected-row {
+  background: #eef4ff;
+}
+
+.command-cell {
+  display: grid;
+  gap: 4px;
+  max-width: 420px;
+}
+
+.command-cell strong,
+.command-cell span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 180px;
+}
+
+.monitoring-layout {
+  display: grid;
+  gap: 18px;
+}
+
+.monitoring-output-panel {
+  border: 1px solid #d8dee7;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+}
+
+.session-output {
+  background: #10151f;
+  border-radius: 8px;
+  color: #e9eef7;
+  display: grid;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 460px;
+  overflow: auto;
+  padding: 10px 0;
+}
+
+.output-line {
+  align-items: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 56px 92px minmax(0, 1fr);
+  padding: 1px 12px;
+}
+
+.output-line.stderr code {
+  color: #ffb4b4;
+}
+
+.line-number {
+  color: #8792a2;
+  text-align: right;
+}
+
+.line-markers {
+  display: flex;
+  gap: 4px;
+  min-height: 18px;
+}
+
+.context-badge {
+  border-radius: 4px;
+  color: #10151f;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 4px;
+  text-transform: uppercase;
+}
+
+.context-badge.auto {
+  background: #8ee6a8;
+}
+
+.context-badge.requested {
+  background: #8fc7ff;
+}
+
+.tool-history {
+  border-top: 1px solid #d8dee7;
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+}
+
+.tool-call-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(120px, 180px) minmax(0, 1fr);
+}
+
+.tool-call-row code {
+  background: #f1f4f8;
+  border-radius: 4px;
+  overflow: hidden;
+  padding: 4px 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .page {
@@ -316,4 +432,140 @@
   gap: 12px;
   grid-template-columns: 1fr 1fr 1fr;
   margin-top: auto;
+}
+
+.workspace-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr;
+}
+
+.workspace-actions button {
+  width: 100%;
+}
+
+.workspace-actions.editing {
+  grid-template-columns: 1fr 1fr;
+}
+
+.workspace-description {
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.workspace-title-input,
+.workspace-description-input {
+  border: 1px solid #cfd6df;
+  border-radius: 6px;
+  min-width: 0;
+  outline: 0;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.workspace-title-input {
+  color: #141922;
+  font-size: 16px;
+  font-weight: 700;
+  min-height: 42px;
+}
+
+.workspace-description-input {
+  color: #374151;
+  line-height: 1.45;
+  min-height: 82px;
+  resize: vertical;
+}
+
+.command-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.command-panel-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.command-panel-head strong {
+  color: #172033;
+  font-size: 14px;
+}
+
+.command-panel-head button {
+  height: 38px;
+  min-width: 118px;
+}
+
+.notice-row td {
+  height: auto;
+  padding: 18px;
+  white-space: normal;
+}
+
+.notice-row {
+  cursor: default;
+}
+
+.data-notice {
+  align-items: center;
+  border: 1px dashed #cfd6df;
+  border-radius: 8px;
+  color: #536070;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-height: 150px;
+  padding: 24px;
+  text-align: center;
+}
+
+.data-notice.compact {
+  border: 0;
+  min-height: 88px;
+  padding: 12px;
+}
+
+.data-notice strong {
+  color: #172033;
+  font-size: 15px;
+}
+
+.data-notice span {
+  overflow-wrap: anywhere;
+}
+
+.data-notice.error {
+  background: #fff5f6;
+  border-color: #ef9a9a;
+  color: #9f1d2d;
+}
+
+.data-notice.loading {
+  background: #f7f9fc;
+}
+
+.notice-spinner {
+  animation: notice-spin 1s linear infinite;
+}
+
+@keyframes notice-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 720px) {
+  .command-panel-head {
+    align-items: stretch;
+    display: grid;
+  }
+
+  .command-panel-head button {
+    width: 100%;
+  }
 }

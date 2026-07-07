@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.command_session.started.v1",
+  "title": "CommandSessionStarted",
+  "type": "object",
+  "required": ["event_id", "occurred_at", "session_id", "owner_subject", "origin", "command", "cwd", "status"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "session_id": {"type": "string"},
+    "owner_subject": {"type": "string"},
+    "origin": {"type": "string", "enum": ["server", "docker", "thin_client"]},
+    "resource_id": {"type": ["string", "null"]},
+    "name": {"type": ["string", "null"]},
+    "command": {"type": "string"},
+    "cwd": {"type": "string"},
+    "status": {"type": "string"}
+  },
+  "additionalProperties": false
+}

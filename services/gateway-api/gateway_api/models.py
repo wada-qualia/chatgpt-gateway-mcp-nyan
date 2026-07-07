@@ -68,6 +68,11 @@ class DockerWorkspace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    @property
+    def description(self) -> str | None:
+        value = (self.meta or {}).get("description")
+        return value if isinstance(value, str) and value else None
+
 
 class ThinClient(Base):
     __tablename__ = "thin_clients"
@@ -81,6 +86,56 @@ class ThinClient(Base):
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CommandSession(Base):
+    __tablename__ = "command_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    origin: Mapped[str] = mapped_column(String(40), index=True)
+    resource_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    command: Mapped[str] = mapped_column(Text)
+    cwd: Mapped[str] = mapped_column(Text, default=".")
+    status: Mapped[str] = mapped_column(String(40), default="running", index=True)
+    pid: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_path: Mapped[str] = mapped_column(Text)
+    line_count: Mapped[int] = mapped_column(Integer, default=0)
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CommandSessionDelivery(Base):
+    __tablename__ = "command_session_deliveries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("command_sessions.id"), index=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    reason: Mapped[str] = mapped_column(String(40), index=True)
+    start_line: Mapped[int] = mapped_column(Integer)
+    end_line: Mapped[int] = mapped_column(Integer)
+    tool_call_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AgentToolCall(Base):
+    __tablename__ = "agent_tool_calls"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    tool_name: Mapped[str] = mapped_column(String(120), index=True)
+    arguments: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(40), default="running", index=True)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class OAuthClient(Base):

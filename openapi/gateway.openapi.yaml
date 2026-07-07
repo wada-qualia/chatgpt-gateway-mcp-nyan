@@ -147,6 +147,81 @@ paths:
       responses:
         '201':
           description: Thin client enrolled
+  /api/command-sessions:
+    get:
+      operationId: listCommandSessions
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Command monitoring sessions
+  /api/command-sessions/{session_id}:
+    get:
+      operationId: getCommandSession
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Command monitoring session
+  /api/command-sessions/{session_id}/output:
+    get:
+      operationId: getCommandSessionOutput
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: start_line
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: tail
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Windowed command output with agent context markers
+  /api/command-sessions/{session_id}/terminate:
+    post:
+      operationId: terminateCommandSession
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Command session terminated
+  /api/command-sessions/{session_id}/tool-calls:
+    get:
+      operationId: listCommandSessionToolCalls
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent tool calls linked to a command session
   /api/access/grants:
     get:
       operationId: listAccessGrants

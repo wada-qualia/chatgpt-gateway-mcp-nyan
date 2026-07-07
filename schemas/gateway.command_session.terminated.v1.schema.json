@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.command_session.terminated.v1",
+  "title": "CommandSessionTerminated",
+  "type": "object",
+  "required": ["event_id", "occurred_at", "session_id", "owner_subject", "origin", "force", "line_count"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "session_id": {"type": "string"},
+    "owner_subject": {"type": "string"},
+    "origin": {"type": "string", "enum": ["server", "docker", "thin_client"]},
+    "resource_id": {"type": ["string", "null"]},
+    "force": {"type": "boolean"},
+    "line_count": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}

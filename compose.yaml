@@ -22,7 +22,7 @@ services:
       - .env
     environment:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://gateway:gateway@postgres:5432/gateway}
+      DATABASE_URL: ${GATEWAY_DATABASE_URL:-postgresql+psycopg://gateway:gateway@postgres:5432/gateway}
       WORKSPACE_ROOT: /workspace
       GATEWAY_DEV_AUTH: ${GATEWAY_DEV_AUTH:-true}
       GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:-change-me-local-jwt-secret}
@@ -32,6 +32,9 @@ services:
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
       GATEWAY_DOCKER_ENABLED: ${GATEWAY_DOCKER_ENABLED:-false}
       GATEWAY_DOCKER_ALLOWED_IMAGES: ${GATEWAY_DOCKER_ALLOWED_IMAGES:-ubuntu:24.04,ubuntu:22.04,ubuntu:20.04}
+      MAX_COMMAND_TIMEOUT_SECONDS: ${MAX_COMMAND_TIMEOUT_SECONDS:-1800}
+      COMMAND_BACKGROUND_AFTER_SECONDS: ${COMMAND_BACKGROUND_AFTER_SECONDS:-30}
+      COMMAND_SESSION_SPOOL_ROOT: /data/command-sessions
     volumes:
       - ./workspace:/workspace
       - ./data:/data
@@ -62,7 +65,16 @@ services:
     image: ngrok/ngrok:latest
     profiles:
       - public
-    command: http --log=stdout --log-format=logfmt --web-addr=0.0.0.0:4040 gateway-api:8000
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - |
+        printf '%s\n' \
+          'version: "3"' \
+          'agent:' \
+          "  authtoken: \"$$NGROK_AUTHTOKEN\"" \
+          '  web_addr: 0.0.0.0:4040' \
+          > /tmp/ngrok.yml
+        exec ngrok http --config /tmp/ngrok.yml --log stdout --log-format logfmt --pooling-enabled gateway-api:8000
     env_file:
       - .env
     environment:

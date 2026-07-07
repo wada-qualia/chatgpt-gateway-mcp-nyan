@@ -32,6 +32,22 @@ channels:
     publish:
       message:
         $ref: '#/components/messages/AuditRecorded'
+  gateway.command_session.started.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/CommandSessionStarted'
+  gateway.command_session.output.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/CommandSessionOutput'
+  gateway.command_session.finished.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/CommandSessionFinished'
+  gateway.command_session.terminated.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/CommandSessionTerminated'
 components:
   messages:
     UserAuthenticated:
@@ -62,3 +78,19 @@ components:
       name: gateway.audit.recorded.v1
       payload:
         $ref: '../schemas/gateway.audit.recorded.v1.schema.json'
+    CommandSessionStarted:
+      name: gateway.command_session.started.v1
+      payload:
+        $ref: '../schemas/gateway.command_session.started.v1.schema.json'
+    CommandSessionOutput:
+      name: gateway.command_session.output.v1
+      payload:
+        $ref: '../schemas/gateway.command_session.output.v1.schema.json'
+    CommandSessionFinished:
+      name: gateway.command_session.finished.v1
+      payload:
+        $ref: '../schemas/gateway.command_session.finished.v1.schema.json'
+    CommandSessionTerminated:
+      name: gateway.command_session.terminated.v1
+      payload:
+        $ref: '../schemas/gateway.command_session.terminated.v1.schema.json'

@@ -23,6 +23,9 @@ spec:
     - name: DockerWorkspaceGrid
       type: component
       contractVersion: 0.1.0
+    - name: MonitoringSessionsPanel
+      type: component
+      contractVersion: 0.1.0
   dependencies:
     components:
       - "@gateway/ui"

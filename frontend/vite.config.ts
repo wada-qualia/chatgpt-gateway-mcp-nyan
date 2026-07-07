@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import federation from '@originjs/vite-plugin-federation';
 import { fileURLToPath, URL } from 'node:url';
 
+const gatewayApi = process.env.VITE_GATEWAY_API ?? 'http://127.0.0.1:8000';
+
 export default defineConfig({
   plugins: [
     react(),
@@ -13,20 +15,21 @@ export default defineConfig({
         './Devices': './src/features/devices/DevicesRemote.tsx',
         './DockerWorkspaces': './src/features/docker/DockerWorkspacesRemote.tsx',
         './ThinClients': './src/features/thin-clients/ThinClientsRemote.tsx',
+        './Monitoring': './src/features/monitoring/MonitoringRemote.tsx',
         './ChatGPTAccess': './src/features/access/AccessRemote.tsx',
         './Audit': './src/features/audit/AuditRemote.tsx'
       },
-      shared: ['react', 'react-dom', '@tanstack/react-query']
+      shared: ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query']
     })
   ],
   server: {
     port: 5173,
     host: '127.0.0.1',
     proxy: {
-      '/api': 'http://127.0.0.1:8000',
-      '/auth': 'http://127.0.0.1:8000',
-      '/oauth': 'http://127.0.0.1:8000',
-      '/mcp': 'http://127.0.0.1:8000'
+      '/api': gatewayApi,
+      '/auth': gatewayApi,
+      '/oauth': gatewayApi,
+      '/mcp': gatewayApi
     }
   },
   resolve: {

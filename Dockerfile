@@ -43,8 +43,6 @@ COPY galaxy.project.yaml /app/galaxy.project.yaml
 RUN mkdir -p /workspace /data /auth \
   && chown -R appuser:appuser /workspace /data /auth /app
 
-USER appuser
-
 EXPOSE 8000
 
 ENTRYPOINT ["/usr/bin/tini", "--"]

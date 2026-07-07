@@ -1,4 +1,9 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
+import type {
+  ButtonHTMLAttributes,
+  HTMLAttributes,
+  InputHTMLAttributes,
+  ReactNode
+} from 'react';
 
 function cx(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(' ');
@@ -74,12 +79,20 @@ export function ResourceCard({ children }: { children: ReactNode }) {
   return <article className="resource-card">{children}</article>;
 }
 
-export function CommandBox({ children }: { children: ReactNode }) {
-  return <pre className="command-box">{children}</pre>;
+export type CommandBoxProps = HTMLAttributes<HTMLPreElement> & {
+  selectable?: boolean;
+};
+
+export function CommandBox({ children, className, selectable = false, ...props }: CommandBoxProps) {
+  return (
+    <pre className={cx('command-box', selectable && 'selectable', className)} {...props}>
+      <code>{children}</code>
+    </pre>
+  );
 }
 
 function statusClass(status: string) {
-  if (status === 'online' || status === 'running' || status === 'active' || status === 'success') return 'good';
-  if (status === 'pending') return 'warn';
+  if (status === 'online' || status === 'running' || status === 'active' || status === 'success' || status === 'completed') return 'good';
+  if (status === 'pending' || status === 'stopped' || status === 'frozen' || status === 'disconnecting') return 'warn';
   return 'bad';
 }

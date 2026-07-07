@@ -10,14 +10,31 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 body {
   margin: 0;
 }
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
+}
+
+input,
+option,
+select,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 button {
@@ -36,6 +53,17 @@ button {
 
 button:hover {
   border-color: #8da3c8;
+}
+
+button:disabled {
+  background: #eef1f5;
+  border-color: #d8dee7;
+  color: #8a94a6;
+  cursor: not-allowed;
+}
+
+button:disabled:hover {
+  border-color: #d8dee7;
 }
 
 h1,
@@ -209,6 +237,12 @@ tbody tr.selected {
   overflow-wrap: anywhere;
 }
 
+.resource-card .resource-meta {
+  color: #7a8494;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
 .command-box {
   background: #101827;
   border-radius: 8px;
@@ -217,6 +251,18 @@ tbody tr.selected {
   overflow: auto;
   padding: 16px;
   white-space: pre-wrap;
+}
+
+.command-box code {
+  font: inherit;
+  white-space: inherit;
+}
+
+.command-box.selectable,
+.command-box.selectable * {
+  -webkit-user-select: text;
+  cursor: text;
+  user-select: text;
 }
 
 .compact th,

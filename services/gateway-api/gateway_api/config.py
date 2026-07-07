@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     gateway_docker_allowed_images: str = Field(default="ubuntu:24.04,ubuntu:22.04,ubuntu:20.04")
     workspace_root: str = "./workspace"
     max_command_timeout_seconds: int = 120
+    command_background_after_seconds: int = 30
+    command_session_spool_root: str = "./data/command-sessions"
     max_file_read_bytes: int = 200000
     max_file_write_bytes: int = 1000000
     max_output_chars: int = 30000

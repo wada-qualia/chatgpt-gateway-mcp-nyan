@@ -1,19 +1,30 @@
 .workspace {
   display: grid;
-  grid-template-rows: 80px 86px minmax(0, 1fr);
+  grid-template-rows: 80px minmax(0, 1fr);
+  min-height: 0;
   min-width: 0;
 }
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(620px, 1fr) 420px;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
   min-height: 0;
+  overflow: hidden;
 }
 
 .main-pane {
   min-width: 0;
   overflow: auto;
   padding: 26px 28px 32px;
+}
+
+.operation-banner {
+  background: #fff5f6;
+  border: 1px solid #ef9a9a;
+  border-radius: 8px;
+  color: #9f1d2d;
+  margin-bottom: 16px;
+  padding: 12px 14px;
 }
 
 .section-title {
@@ -65,6 +76,8 @@
 @media (max-width: 760px) {
   .app-shell {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
   }
 
   .sidebar {
@@ -72,7 +85,7 @@
   }
 
   .workspace {
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .topbar,

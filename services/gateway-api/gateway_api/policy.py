@@ -9,7 +9,7 @@ def enforce(user: User, *, action: str, owner_subject: str | None = None) -> Non
     roles = set(user.roles or [])
     if "gateway-admin" in roles:
         return
-    if action in {"read", "create", "update"} and "gateway-user" in roles:
+    if action in {"read", "create", "update", "delete"} and "gateway-user" in roles:
         if owner_subject is None or owner_subject == user.subject:
             return
     if action == "read_audit" and "gateway-auditor" in roles:

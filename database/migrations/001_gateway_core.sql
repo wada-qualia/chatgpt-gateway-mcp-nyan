@@ -59,6 +59,50 @@ create table if not exists thin_clients (
   last_seen_at timestamptz not null default now()
 );
 
+create table if not exists command_sessions (
+  id varchar(36) primary key,
+  owner_subject varchar(255) not null,
+  origin varchar(40) not null,
+  resource_id varchar(160),
+  name varchar(160),
+  command text not null,
+  cwd text not null default '.',
+  status varchar(40) not null default 'running',
+  pid varchar(80),
+  exit_code integer,
+  output_path text not null,
+  line_count integer not null default 0,
+  truncated boolean not null default false,
+  meta jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  started_at timestamptz not null default now(),
+  completed_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists command_session_deliveries (
+  id varchar(36) primary key,
+  session_id varchar(36) not null references command_sessions(id),
+  owner_subject varchar(255) not null,
+  reason varchar(40) not null,
+  start_line integer not null,
+  end_line integer not null,
+  tool_call_id varchar(36),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists agent_tool_calls (
+  id varchar(36) primary key,
+  owner_subject varchar(255) not null,
+  tool_name varchar(120) not null,
+  arguments jsonb not null default '{}'::jsonb,
+  status varchar(40) not null default 'running',
+  session_id varchar(36),
+  error text,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+
 create table if not exists oauth_clients (
   client_id varchar(255) primary key,
   client_name varchar(255) not null default 'ChatGPT Connector',

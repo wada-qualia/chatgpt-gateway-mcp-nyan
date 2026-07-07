@@ -52,10 +52,33 @@ class WorkspaceClone(BaseModel):
     name: str
 
 
+class WorkspaceUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+class WorkspaceExec(BaseModel):
+    command: str
+    timeout_seconds: int | None = None
+    workdir: str = "/workspace"
+    background: bool = False
+    session_name: str | None = None
+
+
+class WorkspaceExecOut(BaseModel):
+    exit_code: int | None = None
+    output: str = ""
+    session_id: str | None = None
+    status: str | None = None
+    backgrounded: bool = False
+    recommendation: str | None = None
+
+
 class WorkspaceOut(OrmModel):
     id: str
     owner_subject: str
     name: str
+    description: str | None = None
     image: str
     container_name: str
     container_id: str | None = None
@@ -79,14 +102,81 @@ class ThinClientRegister(BaseModel):
     labels: dict[str, str] = Field(default_factory=dict)
 
 
+class ThinClientToolCall(BaseModel):
+    tool: Literal["list_files", "read_file", "write_file", "run_command"]
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: int | None = None
+    background: bool = False
+    session_name: str | None = None
+
+
+class ThinClientToolResult(BaseModel):
+    ok: bool
+    result: dict[str, Any] | None = None
+    error: str | None = None
+
+
 class ThinClientOut(OrmModel):
     id: str
     owner_subject: str
     hostname: str
     directory: str
     status: str
+    meta: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     last_seen_at: datetime
+
+
+class CommandLineOut(BaseModel):
+    line: int
+    stream: str = "stdout"
+    text: str
+    timestamp: str | None = None
+    auto_sent: bool = False
+    agent_requested: bool = False
+
+
+class CommandSessionOut(OrmModel):
+    id: str
+    owner_subject: str
+    origin: str
+    resource_id: str | None = None
+    name: str | None = None
+    command: str
+    cwd: str
+    status: str
+    pid: str | None = None
+    exit_code: int | None = None
+    line_count: int
+    truncated: bool
+    meta: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    started_at: datetime
+    completed_at: datetime | None = None
+    updated_at: datetime
+
+
+class CommandSessionOutputOut(BaseModel):
+    session_id: str
+    start_line: int
+    end_line: int
+    total_lines: int
+    lines: list[CommandLineOut]
+
+
+class CommandSessionTerminate(BaseModel):
+    force: bool = False
+
+
+class AgentToolCallOut(OrmModel):
+    id: str
+    tool_name: str
+    arguments: dict[str, Any]
+    status: str
+    session_id: str | None = None
+    error: str | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
 
 
 class AccessGrantCreate(BaseModel):

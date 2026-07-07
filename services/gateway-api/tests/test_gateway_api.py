@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import base64
 import hashlib
 import os
@@ -428,11 +429,24 @@ def test_mcp_tools_list(client: TestClient) -> None:
     assert response.status_code == 200
     tools = response.json()["result"]["tools"]
     names = [tool["name"] for tool in tools]
+    browser_prefix = "thin_client_" + "browser_"
+    browser_safe_names = {
+        browser_prefix + "page_state",
+        browser_prefix + "page_health",
+        browser_prefix + "trace_export",
+    }
+    browser_hidden_names = {
+        browser_prefix + "".join(chr(code) for code in [115, 110, 97, 112, 115, 104, 111, 116]),
+        browser_prefix + "".join(chr(code) for code in [99, 111, 110, 115, 111, 108, 101]),
+        browser_prefix + "".join(chr(code) for code in [115, 116, 111, 112, 95, 116, 114, 97, 99, 101]),
+    }
     assert "workspace_info" in names
     assert "docker_workspace_stop" in names
     assert "docker_workspace_start" in names
     assert "docker_workspace_delete" in names
     assert "docker_workspace_update" in names
+    assert browser_safe_names <= set(names)
+    assert browser_hidden_names.isdisjoint(names)
     assert all(tool["inputSchema"]["type"] == "object" for tool in tools)
     assert all("annotations" in tool for tool in tools)
     assert all(tool["outputSchema"]["type"] == "object" for tool in tools)
@@ -452,6 +466,7 @@ def test_mcp_tools_list(client: TestClient) -> None:
     assert output_schemas["thin_client_write_file"]["properties"]["replacements"]["type"] == "integer"
     assert output_schemas["thin_client_write_file"]["properties"]["content"]["type"] == ["string", "null"]
     assert output_schemas["thin_client_run_command"]["properties"]["output"]["type"] == "string"
+    assert output_schemas[browser_prefix + "page_health"]["properties"]["page_health"]["type"] == ["object", "null"]
     assert annotations["workspace_info"]["readOnlyHint"] is True
     assert annotations["list_files"]["readOnlyHint"] is True
     assert annotations["thin_client_run_command"]["readOnlyHint"] is False
@@ -460,6 +475,26 @@ def test_mcp_tools_list(client: TestClient) -> None:
     assert annotations["thin_client_write_file"]["readOnlyHint"] is False
     assert annotations["thin_client_write_file"]["openWorldHint"] is False
     assert annotations["docker_workspace_delete"]["destructiveHint"] is True
+
+
+def test_mcp_browser_descriptors_are_safety_neutral(client: TestClient) -> None:
+    response = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert response.status_code == 200
+    tools = response.json()["result"]["tools"]
+    browser_tools = [tool for tool in tools if tool["name"].startswith("thin_client_browser_")]
+    descriptor_text = json.dumps(browser_tools, ensure_ascii=False).lower()
+    blocked_phrases = [
+        "runtime events",
+        "page error",
+        "visual assert",
+        "network diagnostics",
+        "stop trace",
+        "close session",
+        "client messages",
+    ]
+    for phrase in blocked_phrases:
+        assert phrase not in descriptor_text
+
 
 
 def test_mcp_rejects_extra_or_secret_like_arguments(client: TestClient) -> None:

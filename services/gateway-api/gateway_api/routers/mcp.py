@@ -125,6 +125,175 @@ def _command_output_schema() -> dict[str, Any]:
     )
 
 
+def _browser_base_properties() -> dict[str, Any]:
+    return {
+        "client_id": _string("Thin-client id."),
+        "session_id": _string("Browser session id. If omitted and exactly one browser session is open, that session is used."),
+        "browser": _enum("Browser engine to launch for a new session.", ["chromium", "firefox", "webkit"], default="chromium"),
+        "width": _integer("Viewport width in CSS pixels.", default=1440, minimum=1),
+        "height": _integer("Viewport height in CSS pixels.", default=900, minimum=1),
+        "headless": _boolean("Launch browser in headless mode.", default=True),
+        "storage_state": _string("Optional workspace-relative Playwright storage state JSON file."),
+    }
+
+
+def _browser_target_properties() -> dict[str, Any]:
+    return {
+        "selector": _string("CSS selector target."),
+        "ref": _string("Reference id returned by thin_client_browser_snapshot."),
+        "text": _string("Visible text target."),
+        "role": _string("ARIA role target."),
+        "name": _string("Accessible name target when role is used."),
+        "exact": _boolean("Whether text or role name matching must be exact.", default=True),
+    }
+
+
+def _browser_output_schema() -> dict[str, Any]:
+    return _output_schema(
+        {
+            "client_id": _string("Thin-client id."),
+            "session_id": _string_or_null("Browser session id."),
+            "browser": _string_or_null("Browser engine."),
+            "url": _string_or_null("Current page URL."),
+            "title": _string_or_null("Current page title."),
+            "artifact_dir": _string_or_null("Workspace-relative browser artifact directory."),
+            "screenshot": {"type": ["object", "null"], "description": "Screenshot metadata when a screenshot was created."},
+            "trace": {"type": ["object", "null"], "description": "Trace metadata when a trace was stopped."},
+            "nodes": _array("Accessibility-oriented page snapshot nodes.", {"type": "object"}),
+            "console": _array("Captured browser console entries.", {"type": "object"}),
+            "network": _array("Captured failed requests and HTTP error responses.", {"type": "object"}),
+            "verdict": _string_or_null("Local visual assertion verdict."),
+        }
+    )
+
+
+def _browser_tools() -> list[dict[str, Any]]:
+    base = _browser_base_properties()
+    target = _browser_target_properties()
+    return [
+        _tool(
+            "thin_client_browser_open_session",
+            "Open a Playwright browser session inside an online thin client's launch directory.",
+            _object_schema(base, ["client_id"]),
+            _annotations(title="Open thin-client browser", read_only=False, destructive=False, idempotent=False, open_world=True),
+            output_schema=_browser_output_schema(),
+        ),
+        _tool(
+            "thin_client_browser_goto",
+            "Navigate a thin-client Playwright browser session to an allowlisted local or configured URL.",
+            _object_schema(
+                {
+                    **base,
+                    "url": _string("URL to open in the browser."),
+                    "wait_until": _enum("Playwright navigation wait condition.", ["commit", "domcontentloaded", "load", "networkidle"], default="networkidle"),
+                    "timeout_ms": _integer("Navigation timeout in milliseconds.", default=30000, minimum=1),
+                },
+                ["client_id", "url"],
+            ),
+            _annotations(title="Navigate thin-client browser", read_only=False, destructive=False, idempotent=False, open_world=True),
+            output_schema=_browser_output_schema(),
+        ),
+        _tool(
+            "thin_client_browser_snapshot",
+            "Return an accessibility-oriented snapshot of visible interactive and semantic page elements with stable refs for follow-up actions.",
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "limit": _integer("Maximum number of visible nodes to return.", default=150, minimum=1)}, ["client_id"]),
+            _annotations(title="Snapshot thin-client browser", read_only=True, idempotent=False, open_world=True),
+            output_schema=_browser_output_schema(),
+        ),
+        _tool(
+            "thin_client_browser_click",
+            "Click a browser target by CSS selector, snapshot ref, visible text, or role+name.",
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], **target, "timeout_ms": _integer("Click timeout in milliseconds.", default=10000, minimum=1)}, ["client_id"]),
+            _annotations(title="Click thin-client browser", read_only=False, destructive=True, idempotent=False, open_world=True),
+            output_schema=_browser_output_schema(),
+        ),
+        _tool(
+            "thin_client_browser_type",
+            "Fill or type text into a browser target by CSS selector, snapshot ref, visible text, or role+name.",
+            _object_schema(
+                {
+                    "client_id": base["client_id"],
+                    "session_id": base["session_id"],
+                    **target,
+                    "value": _string("Text value to enter."),
+                    "clear": _boolean("Whether to replace the existing value instead of typing after it.", default=True),
+                    "delay_ms": _integer("Delay between keystrokes when clear=false.", default=0, minimum=0),
+                    "timeout_ms": _integer("Typing timeout in milliseconds.", default=10000, minimum=1),
+                },
+                ["client_id", "value"],
+            ),
+            _annotations(title="Type into thin-client browser", read_only=False, destructive=True, idempotent=False, open_world=True),
+            output_schema=_browser_output_schema(),
+        ),
+        _tool(
+            "thin_client_browser_screenshot",
+            "Capture a PNG screenshot and return it as MCP image content when it fits the configured size limit.",
+            _object_schema(
+                {
+                    "client_id": base["client_id"],
+                    "session_id": base["session_id"],
+                    "name": _string("Artifact filename stem or PNG filename."),
+                    "full_page": _boolean("Capture the full scrollable page.", default=False),
+                },
+                ["client_id"],
+            ),
+            _annotations(title="Screenshot thin-client browser", read_only=True, idempotent=False, open_world=True),
+            output_schema=_browser_output_schema(),
+        ),
+        _tool(
+            "thin_client_browser_visual_assert",
+            "Capture a screenshot for ChatGPT visual review and attach local console and network diagnostics.",
+            _object_schema(
+                {
+                    "client_id": base["client_id"],
+                    "session_id": base["session_id"],
+                    "assertion": _string("Natural-language visual assertion to evaluate against the screenshot."),
+                    "name": _string("Artifact filename stem or PNG filename."),
+                    "full_page": _boolean("Capture the full scrollable page.", default=True),
+                },
+                ["client_id", "assertion"],
+            ),
+            _annotations(title="Visual assert thin-client browser", read_only=True, idempotent=False, open_world=True),
+            output_schema=_browser_output_schema(),
+        ),
+        _tool(
+            "thin_client_browser_console",
+            "Return captured browser console and page error entries.",
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "limit": _integer("Maximum entries to return.", default=100, minimum=1)}, ["client_id"]),
+            _annotations(title="Read thin-client browser console", read_only=True, idempotent=False, open_world=True),
+            output_schema=_browser_output_schema(),
+        ),
+        _tool(
+            "thin_client_browser_network",
+            "Return captured failed requests and HTTP error responses.",
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "limit": _integer("Maximum entries to return.", default=100, minimum=1)}, ["client_id"]),
+            _annotations(title="Read thin-client browser network", read_only=True, idempotent=False, open_world=True),
+            output_schema=_browser_output_schema(),
+        ),
+        _tool(
+            "thin_client_browser_start_trace",
+            "Start Playwright tracing for the browser context.",
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"]}, ["client_id"]),
+            _annotations(title="Start thin-client browser trace", read_only=False, destructive=False, idempotent=True, open_world=True),
+            output_schema=_browser_output_schema(),
+        ),
+        _tool(
+            "thin_client_browser_stop_trace",
+            "Stop Playwright tracing and save a trace.zip artifact.",
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "name": _string("Trace artifact filename stem or zip filename.")}, ["client_id"]),
+            _annotations(title="Stop thin-client browser trace", read_only=True, destructive=False, idempotent=False, open_world=True),
+            output_schema=_browser_output_schema(),
+        ),
+        _tool(
+            "thin_client_browser_close_session",
+            "Close one browser session or all thin-client browser sessions when session_id is omitted.",
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"]}, ["client_id"]),
+            _annotations(title="Close thin-client browser", read_only=False, destructive=False, idempotent=True, open_world=False),
+            output_schema=_browser_output_schema(),
+        ),
+    ]
+
+
 SECRET_ARGUMENT_NAMES = {
     "access_token",
     "access_tokens",
@@ -441,6 +610,7 @@ def _tools() -> list[dict[str, Any]]:
             _annotations(title="Run thin-client command", read_only=False, destructive=True, open_world=True),
             output_schema=_command_output_schema(),
         ),
+        *_browser_tools(),
         _tool(
             "monitoring_list_sessions",
             "List command monitoring sessions.",
@@ -530,12 +700,12 @@ def _relative_or_dot(root: Path, target: Path) -> str:
     return "." if target == root else str(target.relative_to(root))
 
 
-def _result(data: dict[str, Any], *, is_error: bool = False) -> dict[str, Any]:
+def _result(data: dict[str, Any], *, is_error: bool = False, extra_content: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     structured = {"ok": not is_error, "error": None if not is_error else str(data.get("error") or "Tool call failed"), **data}
     if not is_error:
         structured["error"] = None
     return {
-        "content": [{"type": "text", "text": json.dumps(structured, ensure_ascii=False)}],
+        "content": [{"type": "text", "text": json.dumps(structured, ensure_ascii=False)}, *(extra_content or [])],
         "structuredContent": structured,
         "isError": is_error,
     }
@@ -543,7 +713,8 @@ def _result(data: dict[str, Any], *, is_error: bool = False) -> dict[str, Any]:
 
 def _refresh_result_content(result: dict[str, Any]) -> dict[str, Any]:
     structured = result.get("structuredContent") or {}
-    result["content"] = [{"type": "text", "text": json.dumps(structured, ensure_ascii=False)}]
+    preserved = [item for item in result.get("content", []) if isinstance(item, dict) and item.get("type") != "text"]
+    result["content"] = [{"type": "text", "text": json.dumps(structured, ensure_ascii=False)}, *preserved]
     return result
 
 
@@ -893,6 +1064,8 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
             arguments = {"path": args.get("path", "")}
         elif tool == "write_file":
             arguments = {key: value for key, value in args.items() if key != "client_id"}
+        elif tool.startswith("browser_"):
+            arguments = {key: value for key, value in args.items() if key != "client_id"}
         elif tool == "run_command":
             timeout_seconds = _bounded_timeout(args.get("timeout_seconds"), settings)
             session = monitoring_service.create_session(
@@ -960,6 +1133,15 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 "replacements": int(result.get("replacements", 0)),
                 "content": result.get("content"),
             }
+        elif tool.startswith("browser_"):
+            result_payload = dict(result)
+            image_base64 = result_payload.pop("image_base64", None)
+            mime_type = str(result_payload.pop("mime_type", "image/png") or "image/png")
+            structured = {"client_id": client.id, **result_payload}
+            extra_content = []
+            if image_base64:
+                extra_content.append({"type": "image", "data": str(image_base64), "mimeType": mime_type})
+            return _result(structured, extra_content=extra_content)
         else:
             run_result = await monitoring_service.wait_for_existing_session(
                 db,

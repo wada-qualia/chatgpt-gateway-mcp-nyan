@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import re
+import threading
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -8,12 +12,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..adapters.docker import DockerAdapter, safe_container_name
+from ..adapters.ssh import load_device_credentials, run_ssh_command, verify_ssh_connection
 from ..auth import get_bearer_or_dev_user
 from ..config import Settings, get_settings
 from ..database import get_db
 from ..events import emit_event
-from ..models import CommandSession, Device, DockerWorkspace, ThinClient, User, utcnow
-from ..monitoring import monitoring_service
+from ..models import CommandSession, Device, DockerWorkspace, FileChangeSet, ThinClient, User, utcnow
+from ..monitoring import CommandRunResult, monitoring_service
+from ..policy import enforce
 from ..thin_client_control import thin_client_manager
 
 router = APIRouter(tags=["mcp"])
@@ -110,6 +116,138 @@ def _entry_schema() -> dict[str, Any]:
     )
 
 
+def _diff_line_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "kind": _enum("Diff line kind.", ["context", "delete", "insert"]),
+            "text": _string("Line text without newline terminator."),
+        },
+        ["kind", "text"],
+    )
+
+
+def _diff_hunk_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "old_start": _integer("1-based start line in the original file."),
+            "old_count": _integer("Number of original lines covered by the hunk."),
+            "new_start": _integer("1-based start line in the edited file."),
+            "new_count": _integer("Number of edited lines covered by the hunk."),
+            "lines": _array("Diff lines in this hunk.", _diff_line_schema()),
+        },
+        ["old_start", "old_count", "new_start", "new_count", "lines"],
+    )
+
+
+def _diff_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "format": _string("Diff format identifier, currently unified."),
+            "suppressed": _boolean("Whether inline diff content was intentionally omitted."),
+            "reason": _string_or_null("Suppression reason when suppressed is true."),
+            "truncated": _boolean("Whether hunks were truncated by max_diff_lines."),
+            "added_lines": _integer("Number of inserted lines included in the diff."),
+            "removed_lines": _integer("Number of deleted lines included in the diff."),
+            "hunks": _array("Structured diff hunks.", _diff_hunk_schema()),
+        },
+        ["format", "suppressed", "truncated", "added_lines", "removed_lines", "hunks"],
+    )
+
+
+def _file_change_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "id": _string("File change id."),
+            "origin": _string("Origin resource type, for example thin_client."),
+            "resource_id": _string_or_null("Origin resource id."),
+            "tool_call_id": _string_or_null("MCP tool call id that produced the change."),
+            "path": _string("Changed file path relative to origin workspace."),
+            "operation": _string("Write/edit operation that was applied."),
+            "added_lines": _integer("Inserted lines included in the diff."),
+            "removed_lines": _integer("Deleted lines included in the diff."),
+            "bytes_before": _integer("File size before the operation."),
+            "bytes_after": _integer("File size after the operation."),
+            "replacements": _integer("Replacement count for edit operations."),
+            "truncated": _boolean("Whether the diff was truncated."),
+            "suppressed": _boolean("Whether inline diff content was suppressed."),
+            "diff": _diff_schema(),
+            "created_at": _string("Creation timestamp."),
+        },
+        ["id", "origin", "path", "operation", "added_lines", "removed_lines", "bytes_before", "bytes_after", "replacements", "truncated", "suppressed", "diff", "created_at"],
+    )
+
+
+def _file_change_payload(change: FileChangeSet) -> dict[str, Any]:
+    return {
+        "id": change.id,
+        "origin": change.origin,
+        "resource_id": change.resource_id,
+        "tool_call_id": change.tool_call_id,
+        "path": change.path,
+        "operation": change.operation,
+        "added_lines": change.added_lines,
+        "removed_lines": change.removed_lines,
+        "bytes_before": change.bytes_before,
+        "bytes_after": change.bytes_after,
+        "replacements": change.replacements,
+        "truncated": change.truncated,
+        "suppressed": change.suppressed,
+        "diff": change.diff_json,
+        "created_at": change.created_at.isoformat(),
+    }
+
+
+def _persist_file_change(
+    db: Session,
+    *,
+    user: User,
+    origin: str,
+    resource_id: str | None,
+    tool_call_id: str | None,
+    structured: dict[str, Any],
+) -> FileChangeSet:
+    diff = structured.get("diff") if isinstance(structured.get("diff"), dict) else {}
+    change = FileChangeSet(
+        id=str(uuid.uuid4()),
+        owner_subject=user.subject,
+        origin=origin,
+        resource_id=resource_id,
+        tool_call_id=tool_call_id,
+        path=str(structured.get("path", "")),
+        operation=str(structured.get("operation", "write")),
+        added_lines=int(diff.get("added_lines", 0) or 0),
+        removed_lines=int(diff.get("removed_lines", 0) or 0),
+        bytes_before=int(structured.get("bytes_before", 0) or 0),
+        bytes_after=int(structured.get("bytes_after", structured.get("bytes", 0)) or 0),
+        replacements=int(structured.get("replacements", 0) or 0),
+        diff_json=diff,
+        truncated=bool(diff.get("truncated", False)),
+        suppressed=bool(diff.get("suppressed", False)),
+    )
+    db.add(change)
+    db.commit()
+    db.refresh(change)
+    emit_event(
+        db,
+        event_type="gateway.file_change.created.v1",
+        actor_subject=user.subject,
+        action="created",
+        resource_type="file_change",
+        resource_id=change.id,
+        payload={
+            "origin": change.origin,
+            "resource_id": change.resource_id,
+            "path": change.path,
+            "operation": change.operation,
+            "added_lines": change.added_lines,
+            "removed_lines": change.removed_lines,
+            "suppressed": change.suppressed,
+            "truncated": change.truncated,
+        },
+    )
+    return change
+
+
 def _command_output_schema() -> dict[str, Any]:
     return _output_schema(
         {
@@ -123,6 +261,108 @@ def _command_output_schema() -> dict[str, Any]:
             "recommendation": _string_or_null("Recommended monitoring follow-up when backgrounded."),
         }
     )
+
+
+def _ssh_device_output_schema() -> dict[str, Any]:
+    return _output_schema(
+        {
+            "device_id": _string("SSH device id."),
+            "name": _string("SSH device display name."),
+            "host": _string("SSH host name or address."),
+            "port": _integer("SSH TCP port."),
+            "username": _string("SSH username."),
+            "auth_type": _string("Configured SSH authentication type."),
+            "status": _string("Current device connection status."),
+        }
+    )
+
+
+def _ssh_connection_output_schema() -> dict[str, Any]:
+    return _output_schema(
+        {
+            "device_id": _string("SSH device id."),
+            "status": _string("Connection verification status."),
+            "detail": _string_or_null("Connection verification detail."),
+        }
+    )
+
+
+def _ssh_tools(settings: Settings) -> list[dict[str, Any]]:
+    if not settings.gateway_ssh_enabled:
+        return []
+    allowed_actions = settings.ssh_allowed_actions or ["uptime", "disk_usage", "memory_usage", "whoami", "pwd", "home_list"]
+    tools = [
+        _tool(
+            "ssh_device_info",
+            "Return safe metadata for a registered SSH device without exposing credentials.",
+            _object_schema({"device_id": _string("SSH device id.")}, ["device_id"]),
+            _annotations(title="SSH device info", read_only=True, idempotent=True, open_world=False),
+            output_schema=_ssh_device_output_schema(),
+        ),
+        _tool(
+            "ssh_device_check_connection",
+            "Verify backend-side SSH authentication for a registered SSH device.",
+            _object_schema(
+                {
+                    "device_id": _string("SSH device id."),
+                    "timeout_seconds": _integer("Optional SSH connection timeout in seconds.", default=15, minimum=1),
+                },
+                ["device_id"],
+            ),
+            _annotations(title="Check SSH connection", read_only=True, idempotent=False, open_world=True),
+            output_schema=_ssh_connection_output_schema(),
+        ),
+        _tool(
+            "ssh_device_run_action",
+            "Run one allowlisted action on a registered SSH device. Actions map to fixed gateway-owned commands.",
+            _object_schema(
+                {
+                    "device_id": _string("SSH device id."),
+                    "action": _enum("Allowlisted SSH action to run.", allowed_actions),
+                    "timeout_seconds": _integer("Optional SSH command timeout in seconds.", default=30, minimum=1),
+                    "background": _boolean("Start immediately as a background monitoring session.", default=False),
+                    "session_name": _string("Optional display name for the monitoring session."),
+                },
+                ["device_id", "action"],
+            ),
+            _annotations(title="Run SSH allowlisted action", read_only=False, destructive=True, open_world=True),
+            output_schema=_command_output_schema(),
+        ),
+        _tool(
+            "ssh_device_read_home",
+            "List a bounded view of the registered SSH device user's home directory.",
+            _object_schema(
+                {
+                    "device_id": _string("SSH device id."),
+                    "timeout_seconds": _integer("Optional SSH command timeout in seconds.", default=30, minimum=1),
+                },
+                ["device_id"],
+            ),
+            _annotations(title="Read SSH home listing", read_only=True, idempotent=False, open_world=True),
+            output_schema=_command_output_schema(),
+        ),
+    ]
+    if settings.gateway_ssh_allow_raw_command:
+        tools.append(
+            _tool(
+                "ssh_device_run_command",
+                "Run a raw shell command on a registered SSH device. This high-risk tool is disabled by default and must be explicitly enabled by configuration.",
+                _object_schema(
+                    {
+                        "device_id": _string("SSH device id."),
+                        "command": _string("Raw shell command to run on the SSH device."),
+                        "cwd": _string("Remote working directory.", default="~"),
+                        "timeout_seconds": _integer("Optional SSH command timeout in seconds.", default=30, minimum=1),
+                        "background": _boolean("Start immediately as a background monitoring session.", default=False),
+                        "session_name": _string("Optional display name for the monitoring session."),
+                    },
+                    ["device_id", "command"],
+                ),
+                _annotations(title="Run raw SSH command", read_only=False, destructive=True, open_world=True),
+                output_schema=_command_output_schema(),
+            )
+        )
+    return tools
 
 
 def _browser_base_properties() -> dict[str, Any]:
@@ -156,21 +396,21 @@ def _browser_output_schema() -> dict[str, Any]:
             "browser": _string_or_null("Browser engine."),
             "url": _string_or_null("Current page URL."),
             "title": _string_or_null("Current page title."),
-            "artifact_dir": _string_or_null("Workspace-relative browser artifact directory."),
+            "file_dir": _string_or_null("Workspace-relative browser file directory."),
             "screenshot": {"type": ["object", "null"], "description": "Screenshot metadata when a screenshot was created."},
             "trace": {"type": ["object", "null"], "description": "Trace metadata when a trace export was produced."},
             "nodes": _array("Accessibility-oriented page-state nodes.", {"type": "object"}),
             "request_failures": _array("Failed browser requests and HTTP error responses.", {"type": "object"}),
-            "verdict": _string_or_null("Local page review verdict."),
-            "assertion": _string_or_null("Review assertion supplied by the caller."),
-            "review": {"type": ["object", "null"], "description": "Local page review summary."},
-            "page_health": {"type": ["object", "null"], "description": "Compact page health summary."},
+            "status": _string_or_null("Local page capture status."),
+            "note": _string_or_null("Capture note supplied by the caller."),
+            "capture": {"type": ["object", "null"], "description": "Local page capture summary."},
+            "page_status": {"type": ["object", "null"], "description": "Compact page status summary."},
             "note_count": _integer_or_null("Number of captured page notes."),
             "warning_count": _integer_or_null("Number of captured page warnings."),
             "error_count": _integer_or_null("Number of page failures."),
-            "app_error_count": _integer_or_null("Number of application failures."),
-            "request_failure_count": _integer_or_null("Number of failed requests and HTTP error responses."),
-            "diagnostics_artifact": {"type": ["object", "null"], "description": "Workspace-relative diagnostics artifact metadata."},
+            "issue_count": _integer_or_null("Number of application failures."),
+            "failed_request_count": _integer_or_null("Number of failed requests and HTTP error responses."),
+            "detail_file": {"type": ["object", "null"], "description": "Workspace-relative detail file metadata."},
         }
     )
 
@@ -240,7 +480,7 @@ def _browser_tools() -> list[dict[str, Any]]:
                 {
                     "client_id": base["client_id"],
                     "session_id": base["session_id"],
-                    "name": _string("Artifact filename stem or PNG filename."),
+                    "name": _string("File filename stem or PNG filename."),
                     "full_page": _boolean("Capture the full scrollable page.", default=False),
                 },
                 ["client_id"],
@@ -249,26 +489,26 @@ def _browser_tools() -> list[dict[str, Any]]:
             output_schema=_browser_output_schema(),
         ),
         _tool(
-            "thin_client_browser_screenshot_review",
-            "Capture a screenshot for local page review and save detailed diagnostics to an artifact.",
+            "thin_client_browser_capture_page",
+            "Capture a page image and save details to a file.",
             _object_schema(
                 {
                     "client_id": base["client_id"],
                     "session_id": base["session_id"],
-                    "assertion": _string("Review instruction to evaluate against the screenshot."),
-                    "name": _string("Artifact filename stem or PNG filename."),
+                    "note": _string("Optional note for the saved capture."),
+                    "name": _string("File filename stem or PNG filename."),
                     "full_page": _boolean("Capture the full scrollable page.", default=True),
                 },
-                ["client_id", "assertion"],
+                ["client_id", "note"],
             ),
-            _annotations(title="Review browser page", read_only=True, idempotent=False, open_world=True),
+            _annotations(title="Capture browser page", read_only=True, idempotent=False, open_world=True),
             output_schema=_browser_output_schema(),
         ),
         _tool(
-            "thin_client_browser_page_health",
-            "Return a compact page health summary and save detailed diagnostics to an artifact.",
-            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "limit": _integer("Maximum entries to include in the saved artifact.", default=100, minimum=1)}, ["client_id"]),
-            _annotations(title="Read browser page health", read_only=True, idempotent=False, open_world=True),
+            "thin_client_browser_page_status",
+            "Return compact page status and save details to a file.",
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "limit": _integer("Maximum entries to include in the saved file.", default=100, minimum=1)}, ["client_id"]),
+            _annotations(title="Read browser page status", read_only=True, idempotent=False, open_world=True),
             output_schema=_browser_output_schema(),
         ),
         _tool(
@@ -287,8 +527,8 @@ def _browser_tools() -> list[dict[str, Any]]:
         ),
         _tool(
             "thin_client_browser_trace_export",
-            "Export Playwright tracing to a trace.zip artifact and end the active trace capture.",
-            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "name": _string("Trace artifact filename stem or zip filename.")}, ["client_id"]),
+            "Export Playwright tracing to a trace.zip file and end the active trace capture.",
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "name": _string("Trace file filename stem or zip filename.")}, ["client_id"]),
             _annotations(title="Export thin-client browser trace", read_only=True, destructive=False, idempotent=False, open_world=True),
             output_schema=_browser_output_schema(),
         ),
@@ -516,6 +756,7 @@ def _tools() -> list[dict[str, Any]]:
                 }
             ),
         ),
+        *_ssh_tools(get_settings()),
         _tool(
             "thin_client_list_files",
             "List files inside an online thin client's launch directory.",
@@ -583,6 +824,8 @@ def _tools() -> list[dict[str, Any]]:
                     ),
                     "language": _string("Optional Markdown code fence language filter for operation=remove_markdown_code_blocks."),
                     "expected_replacements": _integer("Optional exact replacement count guard.", minimum=0),
+                    "return_content": _boolean("Return edited UTF-8 content in addition to diff.", default=False),
+                    "diff": _boolean("Return structured diff payload when possible.", default=True),
                 },
                 ["client_id", "path"],
             ),
@@ -597,7 +840,8 @@ def _tools() -> list[dict[str, Any]]:
                     "bytes_after": _integer("File size after the operation."),
                     "encoding": _string_or_null("Content encoding used by the write operation."),
                     "replacements": _integer("Number of replacements applied for edit operations."),
-                    "content": _string_or_null("Edited UTF-8 content for text edit operations."),
+                    "content": _string_or_null("Edited UTF-8 content when return_content is true."),
+                    "diff": _diff_schema(),
                 }
             ),
         ),
@@ -660,6 +904,19 @@ def _tools() -> list[dict[str, Any]]:
             ),
             _annotations(title="Terminate command session", read_only=False, destructive=True, open_world=False),
             output_schema=_output_schema({"session": {"type": "object"}}),
+        ),
+        _tool(
+            "file_changes_list",
+            "List recent server-side file change records produced by write/edit tool calls.",
+            _object_schema(
+                {
+                    "limit": _integer("Maximum number of file changes to return.", default=100, minimum=1),
+                    "origin": _string("Optional origin filter, for example thin_client."),
+                    "resource_id": _string("Optional resource id filter."),
+                }
+            ),
+            _annotations(title="List file changes", read_only=True, idempotent=True),
+            output_schema=_output_schema({"changes": _array("Recent file changes.", _file_change_schema())}),
         ),
     ]
 
@@ -745,6 +1002,160 @@ def _command_result(
         "recommendation": run_result.recommendation,
     }
     return _result(payload, is_error=(run_result.exit_code is not None and run_result.exit_code != 0))
+
+
+def _query_visible_ssh_device(device_id: str, user: User, db: Session) -> Device:
+    device = db.get(Device, device_id)
+    if device is None or device.kind != "ssh" or device.owner_subject != user.subject:
+        raise HTTPException(status_code=404, detail="SSH device not found")
+    return device
+
+
+def _ssh_device_payload(device: Device) -> dict[str, Any]:
+    return {
+        "device_id": device.id,
+        "name": device.name,
+        "host": device.host,
+        "port": device.port,
+        "username": device.username,
+        "auth_type": device.auth_type,
+        "status": device.status,
+    }
+
+
+def _ssh_status_from_exception(exc: HTTPException) -> str:
+    if exc.status_code in {401, 403}:
+        return "auth_failed"
+    if exc.status_code in {502, 504}:
+        return "unreachable"
+    return "auth_failed"
+
+
+def _ssh_action_command(action: str) -> str:
+    commands = {
+        "whoami": "whoami",
+        "pwd": "pwd",
+        "uptime": "uptime",
+        "disk_usage": "df -h",
+        "memory_usage": "free -h || vm_stat",
+        "home_list": "printf 'HOME=%s\\n' \"$HOME\"; ls -la \"$HOME\" | sed -n '1,120p'",
+    }
+    try:
+        return commands[action]
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail="Unsupported SSH action") from exc
+
+
+def _validate_ssh_raw_command(command: str, settings: Settings) -> str:
+    normalized = command.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="SSH command must not be empty")
+    if any(char in normalized for char in ("\x00", "\r", "\n")):
+        raise HTTPException(status_code=400, detail="SSH command must be a single line")
+    if len(normalized) > int(settings.gateway_ssh_raw_command_max_chars):
+        raise HTTPException(status_code=400, detail="SSH command exceeds configured length limit")
+    for pattern in settings.ssh_raw_command_denied_patterns:
+        try:
+            matched = re.search(pattern, normalized, flags=re.IGNORECASE)
+        except re.error as exc:
+            raise HTTPException(status_code=500, detail="Invalid SSH raw command deny pattern") from exc
+        if matched:
+            raise HTTPException(status_code=400, detail="SSH command is blocked by raw-mode policy")
+    return normalized
+
+
+def _ssh_session_meta(device: Device, *, action: str | None = None) -> dict[str, Any]:
+    return {
+        "device_id": device.id,
+        "device_name": device.name,
+        "host": device.host,
+        "port": device.port,
+        "username": device.username,
+        "auth_type": device.auth_type,
+        "action": action,
+    }
+
+
+def _finish_ssh_worker(session_id: str, device: Device, credentials: Any, *, command: str, timeout_seconds: int) -> HTTPException | None:
+    try:
+        result = run_ssh_command(device, credentials, command=command, timeout_seconds=timeout_seconds)
+        monitoring_service.append_output(session_id, stream="stdout", text=result.stdout)
+        monitoring_service.append_output(session_id, stream="stderr", text=result.stderr)
+        monitoring_service.finish_session(
+            session_id,
+            status_value="completed" if result.exit_code == 0 else "failed",
+            exit_code=result.exit_code,
+        )
+        return None
+    except HTTPException as exc:
+        monitoring_service.append_output(session_id, stream="stderr", text=f"SSH command failed: {exc.detail}\n")
+        monitoring_service.finish_session(session_id, status_value="failed", exit_code=1, meta={"error": str(exc.detail)})
+        return exc
+    except Exception as exc:  # pragma: no cover - defensive safety net for unexpected adapter failures.
+        monitoring_service.append_output(session_id, stream="stderr", text="SSH command failed\n")
+        monitoring_service.finish_session(session_id, status_value="failed", exit_code=1, meta={"error": str(exc)})
+        return HTTPException(status_code=502, detail="SSH command execution failed")
+
+
+async def _run_ssh_command_monitored(
+    db: Session,
+    *,
+    user: User,
+    device: Device,
+    command: str,
+    action: str | None,
+    timeout_seconds: int,
+    background: bool,
+    session_name: str | None,
+    settings: Settings,
+) -> CommandRunResult:
+    credentials = load_device_credentials(device, db)
+    session = monitoring_service.create_session(
+        db,
+        owner_subject=user.subject,
+        origin="ssh",
+        resource_id=device.id,
+        command=command,
+        cwd="~",
+        name=session_name,
+        settings=settings,
+        meta=_ssh_session_meta(device, action=action),
+    )
+    if background:
+        threading.Thread(
+            target=_finish_ssh_worker,
+            args=(session.id, device, credentials),
+            kwargs={"command": command, "timeout_seconds": timeout_seconds},
+            name=f"ssh-command-session-{session.id}",
+            daemon=True,
+        ).start()
+        return CommandRunResult(
+            session_id=session.id,
+            status="running",
+            backgrounded=True,
+            recommendation=(
+                f"SSH command is running in background session {session.id}. "
+                "Use monitoring_get_session, monitoring_read_output, or monitoring_terminate_session."
+            ),
+        )
+    await asyncio.to_thread(
+        _finish_ssh_worker,
+        session.id,
+        device,
+        credentials,
+        command=command,
+        timeout_seconds=timeout_seconds,
+    )
+    db.expire_all()
+    completed = db.get(CommandSession, session.id)
+    output = "\n".join(record["text"] for record in monitoring_service.read_output_records(session.id, tail=1000))
+    return CommandRunResult(
+        session_id=session.id,
+        status=completed.status if completed else "completed",
+        backgrounded=False,
+        exit_code=completed.exit_code if completed else None,
+        output=output[: settings.max_output_chars],
+    )
 
 
 def _session_payload(session: CommandSession) -> dict[str, Any]:
@@ -833,6 +1244,66 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
         workspaces = db.query(DockerWorkspace).filter(DockerWorkspace.owner_subject == user.subject).count()
         thin_clients = db.query(ThinClient).filter(ThinClient.owner_subject == user.subject).count()
         return _result({"devices": devices, "docker_workspaces": workspaces, "thin_clients": thin_clients})
+    if name in {"ssh_device_info", "ssh_device_check_connection", "ssh_device_run_action", "ssh_device_read_home", "ssh_device_run_command"}:
+        if not settings.gateway_ssh_enabled:
+            raise HTTPException(status_code=404, detail=f"Unknown tool: {name}")
+        device = _query_visible_ssh_device(str(args.get("device_id", "")), user, db)
+        if name == "ssh_device_info":
+            enforce(user, action="read")
+            return _result(_ssh_device_payload(device))
+        if name == "ssh_device_check_connection":
+            timeout_seconds = _bounded_timeout(args.get("timeout_seconds"), settings)
+            try:
+                credentials = load_device_credentials(device, db)
+                status_value = verify_ssh_connection(device, credentials, timeout_seconds=timeout_seconds)
+                device.status = status_value
+                detail = "authenticated"
+            except HTTPException as exc:
+                status_value = _ssh_status_from_exception(exc)
+                device.status = status_value
+                detail = str(exc.detail)
+            device.updated_at = utcnow()
+            db.commit()
+            db.refresh(device)
+            emit_event(
+                db,
+                event_type="gateway.device.connection_verified.v1",
+                actor_subject=user.subject,
+                action="verified" if device.status == "verified" else "verification_failed",
+                resource_type="device",
+                resource_id=device.id,
+                payload={"device_id": device.id, "status": device.status, "host": device.host, "port": device.port},
+                status="success" if device.status == "verified" else "warning",
+            )
+            return _result({"device_id": device.id, "status": device.status, "detail": detail})
+        if name == "ssh_device_run_command":
+            if not settings.gateway_ssh_allow_raw_command:
+                raise HTTPException(status_code=404, detail=f"Unknown tool: {name}")
+            command = _validate_ssh_raw_command(str(args.get("command", "")), settings)
+            action = "raw_command"
+        else:
+            action = "home_list" if name == "ssh_device_read_home" else str(args.get("action", ""))
+            if action not in set(settings.ssh_allowed_actions):
+                raise HTTPException(status_code=400, detail="Unsupported SSH action")
+            command = _ssh_action_command(action)
+        timeout_seconds = _bounded_timeout(args.get("timeout_seconds"), settings)
+        run_result = await _run_ssh_command_monitored(
+            db,
+            user=user,
+            device=device,
+            command=command,
+            action=action,
+            timeout_seconds=timeout_seconds,
+            background=bool(args.get("background", False)),
+            session_name=str(args.get("session_name") or "") or None,
+            settings=settings,
+        )
+        return _command_result(
+            command=command,
+            cwd="~",
+            run_result=run_result,
+            extra={"device_id": device.id, "action": action},
+        )
     if name == "monitoring_list_sessions":
         query = db.query(CommandSession).filter(CommandSession.owner_subject == user.subject).order_by(CommandSession.updated_at.desc())
         if args.get("status"):
@@ -885,6 +1356,15 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 return _result({"session": _session_payload(session)})
         session = await monitoring_service.terminate(db, session=session, force=bool(args.get("force", False)))
         return _result({"session": _session_payload(session)})
+    if name == "file_changes_list":
+        enforce(user, action="read")
+        safe_limit = min(max(int(args.get("limit", 100) or 100), 1), 500)
+        query = db.query(FileChangeSet).filter(FileChangeSet.owner_subject == user.subject).order_by(FileChangeSet.created_at.desc())
+        if args.get("origin"):
+            query = query.filter(FileChangeSet.origin == str(args["origin"]))
+        if args.get("resource_id"):
+            query = query.filter(FileChangeSet.resource_id == str(args["resource_id"]))
+        return _result({"changes": [_file_change_payload(change) for change in query.limit(safe_limit).all()]})
     if name == "list_files":
         root = _workspace(user, settings)
         target = _safe_path(user, settings, str(args.get("path", ".")))
@@ -1140,7 +1620,26 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 "encoding": result.get("encoding"),
                 "replacements": int(result.get("replacements", 0)),
                 "content": result.get("content"),
+                "diff": result.get("diff")
+                or {
+                    "format": "unified",
+                    "suppressed": True,
+                    "reason": "not provided by thin client",
+                    "truncated": False,
+                    "added_lines": 0,
+                    "removed_lines": 0,
+                    "hunks": [],
+                },
             }
+            file_change = _persist_file_change(
+                db,
+                user=user,
+                origin="thin_client",
+                resource_id=client.id,
+                tool_call_id=tool_call_id,
+                structured=structured,
+            )
+            structured["file_change_id"] = file_change.id
         elif tool.startswith("browser_"):
             result_payload = dict(result)
             image_base64 = result_payload.pop("image_base64", None)

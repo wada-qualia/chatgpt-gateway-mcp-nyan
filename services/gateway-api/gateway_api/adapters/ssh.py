@@ -1,17 +1,55 @@
 from __future__ import annotations
 
+import ast
+import io
+import json
 import re
+import socket
 import subprocess
 from dataclasses import dataclass
+from typing import Any, Callable, Protocol
 
 from fastapi import HTTPException, status
+from sqlalchemy.orm import Session
+
+from ..crypto import decrypt_text
+from ..models import Device, SecretBlob
 
 
-@dataclass
+@dataclass(frozen=True)
 class SshTarget:
     username: str
     host: str
     port: int
+
+
+@dataclass(frozen=True)
+class SshCredentials:
+    auth_type: str
+    secret: str | None = None
+    passphrase: str | None = None
+
+
+@dataclass(frozen=True)
+class SshCommandResult:
+    exit_code: int
+    stdout: str = ""
+    stderr: str = ""
+
+
+class SshClientProtocol(Protocol):
+    def set_missing_host_key_policy(self, policy: Any) -> None: ...
+
+    def load_system_host_keys(self) -> None: ...
+
+    def connect(self, **kwargs: Any) -> None: ...
+
+    def exec_command(self, command: str, timeout: int | float | None = None) -> tuple[Any, Any, Any]: ...
+
+    def close(self) -> None: ...
+
+
+SshClientFactory = Callable[[], SshClientProtocol]
 
 
 def parse_ssh_target(target: str) -> SshTarget:
@@ -22,6 +60,46 @@ def parse_ssh_target(target: str) -> SshTarget:
     if port < 1 or port > 65535:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="SSH port is out of range")
     return SshTarget(username=match.group("user"), host=match.group("host"), port=port)
+
+
+def serialize_ssh_secret(secret_value: str, passphrase: str | None = None) -> str:
+    return json.dumps({"secret": secret_value, "passphrase": passphrase}, ensure_ascii=False, separators=(",", ":"))
+
+
+def parse_ssh_secret_payload(raw_payload: str, *, auth_type: str) -> SshCredentials:
+    try:
+        decoded = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        try:
+            decoded = ast.literal_eval(raw_payload)
+        except (SyntaxError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Stored SSH credential payload is not readable") from exc
+    if not isinstance(decoded, dict):
+        raise HTTPException(status_code=400, detail="Stored SSH credential payload has invalid shape")
+    secret = decoded.get("secret")
+    passphrase = decoded.get("passphrase")
+    if secret is not None and not isinstance(secret, str):
+        raise HTTPException(status_code=400, detail="Stored SSH credential secret has invalid shape")
+    if passphrase is not None and not isinstance(passphrase, str):
+        raise HTTPException(status_code=400, detail="Stored SSH credential passphrase has invalid shape")
+    if auth_type != "agent" and not secret:
+        raise HTTPException(status_code=400, detail="Stored SSH credential is missing")
+    return SshCredentials(auth_type=auth_type, secret=secret, passphrase=passphrase)
+
+
+def load_device_credentials(device: Device, db: Session) -> SshCredentials:
+    if device.auth_type == "agent":
+        return SshCredentials(auth_type="agent")
+    if not device.credential_secret_id:
+        raise HTTPException(status_code=400, detail="Device credential is missing")
+    secret = db.get(SecretBlob, device.credential_secret_id)
+    if secret is None or secret.owner_subject != device.owner_subject:
+        raise HTTPException(status_code=400, detail="Device credential is missing")
+    expected_kind = f"ssh:{device.auth_type}"
+    if secret.kind != expected_kind:
+        raise HTTPException(status_code=400, detail="Device credential kind does not match device auth type")
+    decrypted = decrypt_text(secret.ciphertext)
+    return parse_ssh_secret_payload(decrypted, auth_type=device.auth_type)
 
 
 def verify_ssh_key_connection(target: SshTarget) -> str:
@@ -45,3 +123,131 @@ def verify_ssh_key_connection(target: SshTarget) -> str:
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=result.stderr.strip() or "SSH verification failed")
     return "verified"
+
+
+def check_ssh_tcp_connection(target: SshTarget, timeout: float = 5.0) -> str:
+    try:
+        with socket.create_connection((target.host, target.port), timeout=timeout):
+            return "reachable"
+    except OSError:
+        return "unreachable"
+
+
+def _load_paramiko() -> Any:
+    try:
+        import paramiko
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="SSH execution dependency is not installed") from exc
+    return paramiko
+
+
+def _private_key_from_text(paramiko: Any, key_text: str, passphrase: str | None) -> Any:
+    key_errors: list[str] = []
+    for key_class_name in ("Ed25519Key", "ECDSAKey", "RSAKey", "DSSKey"):
+        key_class = getattr(paramiko, key_class_name, None)
+        if key_class is None:
+            continue
+        try:
+            return key_class.from_private_key(io.StringIO(key_text), password=passphrase)
+        except Exception as exc:  # pragma: no cover - exact Paramiko exceptions differ by key class.
+            key_errors.append(f"{key_class_name}: {exc}")
+    raise HTTPException(status_code=400, detail="Stored SSH private key could not be loaded")
+
+
+def _status_from_ssh_exception(exc: Exception) -> int:
+    message = str(exc).lower()
+    if "authentication" in message or "auth" in message or "not a valid" in message:
+        return 401
+    if "timed out" in message or "timeout" in message:
+        return 504
+    return 502
+
+
+def _ssh_client(
+    device: Device,
+    credentials: SshCredentials,
+    *,
+    timeout_seconds: int | float,
+    client_factory: SshClientFactory | None = None,
+) -> SshClientProtocol:
+    paramiko = None if client_factory else _load_paramiko()
+    client = client_factory() if client_factory else paramiko.SSHClient()
+    if hasattr(client, "load_system_host_keys"):
+        client.load_system_host_keys()
+    if paramiko is not None and hasattr(client, "set_missing_host_key_policy"):
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    connect_kwargs: dict[str, Any] = {
+        "hostname": device.host,
+        "port": device.port,
+        "username": device.username,
+        "timeout": timeout_seconds,
+        "banner_timeout": timeout_seconds,
+        "auth_timeout": timeout_seconds,
+        "look_for_keys": credentials.auth_type == "agent",
+        "allow_agent": credentials.auth_type == "agent",
+    }
+    if credentials.auth_type == "password":
+        connect_kwargs["password"] = credentials.secret
+        connect_kwargs["look_for_keys"] = False
+        connect_kwargs["allow_agent"] = False
+    elif credentials.auth_type == "private_key":
+        if paramiko is None:
+            connect_kwargs["pkey"] = credentials.secret
+        else:
+            connect_kwargs["pkey"] = _private_key_from_text(paramiko, credentials.secret or "", credentials.passphrase)
+        connect_kwargs["look_for_keys"] = False
+        connect_kwargs["allow_agent"] = False
+    elif credentials.auth_type != "agent":
+        raise HTTPException(status_code=400, detail="Unsupported SSH auth type")
+    try:
+        client.connect(**connect_kwargs)
+    except Exception as exc:
+        raise HTTPException(status_code=_status_from_ssh_exception(exc), detail="SSH connection failed") from exc
+    return client
+
+
+def verify_ssh_connection(
+    device: Device,
+    credentials: SshCredentials,
+    *,
+    timeout_seconds: int | float = 15,
+    client_factory: SshClientFactory | None = None,
+) -> str:
+    client = _ssh_client(device, credentials, timeout_seconds=timeout_seconds, client_factory=client_factory)
+    try:
+        return "verified"
+    finally:
+        client.close()
+
+
+def _read_stream(stream: Any) -> str:
+    data = stream.read()
+    if isinstance(data, bytes):
+        return data.decode("utf-8", errors="replace")
+    return str(data or "")
+
+
+def run_ssh_command(
+    device: Device,
+    credentials: SshCredentials,
+    *,
+    command: str,
+    timeout_seconds: int | float = 30,
+    client_factory: SshClientFactory | None = None,
+) -> SshCommandResult:
+    if not command.strip():
+        raise HTTPException(status_code=400, detail="SSH command must not be empty")
+    client = _ssh_client(device, credentials, timeout_seconds=timeout_seconds, client_factory=client_factory)
+    try:
+        _, stdout, stderr = client.exec_command(command, timeout=timeout_seconds)
+        stdout_text = _read_stream(stdout)
+        stderr_text = _read_stream(stderr)
+        exit_status = 0
+        channel = getattr(stdout, "channel", None)
+        if channel is not None and hasattr(channel, "recv_exit_status"):
+            exit_status = int(channel.recv_exit_status())
+        return SshCommandResult(exit_code=exit_status, stdout=stdout_text, stderr=stderr_text)
+    except Exception as exc:
+        raise HTTPException(status_code=_status_from_ssh_exception(exc), detail="SSH command execution failed") from exc
+    finally:
+        client.close()

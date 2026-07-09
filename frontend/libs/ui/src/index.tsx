@@ -92,7 +92,7 @@ export function CommandBox({ children, className, selectable = false, ...props }
 }
 
 function statusClass(status: string) {
-  if (status === 'online' || status === 'running' || status === 'active' || status === 'success' || status === 'completed') return 'good';
-  if (status === 'pending' || status === 'stopped' || status === 'frozen' || status === 'disconnecting') return 'warn';
+  if (status === 'online' || status === 'running' || status === 'active' || status === 'success' || status === 'completed' || status === 'reachable' || status === 'verified') return 'good';
+  if (status === 'pending' || status === 'stopped' || status === 'frozen' || status === 'disconnecting' || status === 'registered') return 'warn';
   return 'bad';
 }

@@ -62,6 +62,8 @@ const nav: GatewayNavItem[] = [
   { id: "audit", label: "Audit", icon: FileText },
 ];
 
+const DEVICE_PANEL_CLOSED = "__device_panel_closed__";
+
 export function GatewayDashboardPage({
   initialPage = "devices",
 }: {
@@ -94,16 +96,27 @@ export function GatewayDashboardPage({
           isLoading={controller.meState.isLoading}
           user={controller.me.data}
         />
-        <section className="content-grid">
+        <section className={`content-grid ${controller.active === "devices" && controller.selected ? "" : "without-detail"}`}>
           <div className="main-pane">
             <OperationBanner message={controller.operationError} />
             <ActiveGatewayPage controller={controller} />
           </div>
-          <DeviceDetailPanel
-            selected={controller.selected}
-            thinClients={controller.thinClients.length}
-            workspaces={controller.workspaces.length}
-          />
+          {controller.active === "devices" && controller.selected ? (
+            <DeviceDetailPanel
+              isDeleting={controller.deleteDevice.isPending}
+              isTesting={controller.testDeviceConnection.isPending}
+              isUpdating={controller.updateDevice.isPending}
+              onClose={controller.closeDeviceDetails}
+              onDelete={(deviceId) => controller.deleteDevice.mutate(deviceId)}
+              onTestConnection={(deviceId) => controller.testDeviceConnection.mutate(deviceId)}
+              onUpdate={(deviceId, payload) =>
+                controller.updateDevice.mutate({ deviceId, payload })
+              }
+              selected={controller.selected}
+              thinClients={controller.thinClients.length}
+              workspaces={controller.workspaces.length}
+            />
+          ) : null}
         </section>
       </main>
     </div>
@@ -189,7 +202,7 @@ export function DevicesPage({ controller }: { controller: GatewayController }) {
         onSelect={controller.setSelectedId}
         search={controller.search}
         selectedId={controller.selected?.id}
-        total={controller.devices.length}
+        total={controller.filteredDevices.length}
       />
       <DeviceForm
         authType={controller.authType}
@@ -307,6 +320,9 @@ export function MonitoringPage({ controller }: { controller: GatewayController }
       <MonitoringSessionsPanel
         emptyMessage="No command sessions yet."
         errorMessage={controller.commandSessionsState.errorMessage}
+        fileChanges={controller.fileChanges}
+        fileChangesErrorMessage={controller.fileChangesState.errorMessage}
+        fileChangesIsLoading={controller.fileChangesState.isLoading}
         isLoading={controller.commandSessionsState.isLoading}
         onForceTerminate={(sessionId) =>
           controller.forceTerminateCommandSession.mutate(sessionId)
@@ -413,6 +429,11 @@ function useGatewayController(
     queryFn: api.commandSessions,
     refetchInterval: 3000,
   });
+  const fileChangesQuery = useQuery({
+    queryKey: ["fileChanges"],
+    queryFn: () => api.fileChanges({ limit: 50 }),
+    refetchInterval: 5000,
+  });
 
   const devices = devicesQuery.data ?? [];
   const workspaces = workspacesQuery.data ?? [];
@@ -420,9 +441,10 @@ function useGatewayController(
   const grants = grantsQuery.data ?? [];
   const audit = auditQuery.data ?? [];
   const commandSessions = commandSessionsQuery.data ?? [];
-  const selectedCommandSession =
-    commandSessions.find((session) => session.id === selectedCommandSessionId) ??
-    commandSessions[0];
+  const fileChanges = fileChangesQuery.data ?? [];
+  const selectedCommandSession = commandSessions.find(
+    (session) => session.id === selectedCommandSessionId,
+  );
   const commandSessionOutputQuery = useQuery({
     enabled: Boolean(selectedCommandSession?.id),
     queryKey: ["commandSessionOutput", selectedCommandSession?.id],
@@ -444,7 +466,9 @@ function useGatewayController(
         ? "No Docker images available from API"
         : undefined;
   const selected =
-    devices.find((device) => device.id === selectedId) ?? devices[0];
+    selectedId === DEVICE_PANEL_CLOSED
+      ? undefined
+      : devices.find((device) => device.id === selectedId) ?? devices[0];
   const filteredDevices = useMemo(
     () =>
       devices.filter((device) =>
@@ -482,6 +506,44 @@ function useGatewayController(
       queryClient.invalidateQueries({ queryKey: ["devices"] });
     },
   });
+
+  const updateDevice = useMutation({
+    mutationFn: ({
+      deviceId,
+      payload,
+    }: {
+      deviceId: string;
+      payload: {
+        auth_type?: string;
+        name?: string;
+        password?: string;
+        private_key?: string;
+        target?: string;
+      };
+    }) => api.updateDevice(deviceId, payload),
+    onSuccess: (device) => {
+      setSelectedId(device.id);
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+
+  const testDeviceConnection = useMutation({
+    mutationFn: api.testDeviceConnection,
+    onSuccess: (device) => {
+      setSelectedId(device.id);
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+
+  const deleteDevice = useMutation({
+    mutationFn: api.deleteDevice,
+    onSuccess: () => {
+      setSelectedId(DEVICE_PANEL_CLOSED);
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+
+  const closeDeviceDetails = () => setSelectedId(DEVICE_PANEL_CLOSED);
 
   const createWorkspace = useMutation({
     mutationFn: () => {
@@ -632,6 +694,9 @@ function useGatewayController(
   const operationError =
     [
       createDevice.error,
+      updateDevice.error,
+      testDeviceConnection.error,
+      deleteDevice.error,
       createWorkspace.error,
       updateWorkspace.error,
       cloneWorkspace.error,
@@ -658,6 +723,7 @@ function useGatewayController(
     cloneWorkspace,
     commandSessionOutput: commandSessionOutputQuery.data,
     commandSessionOutputState: getQueryState(commandSessionOutputQuery),
+    closeDeviceDetails,
     commandSessions,
     commandSessionsState: getQueryState(commandSessionsQuery),
     commandSessionToolCalls: commandSessionToolCallsQuery.data ?? [],
@@ -665,12 +731,15 @@ function useGatewayController(
     createDevice,
     createWorkspace,
     createWorkspaceTitle,
+    deleteDevice,
     deleteWorkspace,
     devices,
     devicesState: getQueryState(devicesQuery),
     editWorkspaceDescription,
     editWorkspaceName,
     editingWorkspaceId,
+    fileChanges,
+    fileChangesState: getQueryState(fileChangesQuery),
     filteredDevices,
     forceTerminateCommandSession,
     grants,
@@ -701,6 +770,8 @@ function useGatewayController(
     thinClients,
     thinClientsState: getQueryState(thinClientsQuery),
     terminateCommandSession,
+    testDeviceConnection,
+    updateDevice,
     updateWorkspace,
     workspaces,
     workspacesState: getQueryState(workspacesQuery),

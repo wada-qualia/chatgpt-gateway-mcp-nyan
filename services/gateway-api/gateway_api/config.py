@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     oauth_supported_scopes: str = "workspace:read workspace:write workspace:exec devices:manage docker:manage audit:read"
     gateway_docker_enabled: bool = False
     gateway_docker_allowed_images: str = Field(default="ubuntu:24.04,ubuntu:22.04,ubuntu:20.04")
+    gateway_ssh_enabled: bool = True
+    gateway_ssh_allowed_actions: str = Field(default="uptime,disk_usage,memory_usage,whoami,pwd,home_list")
+    gateway_ssh_allow_raw_command: bool = False
+    gateway_ssh_raw_command_max_chars: int = 500
+    gateway_ssh_raw_command_denied_patterns: str = Field(
+        default="sudo\\b,su\\b,reboot\\b,shutdown\\b,mkfs\\b,mount\\b,umount\\b,chmod\\s+-R,chown\\s+-R,>\\s*/dev/"
+    )
     workspace_root: str = "./workspace"
     max_command_timeout_seconds: int = 120
     command_background_after_seconds: int = 30
@@ -45,6 +52,14 @@ class Settings(BaseSettings):
     @property
     def docker_allowed_images(self) -> list[str]:
         return [image.strip() for image in self.gateway_docker_allowed_images.split(",") if image.strip()]
+
+    @property
+    def ssh_allowed_actions(self) -> list[str]:
+        return [action.strip() for action in self.gateway_ssh_allowed_actions.split(",") if action.strip()]
+
+    @property
+    def ssh_raw_command_denied_patterns(self) -> list[str]:
+        return [pattern.strip() for pattern in self.gateway_ssh_raw_command_denied_patterns.split(",") if pattern.strip()]
 
     @property
     def dev_roles(self) -> list[str]:

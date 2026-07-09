@@ -12,6 +12,10 @@
   overflow: hidden;
 }
 
+.content-grid.without-detail {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .main-pane {
   min-width: 0;
   overflow: auto;

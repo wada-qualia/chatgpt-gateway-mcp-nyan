@@ -138,6 +138,27 @@ class AgentToolCall(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class FileChangeSet(Base):
+    __tablename__ = "file_change_sets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    origin: Mapped[str] = mapped_column(String(40), index=True)
+    resource_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    tool_call_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    path: Mapped[str] = mapped_column(Text)
+    operation: Mapped[str] = mapped_column(String(60), index=True)
+    added_lines: Mapped[int] = mapped_column(Integer, default=0)
+    removed_lines: Mapped[int] = mapped_column(Integer, default=0)
+    bytes_before: Mapped[int] = mapped_column(Integer, default=0)
+    bytes_after: Mapped[int] = mapped_column(Integer, default=0)
+    replacements: Mapped[int] = mapped_column(Integer, default=0)
+    diff_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    suppressed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class OAuthClient(Base):
     __tablename__ = "oauth_clients"
 

@@ -28,6 +28,15 @@ class DeviceCreate(BaseModel):
     verify_connection: bool = False
 
 
+class DeviceUpdate(BaseModel):
+    name: str | None = None
+    target: str | None = Field(default=None, description="SSH target in user@host:port form")
+    auth_type: Literal["password", "private_key", "agent"] | None = None
+    password: str | None = None
+    private_key: str | None = None
+    passphrase: str | None = None
+
+
 class DeviceOut(OrmModel):
     id: str
     owner_subject: str
@@ -206,4 +215,23 @@ class AuditEventOut(OrmModel):
     resource_id: str | None = None
     status: str
     payload: dict[str, Any]
+    created_at: datetime
+
+
+class FileChangeSetOut(OrmModel):
+    id: str
+    owner_subject: str
+    origin: str
+    resource_id: str | None = None
+    tool_call_id: str | None = None
+    path: str
+    operation: str
+    added_lines: int
+    removed_lines: int
+    bytes_before: int
+    bytes_after: int
+    replacements: int
+    diff_json: dict[str, Any]
+    truncated: bool
+    suppressed: bool
     created_at: datetime

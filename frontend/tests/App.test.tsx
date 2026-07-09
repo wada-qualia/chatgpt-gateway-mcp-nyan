@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -47,12 +47,66 @@ function mockEmptyGatewayApi() {
       url === '/api/thin-clients' ||
       url === '/api/command-sessions' ||
       url === '/api/access/grants' ||
-      url === '/api/audit/events'
+      url === '/api/audit/events' ||
+      url.startsWith('/api/file-changes')
     ) {
       return jsonResponse([]);
     }
     return jsonResponse({});
   }));
+}
+
+function mockGatewayApiWithDevices(initialDevices: Array<Record<string, unknown>>) {
+  let devices = initialDevices;
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === '/auth/me') {
+      return jsonResponse({ subject: 'dev:local', username: 'darius', email: 'dev@k-lab.local', roles: [], provider: 'keycloak' });
+    }
+    if (url === '/api/docker/images') {
+      return jsonResponse({ images: ['ubuntu:24.04'] });
+    }
+    if (url === '/api/devices') {
+      return jsonResponse(devices);
+    }
+    const deviceMatch = url.match(new RegExp('^/api/devices/([^/]+)(?:/(test))?$'));
+    if (deviceMatch) {
+      const [, deviceId, action] = deviceMatch;
+      const device = devices.find((item) => item.id === deviceId);
+      if (!device) return jsonResponse({ detail: 'Device not found' });
+      if (action === 'test' && init?.method === 'POST') {
+        Object.assign(device, { status: 'reachable' });
+        return jsonResponse(device);
+      }
+      if (init?.method === 'PATCH') {
+        const payload = JSON.parse(String(init.body ?? '{}')) as { name?: string; target?: string };
+        if (payload.name) device.name = payload.name;
+        if (payload.target) {
+          const [username = '', rest = ''] = payload.target.split('@');
+          const [host = '', port = '22'] = rest.split(':');
+          Object.assign(device, { username, host, port: Number(port) });
+        }
+        return jsonResponse(device);
+      }
+      if (init?.method === 'DELETE') {
+        devices = devices.filter((item) => item.id !== deviceId);
+        return jsonResponse({ ok: true });
+      }
+    }
+    if (
+      url === '/api/docker/workspaces' ||
+      url === '/api/thin-clients' ||
+      url === '/api/command-sessions' ||
+      url === '/api/access/grants' ||
+      url === '/api/audit/events' ||
+      url.startsWith('/api/file-changes')
+    ) {
+      return jsonResponse([]);
+    }
+    return jsonResponse({});
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
 }
 
 function mockGatewayApiWithWorkspace() {
@@ -86,7 +140,8 @@ function mockGatewayApiWithWorkspace() {
       url === '/api/thin-clients' ||
       url === '/api/command-sessions' ||
       url === '/api/access/grants' ||
-      url === '/api/audit/events'
+      url === '/api/audit/events' ||
+      url.startsWith('/api/file-changes')
     ) {
       return jsonResponse([]);
     }
@@ -131,7 +186,8 @@ function mockGatewayApiWithThinClient() {
       url === '/api/docker/workspaces' ||
       url === '/api/command-sessions' ||
       url === '/api/access/grants' ||
-      url === '/api/audit/events'
+      url === '/api/audit/events' ||
+      url.startsWith('/api/file-changes')
     ) {
       return jsonResponse([]);
     }
@@ -149,6 +205,23 @@ function mockGatewayApiWithMonitoring() {
     }
     if (url === '/api/docker/images') {
       return jsonResponse({ images: ['ubuntu:24.04'] });
+    }
+    if (url === '/api/devices') {
+      return jsonResponse([
+        {
+          id: 'device-leak-guard',
+          owner_subject: 'dev:local',
+          name: 'ssh-device-detail-leak',
+          kind: 'ssh',
+          host: '10.0.1.66',
+          port: 22,
+          username: 'robot',
+          auth_type: 'password',
+          status: 'verified',
+          created_at: '2026-07-09T00:00:00Z',
+          updated_at: '2026-07-09T00:00:00Z'
+        }
+      ]);
     }
     if (url === '/api/command-sessions') {
       return jsonResponse([
@@ -170,7 +243,45 @@ function mockGatewayApiWithMonitoring() {
           started_at: '2026-07-06T00:00:00Z',
           completed_at: null,
           updated_at: '2026-07-06T00:00:03Z'
-        }
+        },
+        {
+          id: 'session-ssh-1',
+          owner_subject: 'dev:local',
+          origin: 'ssh',
+          resource_id: 'device-1',
+          name: 'whoami on robot',
+          command: 'whoami',
+          cwd: '~',
+          status: 'completed',
+          pid: null,
+          exit_code: 0,
+          line_count: 1,
+          truncated: false,
+          meta: { host: '10.0.1.65', username: 'robot', action: 'whoami' },
+          created_at: '2026-07-06T00:00:05Z',
+          started_at: '2026-07-06T00:00:05Z',
+          completed_at: '2026-07-06T00:00:06Z',
+          updated_at: '2026-07-06T00:00:06Z'
+        },
+        ...Array.from({ length: 10 }, (_, index) => ({
+          id: `session-extra-${index}`,
+          owner_subject: 'dev:local',
+          origin: 'thin_client',
+          resource_id: 'thin-1',
+          name: `extra command ${index}`,
+          command: `echo ${index}`,
+          cwd: '/Users/darius/project',
+          status: 'completed',
+          pid: null,
+          exit_code: 0,
+          line_count: 1,
+          truncated: false,
+          meta: {},
+          created_at: '2026-07-06T00:00:07Z',
+          started_at: '2026-07-06T00:00:07Z',
+          completed_at: '2026-07-06T00:00:08Z',
+          updated_at: '2026-07-06T00:00:08Z'
+        }))
       ]);
     }
     if (url === '/api/command-sessions/session-1/output?tail=200') {
@@ -200,12 +311,53 @@ function mockGatewayApiWithMonitoring() {
         }
       ]);
     }
+    if (url === '/api/file-changes?limit=50') {
+      return jsonResponse([
+        {
+          id: 'change-1',
+          owner_subject: 'dev:local',
+          origin: 'thin_client',
+          resource_id: 'thin-1',
+          tool_call_id: 'tool-call-2',
+          path: 'docs/policy.md',
+          operation: 'replace',
+          added_lines: 1,
+          removed_lines: 1,
+          bytes_before: 11,
+          bytes_after: 15,
+          replacements: 1,
+          truncated: false,
+          suppressed: false,
+          created_at: '2026-07-06T00:00:04Z',
+          diff_json: {
+            format: 'unified',
+            suppressed: false,
+            truncated: false,
+            added_lines: 1,
+            removed_lines: 1,
+            hunks: [
+              {
+                old_start: 1,
+                old_count: 1,
+                new_start: 1,
+                new_count: 1,
+                lines: [
+                  { kind: 'delete', text: 'old policy' },
+                  { kind: 'insert', text: 'updated policy' }
+                ]
+              }
+            ]
+          }
+        }
+      ]);
+    }
     if (
       url === '/api/devices' ||
       url === '/api/docker/workspaces' ||
       url === '/api/thin-clients' ||
       url === '/api/access/grants' ||
-      url === '/api/audit/events'
+      url === '/api/audit/events' ||
+      url.startsWith('/api/file-changes')
     ) {
       return jsonResponse([]);
     }
@@ -242,7 +394,7 @@ test('renders operational gateway dashboard shell', async () => {
   expect(screen.getByRole('button', { name: /^add device$/i })).toBeInTheDocument();
   expect(screen.getByText('New SSH device')).toBeInTheDocument();
   expect(await screen.findByText('No devices registered yet.')).toBeInTheDocument();
-  expect(screen.getByText('No device selected')).toBeInTheDocument();
+  expect(screen.queryByText('No device selected')).not.toBeInTheDocument();
 });
 
 test('dashboard root redirects to devices route', async () => {
@@ -269,6 +421,107 @@ test('devices remote renders only the devices page surface', async () => {
   expect(screen.queryByText('ChatGPT MCP SSH Gateway')).not.toBeInTheDocument();
 });
 
+test('devices pagination renders only available pages', async () => {
+  mockGatewayApiWithDevices([
+    {
+      id: 'device-1',
+      owner_subject: 'dev:local',
+      name: '10.0.1.65',
+      kind: 'ssh',
+      host: '10.0.1.65',
+      port: 22,
+      username: 'robot',
+      auth_type: 'password',
+      status: 'registered',
+      created_at: '2026-07-09T00:00:00Z',
+      updated_at: '2026-07-09T00:00:00Z'
+    }
+  ]);
+  renderWithQuery(<DevicesRemote />);
+
+  expect(await screen.findAllByText('10.0.1.65')).toHaveLength(2);
+  expect(screen.getAllByText('Needs test').length).toBeGreaterThan(0);
+  expect(screen.getByText('1 devices')).toBeInTheDocument();
+  expect(screen.getByText('1-1 of 1')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '1' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '2' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '3' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
+});
+
+test('device detail tabs and actions are interactive', async () => {
+  const fetchMock = mockGatewayApiWithDevices([
+    {
+      id: 'device-1',
+      owner_subject: 'dev:local',
+      name: '10.0.1.65',
+      kind: 'ssh',
+      host: '10.0.1.65',
+      port: 22,
+      username: 'robot',
+      auth_type: 'password',
+      status: 'registered',
+      created_at: '2026-07-09T00:00:00Z',
+      updated_at: '2026-07-09T00:00:00Z'
+    }
+  ]);
+  renderWithQuery(<App />, '/devices');
+
+  expect(await screen.findByRole('heading', { name: '10.0.1.65' })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('tab', { name: /Workspaces/ }));
+  expect(screen.getByText('No workspaces attached')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('tab', { name: /Thin Clients/ }));
+  expect(screen.getByText('No thin clients linked')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('tab', { name: 'Audit' }));
+  expect(screen.getByText('Device Audit')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }));
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/devices/device-1/test',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /Edit/i }));
+  fireEvent.change(screen.getByLabelText('Device name'), { target: { value: 'renamed-box' } });
+  fireEvent.change(screen.getByLabelText('SSH target'), { target: { value: 'robot@10.0.1.66:2222' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/devices/device-1',
+      expect.objectContaining({ method: 'PATCH' })
+    );
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /^Delete$/ }));
+  const firstDialog = screen.getByRole('dialog', { name: 'Delete SSH device?' });
+  expect(firstDialog).toBeInTheDocument();
+  fireEvent.click(within(firstDialog).getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog', { name: 'Delete SSH device?' })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: /^Delete$/ }));
+  const secondDialog = screen.getByRole('dialog', { name: 'Delete SSH device?' });
+  fireEvent.click(within(secondDialog).getByRole('button', { name: 'Delete device' }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/devices/device-1',
+      expect.objectContaining({ method: 'DELETE' })
+    );
+  });
+  await waitFor(() => {
+    expect(screen.queryByText('Delete SSH device?')).not.toBeInTheDocument();
+  });
+  expect(screen.queryByText('No device selected')).not.toBeInTheDocument();
+  expect(document.querySelector('.detail-panel')).toBeNull();
+});
+
 test('docker workspaces remote renders only the workspaces page surface', async () => {
   mockEmptyGatewayApi();
   renderWithQuery(<DockerWorkspacesRemote />);
@@ -278,16 +531,38 @@ test('docker workspaces remote renders only the workspaces page surface', async 
   expect(screen.queryByText('ChatGPT MCP SSH Gateway')).not.toBeInTheDocument();
 });
 
-test('monitoring remote renders sessions, output markers, and tool history', async () => {
+test('monitoring remote renders paginated sessions and selected terminal output', async () => {
   mockGatewayApiWithMonitoring();
   renderWithQuery(<MonitoringRemote />);
   expect(screen.getByRole('heading', { name: 'Monitoring' })).toBeInTheDocument();
-  expect(await screen.findAllByText('brew install')).toHaveLength(2);
+  expect(await screen.findByText('brew install')).toBeInTheDocument();
+  expect(screen.getByText('12 sessions')).toBeInTheDocument();
+  expect(screen.getByText('1-10 of 12')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '2' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Previous command sessions page' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Next command sessions page' })).toBeEnabled();
+  expect(document.querySelector('.terminal-output-panel')).toBeNull();
+  expect(screen.queryByText('==> Fetching php')).not.toBeInTheDocument();
+  expect(screen.getAllByText('Thin client').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('SSH host').length).toBeGreaterThan(0);
+  expect(screen.getByText('robot@10.0.1.65')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText('brew install'));
+
   expect(await screen.findByText('==> Fetching php')).toBeInTheDocument();
+  expect(document.querySelector('.terminal-output-panel')).toBeInTheDocument();
   expect(screen.getByText('auto')).toBeInTheDocument();
   expect(screen.getByText('agent')).toBeInTheDocument();
   expect(screen.getByText('thin_client_run_command')).toBeInTheDocument();
+  expect(await screen.findByText('Recent file changes')).toBeInTheDocument();
+  expect(screen.getByText('docs/policy.md')).toBeInTheDocument();
+  expect(screen.getByText('old policy')).toBeInTheDocument();
+  expect(screen.getByText('updated policy')).toBeInTheDocument();
+  expect(screen.getByText('+1')).toBeInTheDocument();
+  expect(screen.getByText('-1')).toBeInTheDocument();
   expect(screen.queryByText('ChatGPT MCP SSH Gateway')).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'ssh-device-detail-leak' })).not.toBeInTheDocument();
+  expect(document.querySelector('.detail-panel')).toBeNull();
 });
 
 test('docker workspaces surface exposes lifecycle actions', async () => {

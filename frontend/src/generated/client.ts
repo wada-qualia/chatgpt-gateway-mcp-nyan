@@ -127,6 +127,48 @@ export type AgentToolCall = {
   completed_at: string | null;
 };
 
+export type FileChangeDiffLine = {
+  kind: 'context' | 'delete' | 'insert';
+  text: string;
+};
+
+export type FileChangeDiffHunk = {
+  old_start: number;
+  old_count: number;
+  new_start: number;
+  new_count: number;
+  lines: FileChangeDiffLine[];
+};
+
+export type FileChangeDiff = {
+  format: string;
+  suppressed: boolean;
+  reason?: string | null;
+  truncated: boolean;
+  added_lines: number;
+  removed_lines: number;
+  hunks: FileChangeDiffHunk[];
+};
+
+export type FileChangeSet = {
+  id: string;
+  owner_subject: string;
+  origin: string;
+  resource_id: string | null;
+  tool_call_id: string | null;
+  path: string;
+  operation: string;
+  added_lines: number;
+  removed_lines: number;
+  bytes_before: number;
+  bytes_after: number;
+  replacements: number;
+  diff_json: FileChangeDiff;
+  truncated: boolean;
+  suppressed: boolean;
+  created_at: string;
+};
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     credentials: 'include',
@@ -147,6 +189,12 @@ export const api = {
   devices: () => request<Device[]>('/api/devices'),
   createDevice: (payload: { name: string; target: string; auth_type: string; password?: string; private_key?: string }) =>
     request<Device>('/api/devices', { method: 'POST', body: JSON.stringify(payload) }),
+  updateDevice: (deviceId: string, payload: { name?: string; target?: string; auth_type?: string; password?: string; private_key?: string }) =>
+    request<Device>(`/api/devices/${deviceId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  testDeviceConnection: (deviceId: string) =>
+    request<Device>(`/api/devices/${deviceId}/test`, { method: 'POST', body: '{}' }),
+  deleteDevice: (deviceId: string) =>
+    request<{ ok: boolean }>(`/api/devices/${deviceId}`, { method: 'DELETE' }),
   images: () => request<{ images: string[] }>('/api/docker/images'),
   workspaces: () => request<Workspace[]>('/api/docker/workspaces'),
   createWorkspace: (payload: { name: string; image: string }) =>
@@ -170,6 +218,14 @@ export const api = {
   deleteThinClient: (clientId: string) =>
     request<{ ok: boolean }>(`/api/thin-clients/${clientId}`, { method: 'DELETE' }),
   commandSessions: () => request<CommandSession[]>('/api/command-sessions'),
+  fileChanges: (params: { limit?: number; origin?: string; resource_id?: string } = {}) => {
+    const query = new URLSearchParams();
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.origin) query.set('origin', params.origin);
+    if (params.resource_id) query.set('resource_id', params.resource_id);
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return request<FileChangeSet[]>(`/api/file-changes${suffix}`);
+  },
   commandSessionOutput: (sessionId: string, params: { start_line?: number; limit?: number; tail?: number } = {}) => {
     const query = new URLSearchParams();
     Object.entries(params).forEach(([key, value]) => {

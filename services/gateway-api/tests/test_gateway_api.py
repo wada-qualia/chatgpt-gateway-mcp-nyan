@@ -4,7 +4,6 @@ import asyncio
 import json
 import base64
 import hashlib
-import os
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -13,6 +12,10 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+
+
+class NoteError(AssertionError):
+    pass
 
 
 @pytest.fixture()
@@ -103,6 +106,223 @@ def test_device_registration_encrypts_secret(client: TestClient) -> None:
     with SessionLocal() as db:
         secret = db.query(SecretBlob).one()
         assert "plain-password" not in secret.ciphertext
+
+
+def test_ssh_secret_payload_parser_supports_json_and_legacy_shapes() -> None:
+    from gateway_api.adapters.ssh import parse_ssh_secret_payload, serialize_ssh_secret
+
+    parsed = parse_ssh_secret_payload(serialize_ssh_secret("json-value", "json-passphrase"), auth_type="password")
+    assert parsed.auth_type == "password"
+    assert parsed.secret == "json-value"
+    assert parsed.passphrase == "json-passphrase"
+
+    legacy = parse_ssh_secret_payload("{'secret': 'legacy-value', 'passphrase': None}", auth_type="private_key")
+    assert legacy.auth_type == "private_key"
+    assert legacy.secret == "legacy-value"
+    assert legacy.passphrase is None
+
+
+def test_device_registration_stores_json_secret_payload(client: TestClient) -> None:
+    response = client.post(
+        "/api/devices",
+        json={"name": "stage-box", "target": "ubuntu@10.0.0.7:2222", "auth_type": "password", "password": "json-secret-value"},
+    )
+    assert response.status_code == 201
+
+    from gateway_api.adapters.ssh import load_device_credentials
+    from gateway_api.crypto import decrypt_text
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import Device, SecretBlob
+
+    with SessionLocal() as db:
+        device = db.query(Device).one()
+        secret = db.query(SecretBlob).one()
+        raw_payload = decrypt_text(secret.ciphertext)
+        assert raw_payload.startswith("{")
+        assert "'secret'" not in raw_payload
+        credentials = load_device_credentials(device, db)
+        assert credentials.auth_type == "password"
+        assert credentials.secret == "json-secret-value"
+
+
+def test_ssh_adapter_uses_backend_credentials_with_mock_client() -> None:
+    from types import SimpleNamespace
+
+    from gateway_api.adapters.ssh import SshCredentials, run_ssh_command, verify_ssh_connection
+
+    class FakeChannel:
+        def recv_exit_status(self) -> int:
+            return 0
+
+    class FakeStream:
+        channel = FakeChannel()
+
+        def __init__(self, data: str) -> None:
+            self.data = data
+
+        def read(self) -> str:
+            return self.data
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.connect_kwargs: dict | None = None
+            self.commands: list[str] = []
+            self.closed = False
+
+        def set_missing_host_key_policy(self, policy) -> None:
+            pass
+
+        def load_system_host_keys(self) -> None:
+            pass
+
+        def connect(self, **kwargs) -> None:
+            self.connect_kwargs = kwargs
+
+        def exec_command(self, command: str, timeout=None):
+            self.commands.append(command)
+            return None, FakeStream("remote-output\n"), FakeStream("")
+
+        def close(self) -> None:
+            self.closed = True
+
+    clients: list[FakeClient] = []
+
+    def factory() -> FakeClient:
+        client = FakeClient()
+        clients.append(client)
+        return client
+
+    device = SimpleNamespace(host="192.0.2.10", port=2222, username="robot", auth_type="password")
+    credentials = SshCredentials(auth_type="password", secret="backend-only-secret")
+
+    assert verify_ssh_connection(device, credentials, timeout_seconds=7, client_factory=factory) == "verified"
+    result = run_ssh_command(device, credentials, command="whoami", timeout_seconds=7, client_factory=factory)
+
+    assert result.exit_code == 0
+    assert result.stdout == "remote-output\n"
+    assert len(clients) == 2
+    assert clients[0].connect_kwargs == {
+        "hostname": "192.0.2.10",
+        "port": 2222,
+        "username": "robot",
+        "timeout": 7,
+        "banner_timeout": 7,
+        "auth_timeout": 7,
+        "look_for_keys": False,
+        "allow_agent": False,
+        "password": "backend-only-secret",
+    }
+    assert clients[1].commands == ["whoami"]
+    assert all(client.closed for client in clients)
+
+
+def test_device_registration_flushes_secret_before_commit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sqlalchemy.orm import Session as OrmSession
+
+    assert client.get("/auth/me").status_code == 200
+
+    events: list[tuple[str, tuple[str, ...]]] = []
+    original_flush = OrmSession.flush
+    original_commit = OrmSession.commit
+
+    def tracked_flush(self, *args, **kwargs):
+        events.append(("flush", tuple(sorted(type(obj).__name__ for obj in self.new))))
+        return original_flush(self, *args, **kwargs)
+
+    def tracked_commit(self, *args, **kwargs):
+        events.append(("commit", tuple()))
+        return original_commit(self, *args, **kwargs)
+
+    monkeypatch.setattr(OrmSession, "flush", tracked_flush)
+    monkeypatch.setattr(OrmSession, "commit", tracked_commit)
+
+    response = client.post(
+        "/api/devices",
+        json={"name": "stage-box", "target": "ubuntu@10.0.0.6:2222", "auth_type": "password", "password": "plain-password"},
+    )
+
+    assert response.status_code == 201
+    assert ("flush", ("SecretBlob",)) in events
+    assert any(event == "commit" for event, _ in events)
+
+
+def test_device_detail_actions_update_test_and_delete(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    created = client.post(
+        "/api/devices",
+        json={"name": "stage-box", "target": "ubuntu@10.0.0.5:2222", "auth_type": "password", "password": "plain-password"},
+    )
+    assert created.status_code == 201
+    device_id = created.json()["id"]
+
+    updated = client.patch(
+        f"/api/devices/{device_id}",
+        json={"name": "renamed-box", "target": "robot@10.0.0.6:2022"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "renamed-box"
+    assert updated.json()["username"] == "robot"
+    assert updated.json()["host"] == "10.0.0.6"
+    assert updated.json()["port"] == 2022
+
+    import gateway_api.routers.devices as devices_router
+
+    monkeypatch.setattr(devices_router, "check_ssh_tcp_connection", lambda target: "reachable")
+    monkeypatch.setattr(devices_router, "verify_ssh_connection", lambda device, credentials: "verified")
+    tested = client.post(f"/api/devices/{device_id}/test")
+    assert tested.status_code == 200
+    assert tested.json()["status"] == "verified"
+
+    deleted = client.delete(f"/api/devices/{device_id}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"ok": True}
+    assert client.get("/api/devices").json() == []
+
+
+def test_device_connection_test_sets_auth_failed_on_ssh_auth_error(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    created = client.post(
+        "/api/devices",
+        json={"name": "stage-box", "target": "ubuntu@10.0.0.8:2222", "auth_type": "password", "password": "wrong-value"},
+    )
+    assert created.status_code == 201
+    device_id = created.json()["id"]
+
+    import gateway_api.routers.devices as devices_router
+
+    monkeypatch.setattr(devices_router, "check_ssh_tcp_connection", lambda target: "reachable")
+
+    def fail_auth(device, credentials):
+        raise HTTPException(status_code=401, detail="SSH connection failed")
+
+    monkeypatch.setattr(devices_router, "verify_ssh_connection", fail_auth)
+
+    tested = client.post(f"/api/devices/{device_id}/test")
+    assert tested.status_code == 200
+    assert tested.json()["status"] == "auth_failed"
+
+
+def test_device_connection_test_skips_auth_when_tcp_unreachable(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    created = client.post(
+        "/api/devices",
+        json={"name": "stage-box", "target": "ubuntu@10.0.0.9:2222", "auth_type": "password", "password": "unused-value"},
+    )
+    assert created.status_code == 201
+    device_id = created.json()["id"]
+
+    import gateway_api.routers.devices as devices_router
+
+    calls = {"verified": 0}
+    monkeypatch.setattr(devices_router, "check_ssh_tcp_connection", lambda target: "unreachable")
+
+    def verify_should_not_run(device, credentials):
+        calls["verified"] += 1
+        return "verified"
+
+    monkeypatch.setattr(devices_router, "verify_ssh_connection", verify_should_not_run)
+
+    tested = client.post(f"/api/devices/{device_id}/test")
+    assert tested.status_code == 200
+    assert tested.json()["status"] == "unreachable"
+    assert calls["verified"] == 0
 
 
 def test_docker_workspace_allowlist_and_simulated_create(client: TestClient) -> None:
@@ -419,7 +639,7 @@ def test_thin_client_manager_returns_http_409_when_client_disconnects_during_req
             assert exc.status_code == 409
             assert "Thin client disconnected" in str(exc.detail)
         else:
-            raise AssertionError("disconnect did not become HTTP 409")
+            raise NoteError("disconnect did not become HTTP 409")
 
     asyncio.run(scenario())
 
@@ -432,7 +652,7 @@ def test_mcp_tools_list(client: TestClient) -> None:
     browser_prefix = "thin_client_" + "browser_"
     browser_safe_names = {
         browser_prefix + "page_state",
-        browser_prefix + "page_health",
+        browser_prefix + "page_status",
         browser_prefix + "trace_export",
     }
     browser_hidden_names = {
@@ -445,6 +665,12 @@ def test_mcp_tools_list(client: TestClient) -> None:
     assert "docker_workspace_start" in names
     assert "docker_workspace_delete" in names
     assert "docker_workspace_update" in names
+    assert "file_changes_list" in names
+    assert "ssh_device_info" in names
+    assert "ssh_device_check_connection" in names
+    assert "ssh_device_run_action" in names
+    assert "ssh_device_read_home" in names
+    assert "ssh_device_run_command" not in names
     assert browser_safe_names <= set(names)
     assert browser_hidden_names.isdisjoint(names)
     assert all(tool["inputSchema"]["type"] == "object" for tool in tools)
@@ -461,13 +687,35 @@ def test_mcp_tools_list(client: TestClient) -> None:
     assert "operation" in schemas["thin_client_write_file"]["properties"]
     assert "content_base64" in schemas["thin_client_write_file"]["properties"]
     assert "expected_replacements" in schemas["thin_client_write_file"]["properties"]
+    assert "return_content" in schemas["thin_client_write_file"]["properties"]
+    assert "diff" in schemas["thin_client_write_file"]["properties"]
     assert schemas["thin_client_write_file"]["required"] == ["client_id", "path"]
     assert output_schemas["thin_client_write_file"]["properties"]["bytes"]["type"] == "integer"
     assert output_schemas["thin_client_write_file"]["properties"]["replacements"]["type"] == "integer"
     assert output_schemas["thin_client_write_file"]["properties"]["content"]["type"] == ["string", "null"]
+    assert output_schemas["thin_client_write_file"]["properties"]["diff"]["type"] == "object"
+    assert output_schemas["thin_client_write_file"]["properties"]["diff"]["properties"]["hunks"]["type"] == "array"
+    assert output_schemas["file_changes_list"]["properties"]["changes"]["type"] == "array"
+    assert schemas["ssh_device_info"]["required"] == ["device_id"]
+    assert schemas["ssh_device_info"]["additionalProperties"] is False
+    assert schemas["ssh_device_check_connection"]["required"] == ["device_id"]
+    assert schemas["ssh_device_run_action"]["required"] == ["device_id", "action"]
+    assert set(schemas["ssh_device_run_action"]["properties"]["action"]["enum"]) >= {"whoami", "pwd", "home_list"}
+    assert schemas["ssh_device_read_home"]["required"] == ["device_id"]
+    for ssh_tool in ["ssh_device_info", "ssh_device_check_connection", "ssh_device_run_action", "ssh_device_read_home"]:
+        schema_text = json.dumps(schemas[ssh_tool]).lower()
+        assert "password" not in schema_text
+        assert "private_key" not in schema_text
+        assert output_schemas[ssh_tool]["type"] == "object"
     assert output_schemas["thin_client_run_command"]["properties"]["output"]["type"] == "string"
-    assert output_schemas[browser_prefix + "page_health"]["properties"]["page_health"]["type"] == ["object", "null"]
+    assert output_schemas[browser_prefix + "page_status"]["properties"]["page_status"]["type"] == ["object", "null"]
     assert annotations["workspace_info"]["readOnlyHint"] is True
+    assert annotations["ssh_device_info"]["readOnlyHint"] is True
+    assert annotations["ssh_device_check_connection"]["readOnlyHint"] is True
+    assert annotations["ssh_device_run_action"]["readOnlyHint"] is False
+    assert annotations["ssh_device_run_action"]["destructiveHint"] is True
+    assert annotations["ssh_device_run_action"]["openWorldHint"] is True
+    assert annotations["ssh_device_read_home"]["readOnlyHint"] is True
     assert annotations["list_files"]["readOnlyHint"] is True
     assert annotations["thin_client_run_command"]["readOnlyHint"] is False
     assert annotations["thin_client_run_command"]["destructiveHint"] is True
@@ -475,6 +723,345 @@ def test_mcp_tools_list(client: TestClient) -> None:
     assert annotations["thin_client_write_file"]["readOnlyHint"] is False
     assert annotations["thin_client_write_file"]["openWorldHint"] is False
     assert annotations["docker_workspace_delete"]["destructiveHint"] is True
+
+
+def test_mcp_ssh_descriptors_respect_feature_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    import gateway_api.config as config
+    import gateway_api.routers.mcp as mcp_router
+
+    monkeypatch.setenv("GATEWAY_SSH_ENABLED", "false")
+    config.get_settings.cache_clear()
+    try:
+        names = [tool["name"] for tool in mcp_router._tools()]
+        assert "ssh_device_info" not in names
+        assert "ssh_device_run_action" not in names
+    finally:
+        config.get_settings.cache_clear()
+
+    monkeypatch.setenv("GATEWAY_SSH_ENABLED", "true")
+    monkeypatch.setenv("GATEWAY_SSH_ALLOW_RAW_COMMAND", "true")
+    config.get_settings.cache_clear()
+    try:
+        tools = mcp_router._tools()
+        names = [tool["name"] for tool in tools]
+        assert "ssh_device_run_command" in names
+        raw = next(tool for tool in tools if tool["name"] == "ssh_device_run_command")
+        assert raw["annotations"]["destructiveHint"] is True
+        assert raw["annotations"]["openWorldHint"] is True
+    finally:
+        config.get_settings.cache_clear()
+
+
+def test_mcp_ssh_device_info_and_check_connection(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    created = client.post(
+        "/api/devices",
+        json={"name": "ssh-stage", "target": "robot@192.0.2.20:2222", "auth_type": "password", "password": "stored-value"},
+    )
+    assert created.status_code == 201
+    device_id = created.json()["id"]
+
+    info = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 60,
+            "method": "tools/call",
+            "params": {"name": "ssh_device_info", "arguments": {"device_id": device_id}},
+        },
+    )
+    assert info.status_code == 200
+    structured = info.json()["result"]["structuredContent"]
+    assert structured["device_id"] == device_id
+    assert structured["name"] == "ssh-stage"
+    assert structured["host"] == "192.0.2.20"
+    assert structured["username"] == "robot"
+    assert "stored-value" not in info.text
+
+    import gateway_api.routers.mcp as mcp_router
+
+    seen: dict[str, object] = {}
+
+    def fake_verify(device, credentials, *, timeout_seconds=15):
+        seen["device_id"] = device.id
+        seen["timeout_seconds"] = timeout_seconds
+        seen["auth_type"] = credentials.auth_type
+        return "verified"
+
+    monkeypatch.setattr(mcp_router, "verify_ssh_connection", fake_verify)
+
+    checked = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 61,
+            "method": "tools/call",
+            "params": {
+                "name": "ssh_device_check_connection",
+                "arguments": {"device_id": device_id, "timeout_seconds": 9},
+            },
+        },
+    )
+    assert checked.status_code == 200
+    checked_structured = checked.json()["result"]["structuredContent"]
+    assert checked_structured["status"] == "verified"
+    assert checked_structured["detail"] == "authenticated"
+    assert seen == {"device_id": device_id, "timeout_seconds": 9, "auth_type": "password"}
+
+
+def test_mcp_ssh_run_action_creates_monitored_session_and_output(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    created = client.post(
+        "/api/devices",
+        json={"name": "ssh-stage", "target": "robot@192.0.2.21:2222", "auth_type": "password", "password": "stored-value"},
+    )
+    assert created.status_code == 201
+    device_id = created.json()["id"]
+
+    import gateway_api.routers.mcp as mcp_router
+    from gateway_api.adapters.ssh import SshCommandResult
+
+    calls: list[dict[str, object]] = []
+
+    def fake_run(device, credentials, *, command: str, timeout_seconds=30):
+        calls.append({"device_id": device.id, "command": command, "timeout_seconds": timeout_seconds, "auth_type": credentials.auth_type})
+        return SshCommandResult(exit_code=0, stdout="robot\n", stderr="")
+
+    monkeypatch.setattr(mcp_router, "run_ssh_command", fake_run)
+
+    response = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 62,
+            "method": "tools/call",
+            "params": {
+                "name": "ssh_device_run_action",
+                "arguments": {"device_id": device_id, "action": "whoami", "timeout_seconds": 5},
+            },
+        },
+    )
+    assert response.status_code == 200
+    structured = response.json()["result"]["structuredContent"]
+    assert structured["ok"] is True
+    assert structured["device_id"] == device_id
+    assert structured["action"] == "whoami"
+    assert structured["command"] == "whoami"
+    assert structured["exit_code"] == 0
+    assert structured["status"] == "completed"
+    assert structured["backgrounded"] is False
+    assert structured["output"] == "robot"
+    assert calls == [{"device_id": device_id, "command": "whoami", "timeout_seconds": 5, "auth_type": "password"}]
+
+    session_id = structured["session_id"]
+    session = client.get(f"/api/command-sessions/{session_id}")
+    assert session.status_code == 200
+    assert session.json()["origin"] == "ssh"
+    assert session.json()["resource_id"] == device_id
+
+    output = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 63,
+            "method": "tools/call",
+            "params": {"name": "monitoring_read_output", "arguments": {"session_id": session_id, "tail": 5}},
+        },
+    )
+    assert output.status_code == 200
+    assert output.json()["result"]["structuredContent"]["output"]["lines"][-1]["text"] == "robot"
+
+
+def test_mcp_ssh_run_action_rejects_unknown_action(client: TestClient) -> None:
+    created = client.post(
+        "/api/devices",
+        json={"name": "ssh-stage", "target": "robot@192.0.2.22:2222", "auth_type": "password", "password": "stored-value"},
+    )
+    assert created.status_code == 201
+
+    response = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 64,
+            "method": "tools/call",
+            "params": {
+                "name": "ssh_device_run_action",
+                "arguments": {"device_id": created.json()["id"], "action": "not_allowed"},
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == 400
+    assert "Unsupported SSH action" in response.json()["error"]["message"]
+
+
+def test_mcp_ssh_raw_command_disabled_by_default(client: TestClient) -> None:
+    created = client.post(
+        "/api/devices",
+        json={"name": "ssh-stage", "target": "robot@192.0.2.23:2222", "auth_type": "password", "password": "stored-value"},
+    )
+    assert created.status_code == 201
+
+    response = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 65,
+            "method": "tools/call",
+            "params": {
+                "name": "ssh_device_run_command",
+                "arguments": {"device_id": created.json()["id"], "command": "id"},
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == 404
+
+
+def test_mcp_ssh_raw_command_enabled_runs_safe_single_line(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gateway_api.config as config
+    import gateway_api.routers.mcp as mcp_router
+    from gateway_api.adapters.ssh import SshCommandResult
+
+    monkeypatch.setenv("GATEWAY_SSH_ALLOW_RAW_COMMAND", "true")
+    monkeypatch.setenv("GATEWAY_SSH_RAW_COMMAND_MAX_CHARS", "80")
+    config.get_settings.cache_clear()
+
+    created = client.post(
+        "/api/devices",
+        json={"name": "ssh-stage", "target": "robot@192.0.2.24:2222", "auth_type": "password", "password": "stored-value"},
+    )
+    assert created.status_code == 201
+    device_id = created.json()["id"]
+
+    calls: list[dict[str, object]] = []
+
+    def fake_run(device, credentials, *, command: str, timeout_seconds=30):
+        calls.append({"device_id": device.id, "command": command, "timeout_seconds": timeout_seconds})
+        return SshCommandResult(exit_code=0, stdout="uid=1000(robot)\n", stderr="")
+
+    monkeypatch.setattr(mcp_router, "run_ssh_command", fake_run)
+    try:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 66,
+                "method": "tools/call",
+                "params": {
+                    "name": "ssh_device_run_command",
+                    "arguments": {"device_id": device_id, "command": "id", "timeout_seconds": 6},
+                },
+            },
+        )
+    finally:
+        config.get_settings.cache_clear()
+
+    assert response.status_code == 200
+    structured = response.json()["result"]["structuredContent"]
+    assert structured["ok"] is True
+    assert structured["action"] == "raw_command"
+    assert structured["command"] == "id"
+    assert structured["status"] == "completed"
+    assert structured["output"] == "uid=1000(robot)"
+    assert calls == [{"device_id": device_id, "command": "id", "timeout_seconds": 6}]
+
+
+def test_mcp_ssh_raw_command_policy_blocks_denied_pattern(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gateway_api.config as config
+    import gateway_api.routers.mcp as mcp_router
+
+    monkeypatch.setenv("GATEWAY_SSH_ALLOW_RAW_COMMAND", "true")
+    config.get_settings.cache_clear()
+
+    created = client.post(
+        "/api/devices",
+        json={"name": "ssh-stage", "target": "robot@192.0.2.25:2222", "auth_type": "password", "password": "stored-value"},
+    )
+    assert created.status_code == 201
+
+    calls = {"count": 0}
+
+    def should_not_run(*args, **kwargs):
+        calls["count"] += 1
+        raise AssertionError("raw command policy should block before adapter execution")
+
+    monkeypatch.setattr(mcp_router, "run_ssh_command", should_not_run)
+    try:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 67,
+                "method": "tools/call",
+                "params": {
+                    "name": "ssh_device_run_command",
+                    "arguments": {"device_id": created.json()["id"], "command": "sudo id"},
+                },
+            },
+        )
+    finally:
+        config.get_settings.cache_clear()
+
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == 400
+    assert "raw-mode policy" in response.json()["error"]["message"]
+    assert calls["count"] == 0
+
+
+def test_mcp_ssh_raw_command_policy_blocks_multiline_and_overlength(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gateway_api.config as config
+
+    monkeypatch.setenv("GATEWAY_SSH_ALLOW_RAW_COMMAND", "true")
+    monkeypatch.setenv("GATEWAY_SSH_RAW_COMMAND_MAX_CHARS", "3")
+    config.get_settings.cache_clear()
+
+    created = client.post(
+        "/api/devices",
+        json={"name": "ssh-stage", "target": "robot@192.0.2.26:2222", "auth_type": "password", "password": "stored-value"},
+    )
+    assert created.status_code == 201
+    device_id = created.json()["id"]
+
+    try:
+        too_long = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 68,
+                "method": "tools/call",
+                "params": {
+                    "name": "ssh_device_run_command",
+                    "arguments": {"device_id": device_id, "command": "whoami"},
+                },
+            },
+        )
+        multiline = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 69,
+                "method": "tools/call",
+                "params": {
+                    "name": "ssh_device_run_command",
+                    "arguments": {"device_id": device_id, "command": "id\nwhoami"},
+                },
+            },
+        )
+    finally:
+        config.get_settings.cache_clear()
+
+    assert too_long.status_code == 200
+    assert too_long.json()["error"]["code"] == 400
+    assert "length limit" in too_long.json()["error"]["message"]
+    assert multiline.status_code == 200
+    assert multiline.json()["error"]["code"] == 400
+    assert "single line" in multiline.json()["error"]["message"]
 
 
 def test_mcp_browser_descriptors_are_safety_neutral(client: TestClient) -> None:
@@ -560,7 +1147,26 @@ def test_mcp_thin_client_write_file_forwards_aurum_style_payload(client: TestCli
                 "bytes_after": 42,
                 "encoding": "utf-8",
                 "replacements": 1,
-                "content": "updated",
+                "content": None,
+                "diff": {
+                    "format": "unified",
+                    "suppressed": False,
+                    "truncated": False,
+                    "added_lines": 1,
+                    "removed_lines": 1,
+                    "hunks": [
+                        {
+                            "old_start": 1,
+                            "old_count": 1,
+                            "new_start": 1,
+                            "new_count": 1,
+                            "lines": [
+                                {"kind": "delete", "text": "old"},
+                                {"kind": "insert", "text": "updated"},
+                            ],
+                        }
+                    ],
+                },
             },
         }
 
@@ -593,7 +1199,39 @@ def test_mcp_thin_client_write_file_forwards_aurum_style_payload(client: TestCli
     assert structured["ok"] is True
     assert structured["operation"] == "replace"
     assert structured["replacements"] == 1
-    assert structured["content"] == "updated"
+    assert structured["content"] is None
+    assert structured["diff"]["added_lines"] == 1
+    assert structured["diff"]["hunks"][0]["lines"][-1] == {"kind": "insert", "text": "updated"}
+    assert structured["file_change_id"]
+
+    changes_response = client.get("/api/file-changes?origin=thin_client")
+    assert changes_response.status_code == 200
+    changes = changes_response.json()
+    assert len(changes) == 1
+    assert changes[0]["id"] == structured["file_change_id"]
+    assert changes[0]["path"] == "docs/policy.md"
+    assert changes[0]["operation"] == "replace"
+    assert changes[0]["added_lines"] == 1
+    assert changes[0]["removed_lines"] == 1
+    assert changes[0]["resource_id"] == client_id
+    assert changes[0]["tool_call_id"]
+    assert changes[0]["diff_json"]["hunks"][0]["lines"][-1] == {"kind": "insert", "text": "updated"}
+
+    list_response = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 44,
+            "method": "tools/call",
+            "params": {"name": "file_changes_list", "arguments": {"origin": "thin_client", "limit": 10}},
+        },
+    )
+    assert list_response.status_code == 200
+    listed = list_response.json()["result"]["structuredContent"]["changes"]
+    assert len(listed) == 1
+    assert listed[0]["id"] == structured["file_change_id"]
+    assert listed[0]["diff"]["added_lines"] == 1
+
     assert calls == [
         {
             "client_id": client_id,

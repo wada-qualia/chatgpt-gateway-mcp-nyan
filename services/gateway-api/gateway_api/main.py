@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .database import init_db
-from .routers import access, audit, auth, devices, docker, mcp, monitoring, oauth, thin_clients
+from .routers import access, audit, auth, devices, docker, file_changes, mcp, monitoring, oauth, thin_clients
 
 
 def create_app() -> FastAPI:
@@ -47,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(access.router)
     app.include_router(audit.router)
     app.include_router(monitoring.router)
+    app.include_router(file_changes.router)
     app.include_router(mcp.router)
 
     dist = Path(__file__).resolve().parents[3] / "frontend" / "dist"

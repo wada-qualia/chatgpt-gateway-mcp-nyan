@@ -388,7 +388,7 @@ async def websocket_control(websocket: WebSocket, client_id: str, token: str) ->
         client.status = "online"
         client.last_seen_at = utcnow()
         db.commit()
-    await thin_client_manager.register(client_id, websocket)
+    connection = await thin_client_manager.register(client_id, websocket)
     try:
         while True:
             message = await websocket.receive_json()
@@ -441,19 +441,20 @@ async def websocket_control(websocket: WebSocket, client_id: str, token: str) ->
     except WebSocketDisconnect:
         pass
     finally:
-        await thin_client_manager.unregister(client_id)
-        with SessionLocal() as db:
-            current = db.get(ThinClient, client_id)
-            if current:
-                current.status = "offline"
-            running_sessions = (
-                db.query(CommandSession)
-                .filter(CommandSession.origin == "thin_client")
-                .filter(CommandSession.resource_id == client_id)
-                .filter(CommandSession.status == "running")
-                .all()
-            )
-            for session in running_sessions:
-                session.status = "disconnecting"
-                session.updated_at = utcnow()
-            db.commit()
+        became_offline = await thin_client_manager.unregister(client_id, connection)
+        if became_offline:
+            with SessionLocal() as db:
+                current = db.get(ThinClient, client_id)
+                if current:
+                    current.status = "offline"
+                running_sessions = (
+                    db.query(CommandSession)
+                    .filter(CommandSession.origin == "thin_client")
+                    .filter(CommandSession.resource_id == client_id)
+                    .filter(CommandSession.status == "running")
+                    .all()
+                )
+                for session in running_sessions:
+                    session.status = "disconnecting"
+                    session.updated_at = utcnow()
+                db.commit()

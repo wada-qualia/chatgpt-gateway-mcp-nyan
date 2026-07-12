@@ -1,0 +1,14 @@
+apiVersion: galaxy.perpetus.io/v1
+kind: ServiceLevelObjectives
+metadata:
+  name: gateway-api-slo
+spec:
+  objectives:
+    - name: auth-callback-availability
+      target: 99.5
+      window: 30d
+      indicator: http_requests_success_rate{route="/auth/callback"}
+    - name: mcp-token-validation-latency
+      target: 95
+      window: 7d
+      indicator: http_request_duration_seconds_bucket{route="/mcp",le="0.25"}

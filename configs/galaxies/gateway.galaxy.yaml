@@ -1,0 +1,37 @@
+apiVersion: galaxy.asc/v1alpha1
+kind: Galaxy
+metadata:
+  id: gateway
+  name: gateway
+  owner: k-lab
+spec:
+  domain: chatgpt-mcp-access
+  boundedContext: chatgpt-mcp-access
+  capabilities:
+    - sso
+    - chatgpt-oauth-facade
+    - ssh-device-registry
+    - docker-workspaces
+    - thin-client-enrollment
+    - audit
+  services:
+    - id: gateway-api
+      kind: fastapi
+      owner: k-lab
+      publishes:
+        - gateway.user.authenticated.v1
+        - gateway.device.registered.v1
+        - gateway.workspace.created.v1
+        - gateway.workspace.cloned.v1
+        - gateway.thin_client.enrolled.v1
+        - gateway.access_grant.changed.v1
+        - gateway.audit.recorded.v1
+      consumes: []
+  domainEvents:
+    - gateway.user.authenticated.v1
+    - gateway.device.registered.v1
+    - gateway.workspace.created.v1
+    - gateway.workspace.cloned.v1
+    - gateway.thin_client.enrolled.v1
+    - gateway.access_grant.changed.v1
+    - gateway.audit.recorded.v1

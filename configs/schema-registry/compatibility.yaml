@@ -1,0 +1,14 @@
+apiVersion: galaxy.perpetus.io/v1
+kind: SchemaRegistry
+metadata:
+  name: gateway-schema-registry
+spec:
+  compatibility: backward
+  schemas:
+    - schemas/gateway.user.authenticated.v1.schema.json
+    - schemas/gateway.device.registered.v1.schema.json
+    - schemas/gateway.workspace.created.v1.schema.json
+    - schemas/gateway.workspace.cloned.v1.schema.json
+    - schemas/gateway.thin_client.enrolled.v1.schema.json
+    - schemas/gateway.access_grant.changed.v1.schema.json
+    - schemas/gateway.audit.recorded.v1.schema.json

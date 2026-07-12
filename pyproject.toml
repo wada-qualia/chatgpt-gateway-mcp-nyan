@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chatgpt-mcp-ssh-gateway"
+version = "0.2.7"
+description = "Perpetus Galaxy FastAPI gateway for ChatGPT MCP SSH and Docker workspaces."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "pydantic>=2.7,<3",
+  "pydantic-settings>=2,<3",
+  "SQLAlchemy>=2,<3",
+  "psycopg[binary]>=3.2,<4",
+  "PyJWT>=2.8,<3",
+  "cryptography>=42,<47",
+  "paramiko>=3.4,<4",
+  "httpx>=0.27,<1",
+  "python-multipart>=0.0.9,<1",
+  "websockets>=12,<16",
+  "playwright>=1.55,<2",
+  "rich>=13,<15"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "ruff>=0.6,<1"
+]
+
+[project.scripts]
+gateway-cli = "gateway_cli.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["services/gateway-api", "cli"]

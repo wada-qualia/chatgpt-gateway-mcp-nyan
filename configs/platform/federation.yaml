@@ -1,0 +1,16 @@
+apiVersion: galaxy.perpetus.io/v1
+kind: Federation
+metadata:
+  name: k-lab-local
+spec:
+  controlPlane: galaxy-framework
+  identityProvider:
+    type: keycloak
+    realm: chatgpt-mcp
+    clientId: chatgpt-mcp-gateway
+  eventBus:
+    type: outbox
+    transport: postgres
+  policy:
+    engine: opa
+    bundle: configs/policies/policy-bundle.yaml

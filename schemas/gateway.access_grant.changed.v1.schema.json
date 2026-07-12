@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.access_grant.changed.v1",
+  "title": "AccessGrantChanged",
+  "type": "object",
+  "required": ["event_id", "occurred_at", "grant_id", "owner_subject", "resource_type", "action"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "grant_id": {"type": "string"},
+    "owner_subject": {"type": "string"},
+    "resource_type": {"type": "string"},
+    "resource_id": {"type": "string"},
+    "action": {"type": "string", "enum": ["created", "updated", "revoked"]}
+  },
+  "additionalProperties": false
+}

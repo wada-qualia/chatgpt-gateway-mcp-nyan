@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.workspace.created.v1",
+  "title": "WorkspaceCreated",
+  "type": "object",
+  "required": ["event_id", "occurred_at", "workspace_id", "owner_subject", "image", "container_name"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "workspace_id": {"type": "string"},
+    "owner_subject": {"type": "string"},
+    "image": {"type": "string"},
+    "container_name": {"type": "string"},
+    "container_id": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

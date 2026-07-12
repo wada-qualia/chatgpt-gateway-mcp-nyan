@@ -1,0 +1,96 @@
+asyncapi: 2.6.0
+info:
+  title: ChatGPT MCP SSH Gateway Events
+  version: 0.1.0
+defaultContentType: application/json
+channels:
+  gateway.user.authenticated.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/UserAuthenticated'
+  gateway.device.registered.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/DeviceRegistered'
+  gateway.workspace.created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/WorkspaceCreated'
+  gateway.workspace.cloned.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/WorkspaceCloned'
+  gateway.thin_client.enrolled.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/ThinClientEnrolled'
+  gateway.access_grant.changed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AccessGrantChanged'
+  gateway.audit.recorded.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AuditRecorded'
+  gateway.command_session.started.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/CommandSessionStarted'
+  gateway.command_session.output.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/CommandSessionOutput'
+  gateway.command_session.finished.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/CommandSessionFinished'
+  gateway.command_session.terminated.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/CommandSessionTerminated'
+components:
+  messages:
+    UserAuthenticated:
+      name: gateway.user.authenticated.v1
+      payload:
+        $ref: '../schemas/gateway.user.authenticated.v1.schema.json'
+    DeviceRegistered:
+      name: gateway.device.registered.v1
+      payload:
+        $ref: '../schemas/gateway.device.registered.v1.schema.json'
+    WorkspaceCreated:
+      name: gateway.workspace.created.v1
+      payload:
+        $ref: '../schemas/gateway.workspace.created.v1.schema.json'
+    WorkspaceCloned:
+      name: gateway.workspace.cloned.v1
+      payload:
+        $ref: '../schemas/gateway.workspace.cloned.v1.schema.json'
+    ThinClientEnrolled:
+      name: gateway.thin_client.enrolled.v1
+      payload:
+        $ref: '../schemas/gateway.thin_client.enrolled.v1.schema.json'
+    AccessGrantChanged:
+      name: gateway.access_grant.changed.v1
+      payload:
+        $ref: '../schemas/gateway.access_grant.changed.v1.schema.json'
+    AuditRecorded:
+      name: gateway.audit.recorded.v1
+      payload:
+        $ref: '../schemas/gateway.audit.recorded.v1.schema.json'
+    CommandSessionStarted:
+      name: gateway.command_session.started.v1
+      payload:
+        $ref: '../schemas/gateway.command_session.started.v1.schema.json'
+    CommandSessionOutput:
+      name: gateway.command_session.output.v1
+      payload:
+        $ref: '../schemas/gateway.command_session.output.v1.schema.json'
+    CommandSessionFinished:
+      name: gateway.command_session.finished.v1
+      payload:
+        $ref: '../schemas/gateway.command_session.finished.v1.schema.json'
+    CommandSessionTerminated:
+      name: gateway.command_session.terminated.v1
+      payload:
+        $ref: '../schemas/gateway.command_session.terminated.v1.schema.json'

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.audit.recorded.v1",
+  "title": "AuditRecorded",
+  "type": "object",
+  "required": ["event_id", "occurred_at", "actor_subject", "action", "resource_type"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "actor_subject": {"type": "string"},
+    "action": {"type": "string"},
+    "resource_type": {"type": "string"},
+    "resource_id": {"type": ["string", "null"]},
+    "status": {"type": "string"}
+  },
+  "additionalProperties": false
+}

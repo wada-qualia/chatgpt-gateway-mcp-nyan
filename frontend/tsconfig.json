@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "baseUrl": ".",
+    "paths": {
+      "@gateway/ui": ["libs/ui/src/index.tsx"],
+      "@gateway/components": ["libs/components/src/index.tsx"],
+      "@gateway/pages": ["libs/pages/src/index.tsx"],
+      "@gateway/pages/*": ["libs/pages/src/*"],
+      "@gateway/generated/*": ["src/generated/*"],
+      "@gateway/shared/*": ["src/shared/*"]
+    },
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src", "libs", "tests"],
+  "references": []
+}

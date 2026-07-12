@@ -1,0 +1,41 @@
+apiVersion: galaxy.asc/v1alpha1
+kind: FrontendLibrary
+metadata:
+  name: "@gateway/pages"
+  version: 0.1.0
+  galaxy: chatgpt-mcp-ssh-gateway
+  owner: k-lab
+spec:
+  nx:
+    projectName: gateway-pages
+    tags:
+      - scope:chatgpt-mcp-ssh-gateway
+      - type:page
+      - layer:pages
+      - visibility:public
+  exports:
+    - name: GatewayDashboardPage
+      type: page
+      contractVersion: 0.1.0
+    - name: DevicesRemote
+      type: page
+      contractVersion: 0.1.0
+    - name: DockerWorkspacesRemote
+      type: page
+      contractVersion: 0.1.0
+    - name: ThinClientsRemote
+      type: page
+      contractVersion: 0.1.0
+    - name: MonitoringRemote
+      type: page
+      contractVersion: 0.1.0
+    - name: ChatGPTAccessRemote
+      type: page
+      contractVersion: 0.1.0
+    - name: AuditRemote
+      type: page
+      contractVersion: 0.1.0
+  dependencies:
+    components:
+      - "@gateway/components"
+      - "@gateway/ui"

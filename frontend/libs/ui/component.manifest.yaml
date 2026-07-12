@@ -1,0 +1,25 @@
+apiVersion: galaxy.asc/v1alpha1
+kind: FrontendLibrary
+metadata:
+  name: "@gateway/ui"
+  version: 0.1.0
+  galaxy: chatgpt-mcp-ssh-gateway
+  owner: k-lab
+spec:
+  nx:
+    projectName: gateway-ui
+    tags:
+      - scope:chatgpt-mcp-ssh-gateway
+      - type:ui
+      - layer:ui
+      - visibility:public
+  exports:
+    - name: Button
+      type: ui
+      contractVersion: 0.1.0
+    - name: StatusPill
+      type: ui
+      contractVersion: 0.1.0
+    - name: TableFrame
+      type: ui
+      contractVersion: 0.1.0

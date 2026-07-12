@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.device.registered.v1",
+  "title": "DeviceRegistered",
+  "type": "object",
+  "required": ["event_id", "occurred_at", "device_id", "owner_subject", "kind", "host"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "device_id": {"type": "string"},
+    "owner_subject": {"type": "string"},
+    "kind": {"type": "string", "enum": ["ssh", "thin-client"]},
+    "host": {"type": "string"},
+    "port": {"type": ["integer", "null"]}
+  },
+  "additionalProperties": false
+}

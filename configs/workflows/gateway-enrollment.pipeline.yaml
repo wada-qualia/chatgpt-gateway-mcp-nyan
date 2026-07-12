@@ -1,0 +1,26 @@
+apiVersion: galaxy.perpetus.io/v1
+kind: Pipeline
+metadata:
+  id: gateway-enrollment
+  name: gateway-enrollment
+  galaxy: gateway
+  owner: k-lab
+spec:
+  trigger:
+    event: gateway.user.authenticated.v1
+  tasks:
+    - id: ensure-local-user
+      serviceRef: gateway/gateway-api
+      action: users.ensure
+    - id: allow-device-registration
+      serviceRef: gateway/gateway-api
+      action: policy.evaluate
+      dependsOn:
+        - ensure-local-user
+    - id: emit-audit
+      serviceRef: gateway/gateway-api
+      action: audit.record
+      emits:
+        - gateway.audit.recorded.v1
+      dependsOn:
+        - allow-device-registration

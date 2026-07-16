@@ -1,4 +1,12 @@
-FROM ubuntu:24.04
+FROM node:22-bookworm AS frontend-build
+
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm test && npm run build
+
+FROM ubuntu:24.04 AS runtime-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -33,12 +41,14 @@ RUN python3 -m venv /opt/venv \
 
 COPY services /app/services
 COPY cli /app/cli
+COPY scripts /app/scripts
 COPY app /app/app
 COPY configs /app/configs
 COPY openapi /app/openapi
 COPY asyncapi /app/asyncapi
 COPY schemas /app/schemas
 COPY galaxy.project.yaml /app/galaxy.project.yaml
+COPY --from=frontend-build /frontend/dist /app/frontend/dist
 
 RUN mkdir -p /workspace /data /auth \
   && chown -R appuser:appuser /workspace /data /auth /app
@@ -47,3 +57,15 @@ EXPOSE 8000
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["uvicorn", "gateway_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+FROM runtime-base AS test
+
+USER root
+COPY requirements-dev.txt /app/
+RUN /opt/venv/bin/pip install --no-cache-dir -r /app/requirements-dev.txt
+USER appuser
+RUN pytest /app/services/gateway-api/tests /app/cli/tests
+
+FROM runtime-base AS production
+
+USER appuser

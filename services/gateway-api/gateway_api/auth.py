@@ -97,7 +97,7 @@ def roles_from_claims(claims: dict[str, Any]) -> list[str]:
     return [str(role) for role in roles]
 
 
-async def exchange_keycloak_code(code: str, redirect_uri: str) -> dict[str, Any]:
+async def exchange_keycloak_code(code: str, redirect_uri: str, code_verifier: str) -> dict[str, Any]:
     settings = get_settings()
     token_url = f"{settings.keycloak_issuer.rstrip('/')}/protocol/openid-connect/token"
     data = {
@@ -105,6 +105,7 @@ async def exchange_keycloak_code(code: str, redirect_uri: str) -> dict[str, Any]
         "client_id": settings.keycloak_client_id,
         "client_secret": settings.keycloak_client_secret,
         "code": code,
+        "code_verifier": code_verifier,
         "redirect_uri": redirect_uri,
     }
     async with httpx.AsyncClient(timeout=15.0) as client:

@@ -10,6 +10,7 @@ import DevicesRemote from '../src/features/devices/DevicesRemote';
 import DockerWorkspacesRemote from '../src/features/docker/DockerWorkspacesRemote';
 import MonitoringRemote from '../src/features/monitoring/MonitoringRemote';
 import ThinClientsRemote from '../src/features/thin-clients/ThinClientsRemote';
+import { GatewayTopbar } from '@gateway/components';
 
 afterEach(() => {
   cleanup();
@@ -386,6 +387,14 @@ function renderWithQuery(ui: ReactElement, route = '/devices') {
     </MemoryRouter>
   );
 }
+
+test('unauthenticated topbar exposes Keycloak login action', () => {
+  render(<GatewayTopbar errorMessage="Authentication required" />);
+  expect(screen.getByRole('link', { name: 'Sign in with Keycloak' })).toHaveAttribute(
+    'href',
+    '/auth/login?next=%2F'
+  );
+});
 
 test('renders operational gateway dashboard shell', async () => {
   mockEmptyGatewayApi();

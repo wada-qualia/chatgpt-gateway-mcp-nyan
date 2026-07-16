@@ -63,6 +63,20 @@
   padding: 0 24px;
 }
 
+.login-link {
+  background: #1967d2;
+  border: 1px solid #1967d2;
+  border-radius: 6px;
+  color: #ffffff;
+  font-weight: 600;
+  padding: 10px 14px;
+  text-decoration: none;
+}
+
+.login-link:hover {
+  background: #1557b0;
+}
+
 .realm-control {
   display: grid;
   gap: 3px;

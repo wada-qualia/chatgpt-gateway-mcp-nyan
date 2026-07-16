@@ -232,8 +232,14 @@ export function GatewayTopbar({
   const username = isLoading
     ? "Loading SSO user"
     : (user?.username ?? "No SSO session");
+  const nextPath = typeof window === "undefined" ? "/" : window.location.pathname;
   return (
     <header className="topbar">
+      {!isLoading && !user ? (
+        <a className="login-link" href={`/auth/login?next=${encodeURIComponent(nextPath)}`}>
+          Sign in with Keycloak
+        </a>
+      ) : null}
       <div className="avatar">{username.slice(0, 2).toUpperCase()}</div>
       <div className="user-block">
         <strong>{username}</strong>

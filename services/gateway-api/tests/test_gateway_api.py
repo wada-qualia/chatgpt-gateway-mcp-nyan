@@ -19,11 +19,12 @@ class NoteError(AssertionError):
 
 
 @pytest.fixture()
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
+    dev_auth = getattr(request, "param", True)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'gateway.db'}")
     monkeypatch.setenv("GATEWAY_SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("GATEWAY_JWT_SECRET", "test-jwt-secret")
-    monkeypatch.setenv("GATEWAY_DEV_AUTH", "true")
+    monkeypatch.setenv("GATEWAY_DEV_AUTH", "true" if dev_auth else "false")
     monkeypatch.setenv("GATEWAY_DOCKER_ENABLED", "false")
     monkeypatch.setenv("MAX_COMMAND_TIMEOUT_SECONDS", "120")
     monkeypatch.setenv("COMMAND_BACKGROUND_AFTER_SECONDS", "1")
@@ -54,6 +55,57 @@ def test_auth_me_dev_user(client: TestClient) -> None:
     response = client.get("/auth/me")
     assert response.status_code == 200
     assert response.json()["username"] == "darius"
+
+
+@pytest.mark.parametrize("client", [False], indirect=True)
+def test_keycloak_login_uses_pkce_and_signed_state(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from gateway_api import config
+    from gateway_api.auth import decode_jwt
+    from gateway_api.routers import auth as auth_router
+
+    login = client.get("/auth/login", params={"next": "/devices"}, follow_redirects=False)
+    assert login.status_code == 307
+    authorize_query = parse_qs(urlparse(login.headers["location"]).query)
+    assert authorize_query["code_challenge_method"] == ["S256"]
+    assert authorize_query["state"]
+
+    settings = config.get_settings()
+    flow_cookie_name = f"{settings.gateway_session_cookie}_oauth_state"
+    flow = decode_jwt(login.cookies[flow_cookie_name])
+    assert flow["typ"] == "oauth_state"
+    assert flow["next"] == "/devices"
+    assert authorize_query["code_challenge"] == [pkce_challenge(flow["code_verifier"])]
+
+    exchanged: dict[str, str] = {}
+
+    async def fake_exchange(code: str, redirect_uri: str, code_verifier: str) -> dict[str, object]:
+        exchanged.update(code=code, redirect_uri=redirect_uri, code_verifier=code_verifier)
+        return {
+            "sub": "keycloak:gateway-admin",
+            "preferred_username": "gateway-admin",
+            "email": "gateway-admin@k-lab.local",
+            "realm_access": {"roles": ["gateway-admin", "gateway-user", "gateway-auditor"]},
+        }
+
+    monkeypatch.setattr(auth_router, "exchange_keycloak_code", fake_exchange)
+    mismatch = client.get("/auth/callback", params={"code": "test-code", "state": "wrong"}, follow_redirects=False)
+    assert mismatch.status_code == 400
+    assert mismatch.json()["detail"] == "OAuth state mismatch"
+    assert not exchanged
+
+    callback = client.get(
+        "/auth/callback",
+        params={"code": "test-code", "state": authorize_query["state"][0]},
+        follow_redirects=False,
+    )
+    assert callback.status_code == 307
+    assert callback.headers["location"] == "/devices"
+    assert exchanged == {
+        "code": "test-code",
+        "redirect_uri": "http://testserver/auth/callback",
+        "code_verifier": flow["code_verifier"],
+    }
+    assert client.get("/auth/me").json()["username"] == "gateway-admin"
 
 
 def test_oauth_facade_pkce_flow(client: TestClient) -> None:

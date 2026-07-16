@@ -4,12 +4,13 @@ import secrets
 import uuid
 from datetime import timedelta
 from html import escape
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 
-from ..auth import create_jwt, decode_jwt, get_current_user
+from ..auth import create_jwt, decode_jwt, dev_user, get_current_user
 from ..config import Settings, get_settings
 from ..crypto import token_hash
 from ..database import SessionLocal, get_db
@@ -22,10 +23,24 @@ from ..thin_client_control import thin_client_manager
 
 router = APIRouter(prefix="/api/thin-clients", tags=["thin-clients"])
 activation_router = APIRouter(tags=["thin-client-activation"])
+_UNBOUND_DEVICE_CODE_SUBJECT_PREFIX = "device-code:"
 
 
 def _normalize_user_code(value: str) -> str:
     return value.strip().replace(" ", "").replace("-", "").upper()
+
+
+def _unbound_device_code_subject(device_code: str) -> str:
+    return f"{_UNBOUND_DEVICE_CODE_SUBJECT_PREFIX}{device_code}"
+
+
+def _is_unbound_device_code(code: DeviceCode) -> bool:
+    return code.subject.startswith(_UNBOUND_DEVICE_CODE_SUBJECT_PREFIX)
+
+
+def _activation_login_redirect(user_code: str) -> RedirectResponse:
+    next_path = f"/thin-clients/activate?{urlencode({'user_code': user_code})}"
+    return RedirectResponse(url=f"/auth/login?{urlencode({'next': next_path})}", status_code=303)
 
 
 def _html_page(title: str, body: str) -> HTMLResponse:
@@ -132,28 +147,49 @@ def _expires_at_is_past(device_code: DeviceCode) -> bool:
     return expires_at < utcnow()
 
 
-@activation_router.get("/thin-clients/activate", response_class=HTMLResponse)
-async def activate_thin_client_page(user_code: str = "") -> HTMLResponse:
-    return _activation_form(user_code=_normalize_user_code(user_code))
-
-
-@activation_router.post("/thin-clients/activate", response_class=HTMLResponse)
-async def activate_thin_client(
-    user_code: str = Form(...),
-    user: User = Depends(get_current_user),
+@activation_router.get("/thin-clients/activate")
+async def activate_thin_client_page(
+    request: Request,
+    user_code: str = "",
     db: Session = Depends(get_db),
-) -> HTMLResponse:
+    settings: Settings = Depends(get_settings),
+) -> Response:
     normalized = _normalize_user_code(user_code)
+    try:
+        await get_current_user(request, db=db, settings=settings)
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_401_UNAUTHORIZED:
+            raise
+        return _activation_login_redirect(normalized)
+    return _activation_form(user_code=normalized)
+
+
+@activation_router.post("/thin-clients/activate")
+async def activate_thin_client(
+    request: Request,
+    user_code: str = Form(...),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    normalized = _normalize_user_code(user_code)
+    try:
+        user = await get_current_user(request, db=db, settings=settings)
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_401_UNAUTHORIZED:
+            raise
+        return _activation_login_redirect(normalized)
     code = db.query(DeviceCode).filter(DeviceCode.user_code == normalized).one_or_none()
     if code is None:
         return _activation_form(user_code=normalized, message="Unknown activation code.")
     if _expires_at_is_past(code):
         return _activation_form(user_code=normalized, message="Activation code expired. Issue a new device code from the Thin Clients page.")
-    if code.subject != user.subject and "gateway-admin" not in set(user.roles or []):
+    if _is_unbound_device_code(code):
+        code.subject = user.subject
+    elif code.subject != user.subject and "gateway-admin" not in set(user.roles or []):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Activation code belongs to another user")
     if code.status != "approved":
         code.status = "approved"
-        db.commit()
+    db.commit()
     return _html_page(
         "Thin client activated",
         f"""
@@ -175,16 +211,16 @@ async def list_thin_clients(user: User = Depends(get_current_user), db: Session 
 
 @router.post("/device-code", response_model=DeviceCodeOut, status_code=201)
 async def create_device_code(
-    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> DeviceCodeOut:
     device_code = secrets.token_urlsafe(40)
     user_code = secrets.token_hex(3).upper()
+    user = dev_user(db, settings) if settings.gateway_dev_auth else None
     code = DeviceCode(
         device_code=device_code,
         user_code=user_code,
-        subject=user.subject,
+        subject=user.subject if user else _unbound_device_code_subject(device_code),
         scope="thin-client:register",
         status="approved" if settings.gateway_dev_auth else "pending",
         expires_at=utcnow() + timedelta(seconds=settings.gateway_device_code_ttl_seconds),
@@ -214,7 +250,11 @@ async def token(payload: dict, db: Session = Depends(get_db), settings: Settings
         raise HTTPException(status_code=400, detail="Device code expired")
     if device_code.status != "approved":
         raise HTTPException(status_code=428, detail="Authorization pending")
-    user = db.query(User).filter(User.subject == device_code.subject).one()
+    if _is_unbound_device_code(device_code):
+        raise HTTPException(status_code=428, detail="Authorization pending")
+    user = db.query(User).filter(User.subject == device_code.subject).one_or_none()
+    if user is None:
+        raise HTTPException(status_code=400, detail="Device code owner no longer exists")
     agent_token = create_jwt(
         subject=user.subject,
         username=user.username,

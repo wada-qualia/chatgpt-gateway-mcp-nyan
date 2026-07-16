@@ -501,6 +501,63 @@ def test_thin_client_activation_page_and_post(client: TestClient) -> None:
         assert db.get(DeviceCode, "pending-device").status == "approved"
 
 
+@pytest.mark.parametrize("client", [False], indirect=True)
+def test_production_device_code_is_public_and_binds_during_authenticated_activation(client: TestClient) -> None:
+    issued = client.post("/api/thin-clients/device-code")
+    assert issued.status_code == 201
+    assert issued.json()["verification_uri"] == "http://testserver/thin-clients/activate"
+
+    device_code = issued.json()["device_code"]
+    user_code = issued.json()["user_code"]
+    pending = client.post("/api/thin-clients/token", json={"device_code": device_code})
+    assert pending.status_code == 428
+
+    activation = client.get(
+        "/thin-clients/activate",
+        params={"user_code": user_code},
+        follow_redirects=False,
+    )
+    assert activation.status_code == 303
+    login_url = urlparse(activation.headers["location"])
+    assert login_url.path == "/auth/login"
+    assert parse_qs(login_url.query)["next"] == [f"/thin-clients/activate?user_code={user_code}"]
+
+    from gateway_api import config
+    from gateway_api.auth import create_jwt, ensure_user
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import DeviceCode
+
+    with SessionLocal() as db:
+        user = ensure_user(
+            db,
+            subject="keycloak:test-user",
+            username="test-user",
+            email="test-user@example.com",
+            roles=["gateway-user"],
+            provider="keycloak",
+        )
+        session_token = create_jwt(
+            subject=user.subject,
+            username=user.username,
+            roles=user.roles,
+            scopes=["thin-client:register"],
+            token_type="session",
+            ttl_seconds=300,
+        )
+    client.cookies.set(config.get_settings().gateway_session_cookie, session_token)
+
+    activated = client.post("/thin-clients/activate", data={"user_code": user_code})
+    assert activated.status_code == 200
+    assert "Thin Client Activated" in activated.text
+    with SessionLocal() as db:
+        stored = db.get(DeviceCode, device_code)
+        assert stored.status == "approved"
+        assert stored.subject == "keycloak:test-user"
+
+    token = client.post("/api/thin-clients/token", json={"device_code": device_code})
+    assert token.status_code == 200
+
+
 def test_mcp_thin_client_tool_delegates_to_online_agent(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     code = client.post("/api/thin-clients/device-code")
     token = client.post("/api/thin-clients/token", json={"device_code": code.json()["device_code"]})

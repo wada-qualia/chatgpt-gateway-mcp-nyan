@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import ssl
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -97,6 +98,13 @@ def roles_from_claims(claims: dict[str, Any]) -> list[str]:
     return [str(role) for role in roles]
 
 
+def keycloak_ssl_context(settings: Settings) -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    if settings.keycloak_ca_cert_path:
+        context.load_verify_locations(cafile=settings.keycloak_ca_cert_path)
+    return context
+
+
 async def exchange_keycloak_code(code: str, redirect_uri: str, code_verifier: str) -> dict[str, Any]:
     settings = get_settings()
     token_url = f"{settings.keycloak_issuer.rstrip('/')}/protocol/openid-connect/token"
@@ -108,7 +116,7 @@ async def exchange_keycloak_code(code: str, redirect_uri: str, code_verifier: st
         "code_verifier": code_verifier,
         "redirect_uri": redirect_uri,
     }
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(timeout=15.0, verify=keycloak_ssl_context(settings)) as client:
         token_response = await client.post(token_url, data=data)
         token_response.raise_for_status()
         token_payload = token_response.json()

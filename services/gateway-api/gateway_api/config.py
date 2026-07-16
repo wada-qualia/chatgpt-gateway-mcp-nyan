@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     keycloak_issuer: str = "http://localhost:8080/realms/chatgpt-mcp"
     keycloak_client_id: str = "chatgpt-mcp-gateway"
     keycloak_client_secret: str = ""
+    keycloak_ca_cert_path: str | None = None
     oauth_audience: str = "chatgpt-mcp-ssh-gateway"
     oauth_supported_scopes: str = "workspace:read workspace:write workspace:exec devices:manage docker:manage audit:read"
     gateway_docker_enabled: bool = False

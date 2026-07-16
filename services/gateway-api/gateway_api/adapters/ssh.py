@@ -12,6 +12,7 @@ from typing import Any, Callable, Protocol
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..crypto import decrypt_text
 from ..models import Device, SecretBlob
 
@@ -41,6 +42,8 @@ class SshClientProtocol(Protocol):
     def set_missing_host_key_policy(self, policy: Any) -> None: ...
 
     def load_system_host_keys(self) -> None: ...
+
+    def load_host_keys(self, filename: str) -> None: ...
 
     def connect(self, **kwargs: Any) -> None: ...
 
@@ -156,6 +159,8 @@ def _private_key_from_text(paramiko: Any, key_text: str, passphrase: str | None)
 
 def _status_from_ssh_exception(exc: Exception) -> int:
     message = str(exc).lower()
+    if "not found in known_hosts" in message or ("host key for server" in message and "does not match" in message):
+        return 409
     if "authentication" in message or "auth" in message or "not a valid" in message:
         return 401
     if "timed out" in message or "timeout" in message:
@@ -172,8 +177,15 @@ def _ssh_client(
 ) -> SshClientProtocol:
     paramiko = None if client_factory else _load_paramiko()
     client = client_factory() if client_factory else paramiko.SSHClient()
-    if hasattr(client, "load_system_host_keys"):
-        client.load_system_host_keys()
+    known_hosts_path = get_settings().gateway_ssh_known_hosts_path
+    try:
+        if known_hosts_path:
+            client.load_host_keys(known_hosts_path)
+        elif hasattr(client, "load_system_host_keys"):
+            client.load_system_host_keys()
+    except OSError as exc:
+        client.close()
+        raise HTTPException(status_code=500, detail="SSH known_hosts file could not be loaded") from exc
     if paramiko is not None and hasattr(client, "set_missing_host_key_policy"):
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
     connect_kwargs: dict[str, Any] = {
@@ -202,7 +214,9 @@ def _ssh_client(
     try:
         client.connect(**connect_kwargs)
     except Exception as exc:
-        raise HTTPException(status_code=_status_from_ssh_exception(exc), detail="SSH connection failed") from exc
+        status_code = _status_from_ssh_exception(exc)
+        detail = "SSH host key is not trusted" if status_code == 409 else "SSH connection failed"
+        raise HTTPException(status_code=status_code, detail=detail) from exc
     return client
 
 

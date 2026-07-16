@@ -172,6 +172,8 @@ async def update_device(
 
 
 def _device_test_status_from_exception(exc: HTTPException) -> str:
+    if exc.status_code == status.HTTP_409_CONFLICT:
+        return "host_key_untrusted"
     if exc.status_code in {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN}:
         return "auth_failed"
     if exc.status_code in {status.HTTP_502_BAD_GATEWAY, status.HTTP_504_GATEWAY_TIMEOUT}:

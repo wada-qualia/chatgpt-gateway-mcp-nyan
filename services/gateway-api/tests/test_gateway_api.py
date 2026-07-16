@@ -197,10 +197,16 @@ def test_device_registration_stores_json_secret_payload(client: TestClient) -> N
         assert credentials.secret == "json-secret-value"
 
 
-def test_ssh_adapter_uses_backend_credentials_with_mock_client() -> None:
+def test_ssh_adapter_uses_backend_credentials_with_mock_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
+    from gateway_api import config
     from gateway_api.adapters.ssh import SshCredentials, run_ssh_command, verify_ssh_connection
+
+    known_hosts = tmp_path / "known_hosts"
+    known_hosts.write_text("192.0.2.10 ssh-ed25519 test-key\n", encoding="utf-8")
+    monkeypatch.setenv("GATEWAY_SSH_KNOWN_HOSTS_PATH", str(known_hosts))
+    config.get_settings.cache_clear()
 
     class FakeChannel:
         def recv_exit_status(self) -> int:
@@ -220,12 +226,16 @@ def test_ssh_adapter_uses_backend_credentials_with_mock_client() -> None:
             self.connect_kwargs: dict | None = None
             self.commands: list[str] = []
             self.closed = False
+            self.loaded_host_keys: str | None = None
 
         def set_missing_host_key_policy(self, policy) -> None:
             pass
 
         def load_system_host_keys(self) -> None:
             pass
+
+        def load_host_keys(self, filename: str) -> None:
+            self.loaded_host_keys = filename
 
         def connect(self, **kwargs) -> None:
             self.connect_kwargs = kwargs
@@ -265,7 +275,9 @@ def test_ssh_adapter_uses_backend_credentials_with_mock_client() -> None:
         "password": "backend-only-secret",
     }
     assert clients[1].commands == ["whoami"]
+    assert all(client.loaded_host_keys == str(known_hosts) for client in clients)
     assert all(client.closed for client in clients)
+    config.get_settings.cache_clear()
 
 
 def test_device_registration_flushes_secret_before_commit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -350,6 +362,26 @@ def test_device_connection_test_sets_auth_failed_on_ssh_auth_error(client: TestC
     tested = client.post(f"/api/devices/{device_id}/test")
     assert tested.status_code == 200
     assert tested.json()["status"] == "auth_failed"
+
+
+def test_device_connection_test_distinguishes_untrusted_host_key(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    created = client.post(
+        "/api/devices",
+        json={"name": "stage-box", "target": "ubuntu@10.0.0.8:2222", "auth_type": "password", "password": "valid-value"},
+    )
+    device_id = created.json()["id"]
+
+    import gateway_api.routers.devices as devices_router
+
+    monkeypatch.setattr(devices_router, "check_ssh_tcp_connection", lambda target: "reachable")
+
+    def fail_host_key(device, credentials):
+        raise HTTPException(status_code=409, detail="SSH host key is not trusted")
+
+    monkeypatch.setattr(devices_router, "verify_ssh_connection", fail_host_key)
+    tested = client.post(f"/api/devices/{device_id}/test")
+    assert tested.status_code == 200
+    assert tested.json()["status"] == "host_key_untrusted"
 
 
 def test_device_connection_test_skips_auth_when_tcp_unreachable(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1024,6 +1024,8 @@ def _ssh_device_payload(device: Device) -> dict[str, Any]:
 
 
 def _ssh_status_from_exception(exc: HTTPException) -> str:
+    if exc.status_code == 409:
+        return "host_key_untrusted"
     if exc.status_code in {401, 403}:
         return "auth_failed"
     if exc.status_code in {502, 504}:

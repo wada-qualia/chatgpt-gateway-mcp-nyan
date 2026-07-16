@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     gateway_docker_enabled: bool = False
     gateway_docker_allowed_images: str = Field(default="ubuntu:24.04,ubuntu:22.04,ubuntu:20.04")
     gateway_ssh_enabled: bool = True
+    gateway_ssh_known_hosts_path: str | None = None
     gateway_ssh_allowed_actions: str = Field(default="uptime,disk_usage,memory_usage,whoami,pwd,home_list")
     gateway_ssh_allow_raw_command: bool = False
     gateway_ssh_raw_command_max_chars: int = 500

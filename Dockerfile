@@ -48,9 +48,11 @@ COPY openapi /app/openapi
 COPY asyncapi /app/asyncapi
 COPY schemas /app/schemas
 COPY galaxy.project.yaml /app/galaxy.project.yaml
+COPY deploy/gateway_known_hosts /etc/gateway/ssh_known_hosts
 COPY --from=frontend-build /frontend/dist /app/frontend/dist
 
-RUN mkdir -p /workspace /data /auth \
+RUN chmod 444 /etc/gateway/ssh_known_hosts \
+  && mkdir -p /workspace /data /auth \
   && chown -R appuser:appuser /workspace /data /auth /app
 
 EXPOSE 8000

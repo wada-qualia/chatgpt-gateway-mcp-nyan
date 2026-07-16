@@ -1433,6 +1433,7 @@ function diffPrefix(kind: GatewayFileChangeDiffLine["kind"]) {
 function sshReadinessLabel(status: string) {
   if (status === "verified") return "MCP ready";
   if (status === "reachable") return "TCP only";
+  if (status === "host_key_untrusted") return "Host key untrusted";
   if (status === "auth_failed") return "Auth failed";
   if (status === "unreachable") return "Unreachable";
   return "Needs test";
@@ -1441,7 +1442,7 @@ function sshReadinessLabel(status: string) {
 function sshReadinessClass(status: string) {
   if (status === "verified") return "ready";
   if (status === "reachable" || status === "registered") return "partial";
-  if (status === "auth_failed" || status === "unreachable") return "blocked";
+  if (status === "auth_failed" || status === "host_key_untrusted" || status === "unreachable") return "blocked";
   return "partial";
 }
 
@@ -1450,6 +1451,7 @@ function sshMcpToolSummary(status: string) {
     return "ssh_device_info, ssh_device_check_connection and allowlisted SSH actions are ready.";
   }
   if (status === "auth_failed") return "Credentials need attention before SSH actions can run.";
+  if (status === "host_key_untrusted") return "The server fingerprint is not pinned; SSH actions are blocked.";
   if (status === "unreachable") return "Host is unreachable; SSH actions are blocked.";
   return "Run Test Connection to verify backend-side SSH authentication.";
 }

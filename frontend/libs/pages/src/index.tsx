@@ -399,8 +399,15 @@ function useGatewayController(
   const [authType, setAuthType] = useState<"password" | "private_key">(
     "password",
   );
-  const [clientCommand, setClientCommand] = useState(
-    './scripts/gateway-thin-client.sh install && gateway-cli login --gateway http://localhost:8000 --directory "$PWD" --serve',
+  const [clientCommand, setClientCommand] = useState(() =>
+    [
+      "./scripts/gateway-thin-client.sh install",
+      "&&",
+      "gateway-cli login",
+      `--gateway ${shellQuote(currentGatewayOrigin())}`,
+      '--directory "$PWD"',
+      "--serve",
+    ].join(" "),
   );
   const [editingWorkspaceId, setEditingWorkspaceId] = useState("");
   const [editWorkspaceName, setEditWorkspaceName] = useState("");
@@ -650,12 +657,13 @@ function useGatewayController(
     mutationFn: api.createDeviceCode,
     onSuccess: (code) => {
       setActive("thin");
+      const gatewayBaseUrl = gatewayBaseFromVerificationUri(code.verification_uri);
       setClientCommand(
         [
           "./scripts/gateway-thin-client.sh install",
           "&&",
           "gateway-cli login",
-          "--gateway http://localhost:8000",
+          `--gateway ${shellQuote(gatewayBaseUrl)}`,
           '--directory "$PWD"',
           `--device-code ${shellQuote(code.device_code)}`,
           `--user-code ${shellQuote(code.user_code)}`,
@@ -808,4 +816,17 @@ function getErrorMessage(error: unknown) {
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function currentGatewayOrigin() {
+  if (typeof window === "undefined") return "http://localhost:8000";
+  return window.location.origin;
+}
+
+function gatewayBaseFromVerificationUri(verificationUri: string) {
+  const url = new URL(verificationUri);
+  url.pathname = url.pathname.replace(/\/thin-clients\/activate\/?$/, "");
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/$/, "");
 }

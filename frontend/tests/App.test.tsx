@@ -38,7 +38,7 @@ function mockEmptyGatewayApi() {
       return jsonResponse({
         device_code: 'device-preissued',
         user_code: 'ABC123',
-        verification_uri: 'http://localhost:8000/thin-clients/activate',
+        verification_uri: 'http://gateway.example:8000/thin-clients/activate',
         interval: 3
       });
     }
@@ -650,8 +650,9 @@ test('thin clients issue device code writes shell-safe login command', async () 
   fireEvent.click(screen.getByRole('button', { name: /issue device code/i }));
 
   const command = await screen.findByText(/--device-code 'device-preissued'/);
+  expect(command).toHaveTextContent("--gateway 'http://gateway.example:8000'");
   expect(command).toHaveTextContent("--user-code 'ABC123'");
-  expect(command).toHaveTextContent("--verification-uri 'http://localhost:8000/thin-clients/activate'");
+  expect(command).toHaveTextContent("--verification-uri 'http://gateway.example:8000/thin-clients/activate'");
   expect(command.textContent).not.toContain("# code");
 });
 

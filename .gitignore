@@ -15,3 +15,5 @@ auth/users.json
 !auth/users.example.json
 workspace/*
 !workspace/.gitkeep
+dist/
+reports/

@@ -38,6 +38,14 @@ def _is_unbound_device_code(code: DeviceCode) -> bool:
     return code.subject.startswith(_UNBOUND_DEVICE_CODE_SUBJECT_PREFIX)
 
 
+def _websocket_bearer_token(websocket: WebSocket, legacy_query_token: str | None = None) -> str | None:
+    authorization = websocket.headers.get("authorization", "").strip()
+    scheme, separator, credential = authorization.partition(" ")
+    if separator and scheme.casefold() == "bearer" and credential.strip():
+        return credential.strip()
+    return legacy_query_token
+
+
 def _activation_login_redirect(user_code: str) -> RedirectResponse:
     next_path = f"/thin-clients/activate?{urlencode({'user_code': user_code})}"
     return RedirectResponse(url=f"/auth/login?{urlencode({'next': next_path})}", status_code=303)
@@ -413,10 +421,10 @@ async def delete_thin_client(
 
 
 @router.websocket("/ws/{client_id}")
-async def websocket_control(websocket: WebSocket, client_id: str, token: str) -> None:
+async def websocket_control(websocket: WebSocket, client_id: str, token: str | None = None) -> None:
     await websocket.accept()
     try:
-        claims = decode_jwt(token)
+        claims = decode_jwt(_websocket_bearer_token(websocket, token) or "")
     except Exception:
         await websocket.close(code=4401)
         return

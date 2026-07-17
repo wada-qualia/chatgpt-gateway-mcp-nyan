@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from gateway_api.thin_client_control import ThinClientConnectionManager
+from gateway_api.routers.thin_clients import _websocket_bearer_token
 
 
 class CompletingWebSocket:
@@ -34,6 +35,13 @@ class BlockingWebSocket:
 
     async def close(self, code: int) -> None:
         self.closed_codes.append(code)
+
+
+def test_websocket_bearer_header_takes_precedence_over_legacy_query_token() -> None:
+    websocket = type("HeaderWebSocket", (), {"headers": {"authorization": "Bearer header-token"}})()
+
+    assert _websocket_bearer_token(websocket, "query-token") == "header-token"
+    assert _websocket_bearer_token(type("LegacyWebSocket", (), {"headers": {}})(), "query-token") == "query-token"
 
 
 def test_manager_routes_different_client_ids_independently() -> None:

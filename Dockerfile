@@ -58,7 +58,7 @@ RUN chmod 444 /etc/gateway/ssh_known_hosts \
 EXPOSE 8000
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["uvicorn", "gateway_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "gateway_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
 
 FROM runtime-base AS test
 

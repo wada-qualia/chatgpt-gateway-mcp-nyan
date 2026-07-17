@@ -64,6 +64,7 @@ FROM runtime-base AS test
 
 USER root
 COPY requirements-dev.txt /app/
+COPY --chown=appuser:appuser packaging /app/packaging
 RUN /opt/venv/bin/pip install --no-cache-dir -r /app/requirements-dev.txt
 USER appuser
 RUN pytest /app/services/gateway-api/tests /app/cli/tests

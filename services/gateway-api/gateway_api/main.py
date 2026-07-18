@@ -5,11 +5,11 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .database import init_db
 from .routers import access, audit, auth, devices, docker, file_changes, mcp, monitoring, oauth, thin_clients
+from .spa import SPAStaticFiles
 
 
 def create_app() -> FastAPI:
@@ -52,7 +52,7 @@ def create_app() -> FastAPI:
 
     dist = Path(__file__).resolve().parents[3] / "frontend" / "dist"
     if dist.exists():
-        app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")
+        app.mount("/", SPAStaticFiles(directory=dist, html=True), name="frontend")
     return app
 
 

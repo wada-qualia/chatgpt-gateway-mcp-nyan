@@ -116,6 +116,48 @@ def _entry_schema() -> dict[str, Any]:
     )
 
 
+def _ssh_device_resource_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "device_id": _string("SSH device id accepted by ssh_device_* tools."),
+            "name": _string("User-visible SSH device name."),
+            "host": _string("SSH host name or address."),
+            "port": _integer("SSH port."),
+            "username": _string("Remote SSH username."),
+            "auth_type": _string("Configured backend-side authentication type."),
+            "status": _string("Current recorded SSH device status."),
+        },
+        ["device_id", "name", "host", "port", "username", "auth_type", "status"],
+    )
+
+
+def _docker_workspace_resource_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "workspace_id": _string("Docker workspace id accepted by docker_workspace_* tools."),
+            "name": _string("User-visible Docker workspace name."),
+            "description": _string_or_null("Optional Docker workspace description."),
+            "image": _string("Configured container image."),
+            "status": _string("Current recorded Docker workspace status."),
+        },
+        ["workspace_id", "name", "description", "image", "status"],
+    )
+
+
+def _thin_client_resource_schema() -> dict[str, Any]:
+    return _object_schema(
+        {
+            "client_id": _string("Thin-client id accepted by thin_client_* tools."),
+            "hostname": _string("Thin-client host name."),
+            "directory": _string("Registered thin-client launch directory."),
+            "status": _string("Current recorded thin-client status."),
+            "connected": _boolean("Whether the gateway currently has a live thin-client connection."),
+            "last_seen_at": _string("Last recorded thin-client activity timestamp."),
+        },
+        ["client_id", "hostname", "directory", "status", "connected", "last_seen_at"],
+    )
+
+
 def _diff_line_schema() -> dict[str, Any]:
     return _object_schema(
         {
@@ -619,6 +661,12 @@ def _tools() -> list[dict[str, Any]]:
                     "devices": _integer("Number of registered SSH devices."),
                     "docker_workspaces": _integer("Number of registered Docker workspaces."),
                     "thin_clients": _integer("Number of registered thin clients."),
+                    "ssh_devices": _array("Safe metadata for registered SSH devices.", _ssh_device_resource_schema()),
+                    "docker_workspace_items": _array(
+                        "Safe metadata for registered Docker workspaces.",
+                        _docker_workspace_resource_schema(),
+                    ),
+                    "thin_client_items": _array("Safe metadata for registered thin clients.", _thin_client_resource_schema()),
                 }
             ),
         ),
@@ -1023,6 +1071,27 @@ def _ssh_device_payload(device: Device) -> dict[str, Any]:
     }
 
 
+def _docker_workspace_payload(workspace: DockerWorkspace) -> dict[str, Any]:
+    return {
+        "workspace_id": workspace.id,
+        "name": workspace.name,
+        "description": workspace.description,
+        "image": workspace.image,
+        "status": workspace.status,
+    }
+
+
+def _thin_client_payload(client: ThinClient) -> dict[str, Any]:
+    return {
+        "client_id": client.id,
+        "hostname": client.hostname,
+        "directory": client.directory,
+        "status": client.status,
+        "connected": thin_client_manager.is_connected(client.id),
+        "last_seen_at": client.last_seen_at.isoformat(),
+    }
+
+
 def _ssh_status_from_exception(exc: HTTPException) -> str:
     if exc.status_code == 409:
         return "host_key_untrusted"
@@ -1242,10 +1311,34 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
         path = _workspace(user, settings)
         return _result({"workspace": str(path), "user": user.username})
     if name == "list_resources":
-        devices = db.query(Device).filter(Device.owner_subject == user.subject).count()
-        workspaces = db.query(DockerWorkspace).filter(DockerWorkspace.owner_subject == user.subject).count()
-        thin_clients = db.query(ThinClient).filter(ThinClient.owner_subject == user.subject).count()
-        return _result({"devices": devices, "docker_workspaces": workspaces, "thin_clients": thin_clients})
+        devices = (
+            db.query(Device)
+            .filter(Device.owner_subject == user.subject, Device.kind == "ssh")
+            .order_by(Device.created_at.desc())
+            .all()
+        )
+        workspaces = (
+            db.query(DockerWorkspace)
+            .filter(DockerWorkspace.owner_subject == user.subject)
+            .order_by(DockerWorkspace.created_at.desc())
+            .all()
+        )
+        thin_clients = (
+            db.query(ThinClient)
+            .filter(ThinClient.owner_subject == user.subject)
+            .order_by(ThinClient.created_at.desc())
+            .all()
+        )
+        return _result(
+            {
+                "devices": len(devices),
+                "docker_workspaces": len(workspaces),
+                "thin_clients": len(thin_clients),
+                "ssh_devices": [_ssh_device_payload(device) for device in devices],
+                "docker_workspace_items": [_docker_workspace_payload(workspace) for workspace in workspaces],
+                "thin_client_items": [_thin_client_payload(client) for client in thin_clients],
+            }
+        )
     if name in {"ssh_device_info", "ssh_device_check_connection", "ssh_device_run_action", "ssh_device_read_home", "ssh_device_run_command"}:
         if not settings.gateway_ssh_enabled:
             raise HTTPException(status_code=404, detail=f"Unknown tool: {name}")

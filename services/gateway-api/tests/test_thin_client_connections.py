@@ -44,6 +44,18 @@ def test_websocket_bearer_header_takes_precedence_over_legacy_query_token() -> N
     assert _websocket_bearer_token(type("LegacyWebSocket", (), {"headers": {}})(), "query-token") == "query-token"
 
 
+def test_manager_reports_live_connection_presence() -> None:
+    async def scenario() -> None:
+        manager = ThinClientConnectionManager()
+        assert manager.is_connected("client-1") is False
+        connection = await manager.register("client-1", CompletingWebSocket(manager, "first"))
+        assert manager.is_connected("client-1") is True
+        await manager.unregister("client-1", connection)
+        assert manager.is_connected("client-1") is False
+
+    asyncio.run(scenario())
+
+
 def test_manager_routes_different_client_ids_independently() -> None:
     async def scenario() -> None:
         manager = ThinClientConnectionManager()

@@ -837,6 +837,12 @@ def test_mcp_tools_list(client: TestClient) -> None:
     assert output_schemas["thin_client_write_file"]["properties"]["diff"]["type"] == "object"
     assert output_schemas["thin_client_write_file"]["properties"]["diff"]["properties"]["hunks"]["type"] == "array"
     assert output_schemas["file_changes_list"]["properties"]["changes"]["type"] == "array"
+    resource_properties = output_schemas["list_resources"]["properties"]
+    assert resource_properties["ssh_devices"]["type"] == "array"
+    assert resource_properties["ssh_devices"]["items"]["properties"]["device_id"]["type"] == "string"
+    assert resource_properties["docker_workspace_items"]["items"]["properties"]["workspace_id"]["type"] == "string"
+    assert resource_properties["thin_client_items"]["items"]["properties"]["client_id"]["type"] == "string"
+    assert resource_properties["thin_client_items"]["items"]["properties"]["connected"]["type"] == "boolean"
     assert schemas["ssh_device_info"]["required"] == ["device_id"]
     assert schemas["ssh_device_info"]["additionalProperties"] is False
     assert schemas["ssh_device_check_connection"]["required"] == ["device_id"]
@@ -864,6 +870,125 @@ def test_mcp_tools_list(client: TestClient) -> None:
     assert annotations["thin_client_write_file"]["readOnlyHint"] is False
     assert annotations["thin_client_write_file"]["openWorldHint"] is False
     assert annotations["docker_workspace_delete"]["destructiveHint"] is True
+
+
+def test_mcp_list_resources_returns_owned_identifiers_and_safe_metadata(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import Device, DockerWorkspace, ThinClient
+    from gateway_api.routers import mcp as mcp_router
+
+    client.get("/auth/me")
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                Device(
+                    id="owned-device",
+                    owner_subject="dev:local",
+                    name="Owned SSH",
+                    kind="ssh",
+                    host="192.0.2.10",
+                    port=22,
+                    username="robot",
+                    auth_type="password",
+                    status="verified",
+                ),
+                Device(
+                    id="foreign-device",
+                    owner_subject="other:user",
+                    name="Foreign SSH",
+                    kind="ssh",
+                    host="192.0.2.11",
+                    port=22,
+                    username="other",
+                    auth_type="private_key",
+                    status="verified",
+                ),
+                DockerWorkspace(
+                    id="owned-workspace",
+                    owner_subject="dev:local",
+                    name="Owned Workspace",
+                    image="ubuntu:24.04",
+                    container_name="owned-workspace-container",
+                    status="running",
+                    meta={"description": "Primary workspace"},
+                ),
+                DockerWorkspace(
+                    id="foreign-workspace",
+                    owner_subject="other:user",
+                    name="Foreign Workspace",
+                    image="ubuntu:24.04",
+                    container_name="foreign-workspace-container",
+                    status="running",
+                ),
+                ThinClient(
+                    id="owned-client",
+                    owner_subject="dev:local",
+                    hostname="owned-host",
+                    directory="/srv/owned",
+                    agent_token_hash="owned-token-hash",
+                    status="online",
+                ),
+                ThinClient(
+                    id="foreign-client",
+                    owner_subject="other:user",
+                    hostname="foreign-host",
+                    directory="/srv/foreign",
+                    agent_token_hash="foreign-token-hash",
+                    status="online",
+                ),
+            ]
+        )
+        db.commit()
+
+    monkeypatch.setattr(mcp_router.thin_client_manager, "is_connected", lambda client_id: client_id == "owned-client")
+    response = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 59,
+            "method": "tools/call",
+            "params": {"name": "list_resources", "arguments": {}},
+        },
+    )
+
+    assert response.status_code == 200
+    structured = response.json()["result"]["structuredContent"]
+    assert structured["devices"] == 1
+    assert structured["docker_workspaces"] == 1
+    assert structured["thin_clients"] == 1
+    assert structured["ssh_devices"] == [
+        {
+            "device_id": "owned-device",
+            "name": "Owned SSH",
+            "host": "192.0.2.10",
+            "port": 22,
+            "username": "robot",
+            "auth_type": "password",
+            "status": "verified",
+        }
+    ]
+    assert structured["docker_workspace_items"] == [
+        {
+            "workspace_id": "owned-workspace",
+            "name": "Owned Workspace",
+            "description": "Primary workspace",
+            "image": "ubuntu:24.04",
+            "status": "running",
+        }
+    ]
+    assert structured["thin_client_items"][0]["client_id"] == "owned-client"
+    assert structured["thin_client_items"][0]["hostname"] == "owned-host"
+    assert structured["thin_client_items"][0]["directory"] == "/srv/owned"
+    assert structured["thin_client_items"][0]["connected"] is True
+    serialized = json.dumps(structured)
+    assert "foreign-device" not in serialized
+    assert "foreign-workspace" not in serialized
+    assert "foreign-client" not in serialized
+    assert "credential_secret_id" not in serialized
+    assert "agent_token_hash" not in serialized
 
 
 def test_mcp_ssh_descriptors_respect_feature_flags(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -24,6 +24,9 @@ class ThinClientConnectionManager:
         self._connections.setdefault(client_id, []).append(connection)
         return connection
 
+    def is_connected(self, client_id: str) -> bool:
+        return bool(self._connections.get(client_id))
+
     async def unregister(self, client_id: str, connection: ThinClientConnection | None = None) -> bool:
         connections = self._connections.get(client_id, [])
         if connection is None:

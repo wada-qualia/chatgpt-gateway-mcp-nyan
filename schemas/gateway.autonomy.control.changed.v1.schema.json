@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.autonomy.control.changed.v1",
+  "title": "AutonomyControlChanged",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "control_id",
+    "scope_type",
+    "scope_id",
+    "state",
+    "generation",
+    "revoked_permits",
+    "affected_recoveries"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "control_id": {
+      "type": "string"
+    },
+    "scope_type": {
+      "type": "string"
+    },
+    "scope_id": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "revoked_permits": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "affected_recoveries": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

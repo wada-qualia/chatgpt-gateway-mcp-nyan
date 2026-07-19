@@ -3,24 +3,53 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .database import init_db
-from .routers import access, audit, auth, devices, docker, file_changes, mcp, monitoring, oauth, thin_clients
+from .database import SessionLocal, init_db
+from .routers import (
+    access,
+    agent_autonomy,
+    agent_collaboration,
+    agent_coordination,
+    audit,
+    auth,
+    devices,
+    docker,
+    file_changes,
+    mcp,
+    monitoring,
+    oauth,
+    outbox,
+    realtime,
+    thin_clients,
+)
+from .runtime import GatewayRuntime
 from .spa import SPAStaticFiles
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    runtime = GatewayRuntime(settings=settings, session_factory=SessionLocal)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(app: FastAPI):
         init_db()
-        yield
+        app.state.gateway_runtime = runtime
+        await runtime.start()
+        try:
+            yield
+        finally:
+            await runtime.stop()
 
-    app = FastAPI(title=settings.app_name, version="0.1.0", openapi_url="/openapi.json", lifespan=lifespan)
+    app = FastAPI(
+        title=settings.app_name,
+        version=settings.gateway_release_version,
+        openapi_url="/openapi.json",
+        lifespan=lifespan,
+    )
+    app.state.gateway_runtime = runtime
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", settings.public_base_url.rstrip("/")],
@@ -31,12 +60,21 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok", "service": "gateway-api"}
+        return {
+            "status": "ok",
+            "service": "gateway-api",
+            "version": settings.gateway_release_version,
+            "revision": settings.gateway_release_revision,
+            "slot": settings.gateway_deployment_slot,
+        }
 
     @app.get("/ready")
-    async def ready() -> dict[str, str]:
+    async def ready(request: Request) -> dict:
         init_db()
-        return {"status": "ready"}
+        state = request.app.state.gateway_runtime.readiness()
+        if state["status"] != "ready":
+            raise HTTPException(status_code=503, detail=state)
+        return state
 
     app.include_router(auth.router)
     app.include_router(oauth.router)
@@ -48,6 +86,12 @@ def create_app() -> FastAPI:
     app.include_router(audit.router)
     app.include_router(monitoring.router)
     app.include_router(file_changes.router)
+    app.include_router(agent_collaboration.router)
+    app.include_router(agent_coordination.router)
+    app.include_router(agent_autonomy.router)
+    app.include_router(outbox.router)
+    app.include_router(outbox.metrics_router)
+    app.include_router(realtime.router)
     app.include_router(mcp.router)
 
     dist = Path(__file__).resolve().parents[3] / "frontend" / "dist"

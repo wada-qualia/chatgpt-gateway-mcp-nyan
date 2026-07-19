@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.autonomy.policy.updated.v1",
+  "title": "AutonomyPolicyUpdated",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "policy_id",
+    "room_id",
+    "status",
+    "assignment_mode",
+    "generation",
+    "version"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "policy_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "assignment_mode": {
+      "type": "string"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

@@ -16,17 +16,38 @@ services:
       retries: 10
     restart: unless-stopped
 
+  nats:
+    image: nats:2.14.1-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - nats-data:/data
+    ports:
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   gateway-api:
     build: .
     env_file:
       - .env
     environment:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      GATEWAY_RELEASE_VERSION: ${GATEWAY_RELEASE_VERSION:-0.3.0}
+      GATEWAY_RELEASE_REVISION: ${GATEWAY_RELEASE_REVISION:-local}
+      GATEWAY_DEPLOYMENT_SLOT: ${GATEWAY_DEPLOYMENT_SLOT:-local}
       DATABASE_URL: ${GATEWAY_DATABASE_URL:-postgresql+psycopg://gateway:gateway@postgres:5432/gateway}
       WORKSPACE_ROOT: /workspace
       GATEWAY_DEV_AUTH: ${GATEWAY_DEV_AUTH:-true}
       GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:-change-me-local-jwt-secret}
       GATEWAY_SECRET_KEY: ${GATEWAY_SECRET_KEY:-}
+      GATEWAY_SECRET_KEY_FILE: /data/gateway-secret.key
+      GATEWAY_SSH_KNOWN_HOSTS_POLICY: ${GATEWAY_SSH_KNOWN_HOSTS_POLICY:-accept-new}
+      GATEWAY_SSH_KNOWN_HOSTS_PATH: /data/ssh/known_hosts
       KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8080/realms/chatgpt-mcp}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-chatgpt-mcp-gateway}
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
@@ -35,6 +56,17 @@ services:
       MAX_COMMAND_TIMEOUT_SECONDS: ${MAX_COMMAND_TIMEOUT_SECONDS:-1800}
       COMMAND_BACKGROUND_AFTER_SECONDS: ${COMMAND_BACKGROUND_AFTER_SECONDS:-30}
       COMMAND_SESSION_SPOOL_ROOT: /data/command-sessions
+      GATEWAY_BROKER_BACKEND: ${GATEWAY_BROKER_BACKEND:-nats}
+      GATEWAY_NATS_SERVERS: ${GATEWAY_NATS_SERVERS:-nats://nats:4222}
+      GATEWAY_NATS_STREAM: ${GATEWAY_NATS_STREAM:-GATEWAY_EVENTS}
+      GATEWAY_NATS_SUBJECT_PREFIX: ${GATEWAY_NATS_SUBJECT_PREFIX:-gateway.events}
+      GATEWAY_OUTBOX_ENABLED: ${GATEWAY_OUTBOX_ENABLED:-true}
+      GATEWAY_AUTONOMY_ENABLED: ${GATEWAY_AUTONOMY_ENABLED:-false}
+      GATEWAY_AUTONOMY_EMERGENCY_STOP: ${GATEWAY_AUTONOMY_EMERGENCY_STOP:-false}
+      GATEWAY_AUTONOMY_POLL_INTERVAL_SECONDS: ${GATEWAY_AUTONOMY_POLL_INTERVAL_SECONDS:-2.0}
+      GATEWAY_AUTONOMY_ASSIGNMENT_BATCH_SIZE: ${GATEWAY_AUTONOMY_ASSIGNMENT_BATCH_SIZE:-10}
+      GATEWAY_AUTONOMY_APPROVAL_TTL_SECONDS: ${GATEWAY_AUTONOMY_APPROVAL_TTL_SECONDS:-3600}
+      GATEWAY_AUTONOMY_PERMIT_TTL_SECONDS: ${GATEWAY_AUTONOMY_PERMIT_TTL_SECONDS:-300}
     volumes:
       - ./workspace:/workspace
       - ./data:/data
@@ -43,6 +75,8 @@ services:
       - "8000:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      nats:
         condition: service_healthy
     restart: unless-stopped
 
@@ -87,4 +121,5 @@ services:
 
 volumes:
   postgres-data:
+  nats-data:
   frontend-node-modules:

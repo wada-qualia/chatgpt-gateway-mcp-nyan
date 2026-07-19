@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,9 +11,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "ChatGPT MCP SSH Gateway"
+    gateway_release_version: str = "0.3.0"
+    gateway_release_revision: str = ""
+    gateway_deployment_slot: str = "local"
     public_base_url: str = "http://localhost:8000"
     database_url: str = "sqlite:///./data/gateway.db"
     gateway_secret_key: str | None = None
+    gateway_secret_key_file: str = "./data/gateway-secret.key"
     gateway_jwt_secret: str = "change-me-local-jwt-secret"
     gateway_session_cookie: str = "gateway_session"
     gateway_dev_auth: bool = True
@@ -36,6 +41,29 @@ class Settings(BaseSettings):
     gateway_ssh_allowed_actions: str = Field(default="uptime,disk_usage,memory_usage,whoami,pwd,home_list")
     gateway_ssh_allow_raw_command: bool = False
     gateway_ssh_raw_command_max_chars: int = 500
+    gateway_agent_allow_unverified_git_context: bool = False
+    gateway_replica_id: str = ""
+    gateway_broker_backend: Literal["disabled", "memory", "nats"] = "disabled"
+    gateway_nats_servers: str = "nats://nats:4222"
+    gateway_nats_stream: str = "GATEWAY_EVENTS"
+    gateway_nats_subject_prefix: str = "gateway.events"
+    gateway_outbox_enabled: bool = True
+    gateway_outbox_poll_interval_seconds: float = 0.5
+    gateway_outbox_batch_size: int = 100
+    gateway_outbox_max_attempts: int = 10
+    gateway_outbox_retry_base_seconds: float = 1.0
+    gateway_outbox_retry_max_seconds: float = 300.0
+    gateway_outbox_lock_ttl_seconds: int = 60
+    gateway_replica_heartbeat_seconds: int = 10
+    gateway_replica_ttl_seconds: int = 30
+    gateway_realtime_route_ttl_seconds: int = 90
+    gateway_realtime_notification_ttl_seconds: int = 86400
+    gateway_autonomy_enabled: bool = False
+    gateway_autonomy_emergency_stop: bool = False
+    gateway_autonomy_poll_interval_seconds: float = 2.0
+    gateway_autonomy_assignment_batch_size: int = 10
+    gateway_autonomy_approval_ttl_seconds: int = 3600
+    gateway_autonomy_permit_ttl_seconds: int = 300
     gateway_ssh_raw_command_denied_patterns: str = Field(
         default="sudo\\b,su\\b,reboot\\b,shutdown\\b,mkfs\\b,mount\\b,umount\\b,chmod\\s+-R,chown\\s+-R,>\\s*/dev/"
     )
@@ -46,6 +74,10 @@ class Settings(BaseSettings):
     max_file_read_bytes: int = 200000
     max_file_write_bytes: int = 1000000
     max_output_chars: int = 30000
+
+    @property
+    def nats_servers(self) -> list[str]:
+        return [value.strip() for value in self.gateway_nats_servers.split(",") if value.strip()]
 
     @property
     def supported_scopes(self) -> list[str]:

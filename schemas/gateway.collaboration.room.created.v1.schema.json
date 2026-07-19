@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.collaboration.room.created.v1",
+  "title": "CollaborationRoomCreated",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "room_id",
+    "repository_identity",
+    "base_commit",
+    "created_by_agent_id"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "repository_identity": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "base_commit": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_by_agent_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

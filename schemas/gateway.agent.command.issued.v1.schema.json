@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.command.issued.v1",
+  "title": "AgentCommandIssued",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "command_id",
+    "room_id",
+    "issuer_agent_id",
+    "target_agent_id",
+    "kind",
+    "priority",
+    "requires_approval",
+    "correlation_id",
+    "causation_id"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "command_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "issuer_agent_id": {
+      "type": "string"
+    },
+    "target_agent_id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "requires_approval": {
+      "type": "boolean"
+    },
+    "correlation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "causation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

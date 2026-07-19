@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.autonomy.assignment.proposed.v1",
+  "title": "AutonomyAssignmentProposed",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "assignment_id",
+    "policy_id",
+    "room_id",
+    "work_item_id",
+    "agent_id",
+    "score",
+    "policy_generation"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "assignment_id": {
+      "type": "string"
+    },
+    "policy_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "work_item_id": {
+      "type": "string"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "policy_generation": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

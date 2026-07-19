@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.work_item.updated.v1",
+  "title": "Work_ItemUpdated",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "work_item_id",
+    "room_id",
+    "agent_id",
+    "status",
+    "version"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "work_item_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false
+}

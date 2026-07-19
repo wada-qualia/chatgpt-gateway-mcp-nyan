@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.autonomy.approval.voted.v1",
+  "title": "AutonomyApprovalVoted",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "approval_request_id",
+    "decision",
+    "voter_subject",
+    "status",
+    "approve_count",
+    "quorum_required"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "approval_request_id": {
+      "type": "string"
+    },
+    "decision": {
+      "type": "string"
+    },
+    "voter_subject": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "approve_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "quorum_required": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

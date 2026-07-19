@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.handoff.ready.v1",
+  "title": "AgentHandoffReady",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "handoff_id",
+    "room_id",
+    "source_agent_id",
+    "target_agent_id",
+    "lease_id",
+    "required_change_ids"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "handoff_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "source_agent_id": {
+      "type": "string"
+    },
+    "target_agent_id": {
+      "type": "string"
+    },
+    "lease_id": {
+      "type": "string"
+    },
+    "required_change_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

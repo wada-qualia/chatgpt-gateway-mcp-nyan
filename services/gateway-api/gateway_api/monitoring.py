@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
@@ -33,13 +33,28 @@ SECRET_ARGUMENT_NAMES = {
     "auth_token",
     "authorization",
     "bearer",
+    "client_secret",
+    "credential",
+    "credentials",
     "gitlab_token",
     "github_token",
     "password",
+    "passphrase",
     "private_key",
+    "refresh_token",
     "secret",
     "token",
 }
+SECRET_ARGUMENT_SUFFIXES = (
+    "apikey",
+    "credential",
+    "credentials",
+    "password",
+    "passphrase",
+    "privatekey",
+    "secret",
+    "token",
+)
 
 
 @dataclass
@@ -62,18 +77,53 @@ def utciso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _normalized_secret_name(value: str) -> str:
+    return "".join(char for char in value.lower() if char.isalnum())
+
+
+def _is_secret_argument_name(value: str) -> bool:
+    normalized = _normalized_secret_name(value)
+    exact_names = {_normalized_secret_name(item) for item in SECRET_ARGUMENT_NAMES}
+    return normalized in exact_names or normalized.endswith(SECRET_ARGUMENT_SUFFIXES)
+
+
+def _redacted_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "[redacted]" if _is_secret_argument_name(str(key)) else _redacted_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redacted_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redacted_value(item) for item in value)
+    return value
+
+
 def redacted_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in arguments.items():
-        normalized = "".join(char for char in key.lower() if char.isalnum() or char == "_")
-        result[key] = "[redacted]" if normalized in SECRET_ARGUMENT_NAMES else value
-    return result
+    return _redacted_value(arguments)
 
 
 class MonitoringService:
     def __init__(self) -> None:
         self._processes: dict[str, RunningProcess] = {}
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _session_matches_scope(
+        session: CommandSession,
+        *,
+        owner_subject: str | None,
+        origin: str | None,
+        resource_id: str | None,
+    ) -> bool:
+        if owner_subject is not None and session.owner_subject != owner_subject:
+            return False
+        if origin is not None and session.origin != origin:
+            return False
+        if resource_id is not None and session.resource_id != resource_id:
+            return False
+        return True
 
     def _spool_root(self, settings: Settings | None = None) -> Path:
         resolved = settings or get_settings()
@@ -148,7 +198,7 @@ class MonitoringService:
             updated_at=utcnow(),
         )
         db.add(session)
-        db.commit()
+        db.flush()
         db.refresh(session)
         emit_event(
             db,
@@ -158,16 +208,32 @@ class MonitoringService:
             resource_type="command_session",
             resource_id=session.id,
             payload={"session_id": session.id, "origin": origin, "resource_id": resource_id},
+            commit=False,
         )
+        db.commit()
         return session
 
-    def append_output(self, session_id: str, *, stream: str, text: str) -> None:
+    def append_output(
+        self,
+        session_id: str,
+        *,
+        stream: str,
+        text: str,
+        owner_subject: str | None = None,
+        origin: str | None = None,
+        resource_id: str | None = None,
+    ) -> bool:
         if not text:
-            return
+            return False
         with SessionLocal() as db:
             session = db.get(CommandSession, session_id)
-            if session is None:
-                return
+            if session is None or not self._session_matches_scope(
+                session,
+                owner_subject=owner_subject,
+                origin=origin,
+                resource_id=resource_id,
+            ):
+                return False
             path = Path(session.output_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             records = []
@@ -188,7 +254,6 @@ class MonitoringService:
                     handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             session.line_count = line
             session.updated_at = utcnow()
-            db.commit()
             if records:
                 emit_event(
                     db,
@@ -204,27 +269,44 @@ class MonitoringService:
                         "start_line": int(records[0]["line"]),
                         "end_line": int(records[-1]["line"]),
                     },
+                    commit=False,
                 )
+            db.commit()
+            return True
 
-    def finish_session(self, session_id: str, *, status_value: str, exit_code: int | None = None, meta: dict[str, Any] | None = None) -> None:
+    def finish_session(
+        self,
+        session_id: str,
+        *,
+        status_value: str,
+        exit_code: int | None = None,
+        meta: dict[str, Any] | None = None,
+        owner_subject: str | None = None,
+        origin: str | None = None,
+        resource_id: str | None = None,
+    ) -> bool:
         with SessionLocal() as db:
             session = db.get(CommandSession, session_id)
-            if session is None:
-                return
+            if session is None or not self._session_matches_scope(
+                session,
+                owner_subject=owner_subject,
+                origin=origin,
+                resource_id=resource_id,
+            ):
+                return False
             if session.status == "terminated" and status_value != "terminated":
                 session.exit_code = exit_code
                 session.updated_at = utcnow()
                 if meta:
                     session.meta = {**(session.meta or {}), **meta}
                 db.commit()
-                return
+                return True
             session.status = status_value
             session.exit_code = exit_code
             session.completed_at = utcnow()
             session.updated_at = utcnow()
             if meta:
                 session.meta = {**(session.meta or {}), **meta}
-            db.commit()
             emit_event(
                 db,
                 event_type=(
@@ -237,7 +319,10 @@ class MonitoringService:
                 resource_type="command_session",
                 resource_id=session.id,
                 payload={"session_id": session.id, "status": status_value, "exit_code": exit_code},
+                commit=False,
             )
+            db.commit()
+            return True
 
     async def run_local_command(
         self,
@@ -549,7 +634,7 @@ class MonitoringService:
         session.status = "terminated"
         session.completed_at = utcnow()
         session.updated_at = utcnow()
-        db.commit()
+        db.flush()
         db.refresh(session)
         emit_event(
             db,
@@ -559,7 +644,9 @@ class MonitoringService:
             resource_type="command_session",
             resource_id=session.id,
             payload={"session_id": session.id, "force": force},
+            commit=False,
         )
+        db.commit()
         return session
 
 

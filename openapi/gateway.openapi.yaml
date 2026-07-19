@@ -239,3 +239,588 @@ paths:
       responses:
         '200':
           description: Audit events
+  /api/agent-collaboration/agents:
+    get:
+      operationId: listAgentInstances
+      parameters:
+        - name: room_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Tenant-scoped agent instances
+    post:
+      operationId: registerAgentInstance
+      responses:
+        '201':
+          description: Agent instance registered or refreshed
+  /api/agent-collaboration/agents/{agent_id}/heartbeat:
+    post:
+      operationId: heartbeatAgentInstance
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent heartbeat accepted
+  /api/agent-collaboration/agents/{agent_id}/unregister:
+    post:
+      operationId: unregisterAgentInstance
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent marked offline
+  /api/agent-collaboration/rooms:
+    get:
+      operationId: listCollaborationRooms
+      responses:
+        '200':
+          description: Tenant-scoped collaboration rooms
+    post:
+      operationId: createCollaborationRoom
+      responses:
+        '201':
+          description: Collaboration room created idempotently
+  /api/agent-collaboration/rooms/{room_id}/join:
+    post:
+      operationId: joinCollaborationRoom
+      parameters:
+        - name: room_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent joined the room
+  /api/agent-collaboration/rooms/{room_id}/snapshot:
+    get:
+      operationId: getCollaborationRoomSnapshot
+      parameters:
+        - name: room_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Room agents, work items, recent messages and commands
+  /api/agent-collaboration/messages:
+    post:
+      operationId: sendAgentMessage
+      responses:
+        '201':
+          description: Durable message and delivery records created idempotently
+  /api/agent-collaboration/messages/inbox:
+    get:
+      operationId: readAgentInbox
+      parameters:
+        - name: agent_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: after_message_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Unacknowledged messages with at-least-once redelivery
+  /api/agent-collaboration/messages/{message_id}/ack:
+    post:
+      operationId: acknowledgeAgentMessage
+      parameters:
+        - name: message_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agent_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Message delivery acknowledged
+  /api/agent-collaboration/commands:
+    post:
+      operationId: issueAgentCommand
+      responses:
+        '201':
+          description: Durable non-executing command issued idempotently
+  /api/agent-collaboration/commands/inbox:
+    get:
+      operationId: listAgentCommands
+      parameters:
+        - name: agent_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Commands addressed to one agent
+  /api/agent-collaboration/commands/{command_id}/ack:
+    post:
+      operationId: acknowledgeAgentCommand
+      parameters:
+        - name: command_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agent_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Command delivery acknowledged
+  /api/agent-collaboration/commands/{command_id}/accept:
+    post:
+      operationId: acceptAgentCommand
+      parameters:
+        - name: command_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agent_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Command accepted without automatic execution
+  /api/agent-collaboration/commands/{command_id}/reject:
+    post:
+      operationId: rejectAgentCommand
+      parameters:
+        - name: command_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agent_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Command rejected
+  /api/agent-collaboration/commands/{command_id}/complete:
+    post:
+      operationId: completeAgentCommand
+      parameters:
+        - name: command_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agent_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Accepted command completed or failed
+  /api/agent-collaboration/commands/{command_id}/cancel:
+    post:
+      operationId: cancelAgentCommand
+      parameters:
+        - name: command_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: issuer_agent_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Issuer cancelled a nonterminal command
+  /api/agent-collaboration/work-items:
+    get:
+      operationId: listAgentWorkItems
+      parameters:
+        - name: room_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Work items in one collaboration room
+    post:
+      operationId: createAgentWorkItem
+      responses:
+        '201':
+          description: Work item created idempotently
+  /api/agent-collaboration/work-items/{work_item_id}/claim:
+    post:
+      operationId: claimAgentWorkItem
+      parameters:
+        - name: work_item_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Work item atomically claimed with optimistic version checking
+  /api/agent-collaboration/work-items/{work_item_id}:
+    patch:
+      operationId: updateAgentWorkItem
+      parameters:
+        - name: work_item_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Assigned work item updated with optimistic version checking
+  /api/agent-coordination/leases:
+    get:
+      operationId: listResourceLeases
+      responses:
+        '200':
+          description: Tenant-scoped resource leases with stale lease expiry
+    post:
+      operationId: acquireResourceLease
+      responses:
+        '201':
+          description: Path or glob reservation acquired with a monotonic fencing token
+  /api/agent-coordination/leases/{lease_id}/renew:
+    post:
+      operationId: renewResourceLease
+      parameters:
+        - name: lease_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Active lease renewed after holder and fencing-token validation
+  /api/agent-coordination/leases/{lease_id}/release:
+    post:
+      operationId: releaseResourceLease
+      parameters:
+        - name: lease_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lease released or coordinator-revoked
+  /api/agent-coordination/conflicts/detect:
+    post:
+      operationId: detectAgentFileConflicts
+      responses:
+        '200':
+          description: Hard and potential FileChangeSet conflicts
+  /api/agent-coordination/handoffs:
+    get:
+      operationId: listAgentHandoffs
+      responses:
+        '200':
+          description: Tenant-scoped handoff barriers
+    post:
+      operationId: createAgentHandoff
+      responses:
+        '201':
+          description: Handoff barrier bound to lease, fence and file-change evidence
+  /api/agent-coordination/handoffs/{handoff_id}/ready:
+    post:
+      operationId: markAgentHandoffReady
+      parameters:
+        - name: handoff_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Handoff marked ready after source evidence validation
+  /api/agent-coordination/handoffs/{handoff_id}/accept:
+    post:
+      operationId: acceptAgentHandoff
+      parameters:
+        - name: handoff_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Released and conflict-free handoff accepted
+  /api/agent-coordination/integrations:
+    get:
+      operationId: listAgentIntegrations
+      responses:
+        '200':
+          description: Coordinator integration records
+    post:
+      operationId: createAgentIntegration
+      responses:
+        '201':
+          description: Coordinator-only integration review created without implicit Git mutation
+  /api/agent-coordination/integrations/{integration_id}:
+    patch:
+      operationId: updateAgentIntegration
+      parameters:
+        - name: integration_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Integration decision updated with optimistic version checking
+  /api/operations/outbox:
+    get:
+      operationId: listOutboxEvents
+      responses:
+        '200':
+          description: Filtered transactional outbox rows for administrators and auditors
+  /api/operations/outbox/{event_id}:
+    get:
+      operationId: getOutboxEvent
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Transactional outbox event
+  /api/operations/outbox/{event_id}/attempts:
+    get:
+      operationId: listOutboxDeliveryAttempts
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Immutable publish-attempt history
+  /api/operations/outbox/{event_id}/replay:
+    post:
+      operationId: replayOutboxEvent
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Terminal outbox event returned to pending state with audit evidence
+  /api/operations/outbox/{event_id}/cancel:
+    post:
+      operationId: cancelOutboxEvent
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Unpublished outbox event cancelled with audit evidence
+  /api/operations/outbox/drain:
+    post:
+      operationId: drainOutbox
+      responses:
+        '200':
+          description: One bounded publisher iteration
+  /api/operations/metrics:
+    get:
+      operationId: getGatewayOperationsMetrics
+      responses:
+        '200':
+          description: JSON outbox, replica and realtime routing metrics
+  /api/operations/replicas:
+    get:
+      operationId: listGatewayReplicas
+      responses:
+        '200':
+          description: Registered gateway replicas and heartbeat state
+  /api/operations/realtime-routes:
+    get:
+      operationId: listRealtimeRoutes
+      responses:
+        '200':
+          description: Durable target-to-replica routing records
+  /api/agent-realtime/notifications:
+    get:
+      operationId: listAgentRealtimeNotifications
+      responses:
+        '200':
+          description: Durable realtime notification fallback inbox
+  /api/agent-realtime/notifications/{notification_id}/ack:
+    post:
+      operationId: acknowledgeAgentRealtimeNotification
+      parameters:
+        - name: notification_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Notification acknowledged by its tenant-scoped target agent
+  /metrics:
+    get:
+      operationId: getPrometheusMetrics
+      responses:
+        '200':
+          description: Prometheus text exposition for outbox, replicas and routes
+  /api/agent-autonomy/policies:
+    get:
+      operationId: listAutonomyPolicies
+      responses:
+        '200': {description: Tenant-scoped autonomy policies}
+    post:
+      operationId: createAutonomyPolicy
+      responses:
+        '201': {description: Fail-closed room autonomy policy created}
+  /api/agent-autonomy/policies/{policy_id}:
+    patch:
+      operationId: updateAutonomyPolicy
+      responses:
+        '200': {description: Policy updated with version and generation fencing}
+  /api/agent-autonomy/policies/{policy_id}/assignment-cycle:
+    post:
+      operationId: runAutonomyAssignmentCycle
+      responses:
+        '200': {description: One bounded capability-based assignment cycle}
+  /api/agent-autonomy/policies/{policy_id}/recovery-cycle:
+    post:
+      operationId: runAutonomyRecoveryCycle
+      responses:
+        '200': {description: One bounded recovery command issuance cycle}
+  /api/agent-autonomy/assignments:
+    get:
+      operationId: listAutonomyAssignments
+      responses:
+        '200': {description: Assignment proposals and applied decisions}
+  /api/agent-autonomy/assignments/{assignment_id}/apply:
+    post:
+      operationId: applyAutonomyAssignment
+      responses:
+        '200': {description: Suggested assignment applied after CAS checks}
+  /api/agent-autonomy/controls:
+    get:
+      operationId: listAutonomyControls
+      responses:
+        '200': {description: Effective hierarchical autonomy control state}
+    post:
+      operationId: setAutonomyControl
+      responses:
+        '200': {description: Administrator pause kill or resume operation}
+  /api/agent-autonomy/overrides:
+    get:
+      operationId: listAutonomyOverrides
+      responses:
+        '200': {description: Immutable operator override history}
+    post:
+      operationId: applyAutonomyOverride
+      responses:
+        '201': {description: Audited force assignment or revocation override}
+  /api/agent-autonomy/approvals:
+    get:
+      operationId: listAutonomyApprovalRequests
+      responses:
+        '200': {description: Exact-payload approval requests and votes}
+    post:
+      operationId: createAutonomyApprovalRequest
+      responses:
+        '201': {description: Quorum request bound to policy executor and payload hash}
+  /api/agent-autonomy/approvals/{request_id}/votes:
+    post:
+      operationId: castAutonomyApprovalVote
+      responses:
+        '200': {description: Immutable independent approval or rejection vote}
+  /api/agent-autonomy/approvals/{request_id}/permit:
+    post:
+      operationId: issueAutonomyExecutionPermit
+      responses:
+        '201': {description: Short-lived single-use execution permit}
+  /api/agent-autonomy/permits:
+    get:
+      operationId: listAutonomyExecutionPermits
+      responses:
+        '200': {description: Tenant-scoped permit lifecycle}
+  /api/agent-autonomy/permits/{permit_id}/claim:
+    post:
+      operationId: claimAutonomyExecutionPermit
+      responses:
+        '200': {description: Exact executor claims a fenced permit}
+  /api/agent-autonomy/receipts:
+    get:
+      operationId: listAutonomyActionReceipts
+      responses:
+        '200': {description: Immutable privileged-action receipts}
+    post:
+      operationId: recordAutonomyActionReceipt
+      responses:
+        '201': {description: Claimed permit consumed by a hashed result receipt}
+  /api/agent-autonomy/recoveries:
+    get:
+      operationId: listAutonomyRecoveryLoops
+      responses:
+        '200': {description: Bounded recovery loops and attempt evidence}
+    post:
+      operationId: createAutonomyRecoveryLoop
+      responses:
+        '201': {description: Recovery loop created without direct execution}
+  /api/agent-autonomy/recoveries/{loop_id}/outcome:
+    post:
+      operationId: recordAutonomyRecoveryOutcome
+      responses:
+        '200': {description: Recovery attempt retried completed or exhausted}
+  /api/agent-autonomy/metrics:
+    get:
+      operationId: getAutonomyMetrics
+      responses:
+        '200': {description: Tenant-scoped autonomy metrics}

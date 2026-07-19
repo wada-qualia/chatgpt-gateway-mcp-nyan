@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.autonomy.recovery.completed.v1",
+  "title": "AutonomyRecoveryCompleted",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "recovery_loop_id",
+    "policy_id",
+    "room_id",
+    "attempt_count",
+    "max_attempts",
+    "status",
+    "command_id"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "recovery_loop_id": {
+      "type": "string"
+    },
+    "policy_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "attempt_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "status": {
+      "type": "string"
+    },
+    "command_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

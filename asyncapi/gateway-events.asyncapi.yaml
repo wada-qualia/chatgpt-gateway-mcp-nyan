@@ -1,8 +1,16 @@
 asyncapi: 2.6.0
 info:
   title: ChatGPT MCP SSH Gateway Events
-  version: 0.1.0
+  version: 0.3.0
 defaultContentType: application/json
+servers:
+  jetstream:
+    url: nats://nats:4222
+    protocol: nats
+    description: >-
+      NATS JetStream. Concrete subjects are prefixed with gateway.events.;
+      event JSON payloads remain the flat versioned schemas below, while audit
+      and routing metadata is carried in NATS headers.
 channels:
   gateway.user.authenticated.v1:
     publish:
@@ -48,8 +56,216 @@ channels:
     publish:
       message:
         $ref: '#/components/messages/CommandSessionTerminated'
+  gateway.agent.registered.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentRegistered'
+  gateway.agent.heartbeat.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentHeartbeat'
+  gateway.agent.unregistered.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentUnregistered'
+  gateway.collaboration.room.created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/CollaborationRoomCreated'
+  gateway.agent.room_joined.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentRoomJoined'
+  gateway.agent.message.sent.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentMessageSent'
+  gateway.agent.message.acknowledged.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentMessageAcknowledged'
+  gateway.agent.command.issued.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentCommandIssued'
+  gateway.agent.command.acknowledged.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentCommandAcknowledged'
+  gateway.agent.command.accepted.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentCommandAccepted'
+  gateway.agent.command.completed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentCommandCompleted'
+  gateway.agent.command.cancelled.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentCommandCancelled'
+  gateway.work_item.created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/WorkItemCreated'
+  gateway.work_item.claimed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/WorkItemClaimed'
+  gateway.work_item.updated.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/WorkItemUpdated'
+  gateway.resource_lease.acquired.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/ResourceLeaseAcquired'
+  gateway.resource_lease.renewed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/ResourceLeaseRenewed'
+  gateway.resource_lease.released.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/ResourceLeaseReleased'
+  gateway.agent.handoff.created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentHandoffCreated'
+  gateway.agent.handoff.ready.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentHandoffReady'
+  gateway.agent.handoff.accepted.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentHandoffAccepted'
+  gateway.agent.integration.created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentIntegrationCreated'
+  gateway.agent.integration.updated.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AgentIntegrationUpdated'
+  gateway.file_change.created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/FileChangeCreated'
+  gateway.autonomy.policy.created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyPolicyCreated'
+  gateway.autonomy.policy.updated.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyPolicyUpdated'
+  gateway.autonomy.control.changed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyControlChanged'
+  gateway.autonomy.assignment.proposed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyAssignmentProposed'
+  gateway.autonomy.assignment.applied.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyAssignmentApplied'
+  gateway.autonomy.approval.requested.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyApprovalRequested'
+  gateway.autonomy.approval.voted.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyApprovalVoted'
+  gateway.autonomy.permit.issued.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyPermitIssued'
+  gateway.autonomy.permit.claimed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyPermitClaimed'
+  gateway.autonomy.action.receipt.recorded.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyActionReceiptRecorded'
+  gateway.autonomy.recovery.created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyRecoveryCreated'
+  gateway.autonomy.recovery.attempted.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyRecoveryAttempted'
+  gateway.autonomy.recovery.completed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyRecoveryCompleted'
+  gateway.autonomy.override.applied.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AutonomyOverrideApplied'
 components:
   messages:
+    AutonomyPolicyCreated:
+      name: gateway.autonomy.policy.created.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.policy.created.v1.schema.json'
+    AutonomyPolicyUpdated:
+      name: gateway.autonomy.policy.updated.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.policy.updated.v1.schema.json'
+    AutonomyControlChanged:
+      name: gateway.autonomy.control.changed.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.control.changed.v1.schema.json'
+    AutonomyAssignmentProposed:
+      name: gateway.autonomy.assignment.proposed.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.assignment.proposed.v1.schema.json'
+    AutonomyAssignmentApplied:
+      name: gateway.autonomy.assignment.applied.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.assignment.applied.v1.schema.json'
+    AutonomyApprovalRequested:
+      name: gateway.autonomy.approval.requested.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.approval.requested.v1.schema.json'
+    AutonomyApprovalVoted:
+      name: gateway.autonomy.approval.voted.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.approval.voted.v1.schema.json'
+    AutonomyPermitIssued:
+      name: gateway.autonomy.permit.issued.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.permit.issued.v1.schema.json'
+    AutonomyPermitClaimed:
+      name: gateway.autonomy.permit.claimed.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.permit.claimed.v1.schema.json'
+    AutonomyActionReceiptRecorded:
+      name: gateway.autonomy.action.receipt.recorded.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.action.receipt.recorded.v1.schema.json'
+    AutonomyRecoveryCreated:
+      name: gateway.autonomy.recovery.created.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.recovery.created.v1.schema.json'
+    AutonomyRecoveryAttempted:
+      name: gateway.autonomy.recovery.attempted.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.recovery.attempted.v1.schema.json'
+    AutonomyRecoveryCompleted:
+      name: gateway.autonomy.recovery.completed.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.recovery.completed.v1.schema.json'
+    AutonomyOverrideApplied:
+      name: gateway.autonomy.override.applied.v1
+      payload:
+        $ref: '../schemas/gateway.autonomy.override.applied.v1.schema.json'
     UserAuthenticated:
       name: gateway.user.authenticated.v1
       payload:
@@ -94,3 +310,99 @@ components:
       name: gateway.command_session.terminated.v1
       payload:
         $ref: '../schemas/gateway.command_session.terminated.v1.schema.json'
+    AgentRegistered:
+      name: gateway.agent.registered.v1
+      payload:
+        $ref: '../schemas/gateway.agent.registered.v1.schema.json'
+    AgentHeartbeat:
+      name: gateway.agent.heartbeat.v1
+      payload:
+        $ref: '../schemas/gateway.agent.heartbeat.v1.schema.json'
+    AgentUnregistered:
+      name: gateway.agent.unregistered.v1
+      payload:
+        $ref: '../schemas/gateway.agent.unregistered.v1.schema.json'
+    CollaborationRoomCreated:
+      name: gateway.collaboration.room.created.v1
+      payload:
+        $ref: '../schemas/gateway.collaboration.room.created.v1.schema.json'
+    AgentRoomJoined:
+      name: gateway.agent.room_joined.v1
+      payload:
+        $ref: '../schemas/gateway.agent.room_joined.v1.schema.json'
+    AgentMessageSent:
+      name: gateway.agent.message.sent.v1
+      payload:
+        $ref: '../schemas/gateway.agent.message.sent.v1.schema.json'
+    AgentMessageAcknowledged:
+      name: gateway.agent.message.acknowledged.v1
+      payload:
+        $ref: '../schemas/gateway.agent.message.acknowledged.v1.schema.json'
+    AgentCommandIssued:
+      name: gateway.agent.command.issued.v1
+      payload:
+        $ref: '../schemas/gateway.agent.command.issued.v1.schema.json'
+    AgentCommandAcknowledged:
+      name: gateway.agent.command.acknowledged.v1
+      payload:
+        $ref: '../schemas/gateway.agent.command.acknowledged.v1.schema.json'
+    AgentCommandAccepted:
+      name: gateway.agent.command.accepted.v1
+      payload:
+        $ref: '../schemas/gateway.agent.command.accepted.v1.schema.json'
+    AgentCommandCompleted:
+      name: gateway.agent.command.completed.v1
+      payload:
+        $ref: '../schemas/gateway.agent.command.completed.v1.schema.json'
+    AgentCommandCancelled:
+      name: gateway.agent.command.cancelled.v1
+      payload:
+        $ref: '../schemas/gateway.agent.command.cancelled.v1.schema.json'
+    WorkItemCreated:
+      name: gateway.work_item.created.v1
+      payload:
+        $ref: '../schemas/gateway.work_item.created.v1.schema.json'
+    WorkItemClaimed:
+      name: gateway.work_item.claimed.v1
+      payload:
+        $ref: '../schemas/gateway.work_item.claimed.v1.schema.json'
+    WorkItemUpdated:
+      name: gateway.work_item.updated.v1
+      payload:
+        $ref: '../schemas/gateway.work_item.updated.v1.schema.json'
+    ResourceLeaseAcquired:
+      name: gateway.resource_lease.acquired.v1
+      payload:
+        $ref: '../schemas/gateway.resource_lease.acquired.v1.schema.json'
+    ResourceLeaseRenewed:
+      name: gateway.resource_lease.renewed.v1
+      payload:
+        $ref: '../schemas/gateway.resource_lease.renewed.v1.schema.json'
+    ResourceLeaseReleased:
+      name: gateway.resource_lease.released.v1
+      payload:
+        $ref: '../schemas/gateway.resource_lease.released.v1.schema.json'
+    AgentHandoffCreated:
+      name: gateway.agent.handoff.created.v1
+      payload:
+        $ref: '../schemas/gateway.agent.handoff.created.v1.schema.json'
+    AgentHandoffReady:
+      name: gateway.agent.handoff.ready.v1
+      payload:
+        $ref: '../schemas/gateway.agent.handoff.ready.v1.schema.json'
+    AgentHandoffAccepted:
+      name: gateway.agent.handoff.accepted.v1
+      payload:
+        $ref: '../schemas/gateway.agent.handoff.accepted.v1.schema.json'
+    AgentIntegrationCreated:
+      name: gateway.agent.integration.created.v1
+      payload:
+        $ref: '../schemas/gateway.agent.integration.created.v1.schema.json'
+    AgentIntegrationUpdated:
+      name: gateway.agent.integration.updated.v1
+      payload:
+        $ref: '../schemas/gateway.agent.integration.updated.v1.schema.json'
+    FileChangeCreated:
+      name: gateway.file_change.created.v1
+      payload:
+        $ref: '../schemas/gateway.file_change.created.v1.schema.json'

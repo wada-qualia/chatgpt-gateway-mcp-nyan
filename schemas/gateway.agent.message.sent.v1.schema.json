@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.message.sent.v1",
+  "title": "AgentMessageSent",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "message_id",
+    "room_id",
+    "sender_agent_id",
+    "recipient_agent_ids",
+    "kind",
+    "priority",
+    "sequence_number",
+    "correlation_id",
+    "causation_id"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "message_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "sender_agent_id": {
+      "type": "string"
+    },
+    "recipient_agent_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "kind": {
+      "type": "string"
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "sequence_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "correlation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "causation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.integration.updated.v1",
+  "title": "AgentIntegrationUpdated",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "integration_id",
+    "room_id",
+    "coordinator_agent_id",
+    "status",
+    "version",
+    "observed_target_head",
+    "integrated_commit"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "integration_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "coordinator_agent_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "integrated_commit": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "observed_target_head": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

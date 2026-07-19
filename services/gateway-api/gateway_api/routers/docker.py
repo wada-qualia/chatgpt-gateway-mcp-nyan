@@ -63,7 +63,7 @@ async def create_workspace(
         updated_at=utcnow(),
     )
     db.add(workspace)
-    db.commit()
+    db.flush()
     db.refresh(workspace)
     emit_event(
         db,
@@ -73,7 +73,9 @@ async def create_workspace(
         resource_type="docker_workspace",
         resource_id=workspace.id,
         payload={"workspace_id": workspace.id, "image": workspace.image, "container_name": workspace.container_name},
+        commit=False,
     )
+    db.commit()
     return workspace
 
 
@@ -104,7 +106,7 @@ async def clone_workspace(
         updated_at=utcnow(),
     )
     db.add(workspace)
-    db.commit()
+    db.flush()
     db.refresh(workspace)
     emit_event(
         db,
@@ -114,7 +116,9 @@ async def clone_workspace(
         resource_type="docker_workspace",
         resource_id=workspace.id,
         payload={"workspace_id": workspace.id, "source_workspace_id": source.id, "image": workspace.image},
+        commit=False,
     )
+    db.commit()
     return workspace
 
 
@@ -158,7 +162,7 @@ async def update_workspace(
         meta["detail"] = detail
     workspace.meta = meta
     workspace.updated_at = utcnow()
-    db.commit()
+    db.flush()
     db.refresh(workspace)
     emit_event(
         db,
@@ -173,7 +177,9 @@ async def update_workspace(
             "container_name": workspace.container_name,
             "description_set": workspace.description is not None,
         },
+        commit=False,
     )
+    db.commit()
     return workspace
 
 
@@ -231,7 +237,7 @@ async def stop_workspace(
     workspace.status = result.status
     workspace.meta = {**(workspace.meta or {}), "detail": result.detail}
     workspace.updated_at = utcnow()
-    db.commit()
+    db.flush()
     db.refresh(workspace)
     emit_event(
         db,
@@ -241,7 +247,9 @@ async def stop_workspace(
         resource_type="docker_workspace",
         resource_id=workspace.id,
         payload={"workspace_id": workspace.id, "container_id": workspace.container_id, "status": workspace.status},
+        commit=False,
     )
+    db.commit()
     return workspace
 
 
@@ -260,7 +268,7 @@ async def start_workspace(
     workspace.status = result.status
     workspace.meta = {**(workspace.meta or {}), "detail": result.detail}
     workspace.updated_at = utcnow()
-    db.commit()
+    db.flush()
     db.refresh(workspace)
     emit_event(
         db,
@@ -270,7 +278,9 @@ async def start_workspace(
         resource_type="docker_workspace",
         resource_id=workspace.id,
         payload={"workspace_id": workspace.id, "container_id": workspace.container_id, "status": workspace.status},
+        commit=False,
     )
+    db.commit()
     return workspace
 
 
@@ -289,7 +299,6 @@ async def delete_workspace(
     container_name = workspace.container_name
     detail = DockerAdapter(settings).remove_workspace(container_id=container_id)
     db.delete(workspace)
-    db.commit()
     emit_event(
         db,
         event_type="gateway.workspace.changed.v1",
@@ -298,5 +307,7 @@ async def delete_workspace(
         resource_type="docker_workspace",
         resource_id=workspace_id,
         payload={"workspace_id": workspace_id, "container_id": container_id, "container_name": container_name, "detail": detail},
+        commit=False,
     )
+    db.commit()
     return {"ok": True}

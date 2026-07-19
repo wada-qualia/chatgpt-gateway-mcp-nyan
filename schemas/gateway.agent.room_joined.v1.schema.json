@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.room_joined.v1",
+  "title": "AgentRoom_Joined",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "room_id",
+    "agent_id"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "agent_id": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

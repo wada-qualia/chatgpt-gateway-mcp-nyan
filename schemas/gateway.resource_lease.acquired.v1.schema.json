@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.resource_lease.acquired.v1",
+  "title": "Resource_LeaseAcquired",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "lease_id",
+    "room_id",
+    "holder_agent_id",
+    "origin",
+    "resource_id",
+    "mode",
+    "reservations",
+    "fencing_token",
+    "branch_name",
+    "worktree_path"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "lease_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "holder_agent_id": {
+      "type": "string"
+    },
+    "origin": {
+      "type": "string"
+    },
+    "resource_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mode": {
+      "type": "string"
+    },
+    "reservations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "fencing_token": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "branch_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "worktree_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

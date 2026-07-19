@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.autonomy.permit.claimed.v1",
+  "title": "AutonomyPermitClaimed",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "permit_id",
+    "approval_request_id",
+    "command_id",
+    "executor_agent_id",
+    "fencing_token",
+    "payload_hash"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "permit_id": {
+      "type": "string"
+    },
+    "approval_request_id": {
+      "type": "string"
+    },
+    "command_id": {
+      "type": "string"
+    },
+    "executor_agent_id": {
+      "type": "string"
+    },
+    "fencing_token": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "payload_hash": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

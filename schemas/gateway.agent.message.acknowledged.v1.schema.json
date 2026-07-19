@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.message.acknowledged.v1",
+  "title": "AgentMessageAcknowledged",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "message_id",
+    "room_id",
+    "recipient_agent_id"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "message_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "recipient_agent_id": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

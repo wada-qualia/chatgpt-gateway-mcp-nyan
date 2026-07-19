@@ -36,7 +36,7 @@ async def create_grant(payload: AccessGrantCreate, user: User = Depends(get_curr
         scopes=payload.scopes,
     )
     db.add(grant)
-    db.commit()
+    db.flush()
     db.refresh(grant)
     emit_event(
         db,
@@ -46,5 +46,7 @@ async def create_grant(payload: AccessGrantCreate, user: User = Depends(get_curr
         resource_type="access_grant",
         resource_id=grant.id,
         payload={"grant_id": grant.id, "resource_type": grant.resource_type, "resource_id": grant.resource_id},
+        commit=False,
     )
+    db.commit()
     return grant

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.unregistered.v1",
+  "title": "AgentUnregistered",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "agent_id"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agent_id": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

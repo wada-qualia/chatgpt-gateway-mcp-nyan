@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.realtime.notification.v1",
+  "title": "GatewayRealtimeNotification",
+  "type": "object",
+  "required": [
+    "type",
+    "notification_id",
+    "event_type",
+    "payload"
+  ],
+  "properties": {
+    "type": {
+      "const": "notification"
+    },
+    "notification_id": {
+      "type": "string"
+    },
+    "event_type": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

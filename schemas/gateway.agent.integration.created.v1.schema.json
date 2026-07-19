@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.integration.created.v1",
+  "title": "AgentIntegrationCreated",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "integration_id",
+    "room_id",
+    "coordinator_agent_id",
+    "target_branch",
+    "expected_target_head",
+    "status",
+    "conflict_report"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "integration_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "coordinator_agent_id": {
+      "type": "string"
+    },
+    "target_branch": {
+      "type": "string"
+    },
+    "expected_target_head": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "conflict_report": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

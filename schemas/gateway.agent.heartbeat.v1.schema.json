@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.heartbeat.v1",
+  "title": "AgentHeartbeat",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "agent_id",
+    "status",
+    "room_id"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

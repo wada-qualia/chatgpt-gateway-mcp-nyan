@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.handoff.accepted.v1",
+  "title": "AgentHandoffAccepted",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "handoff_id",
+    "room_id",
+    "source_agent_id",
+    "target_agent_id",
+    "conflict_report"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "handoff_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "source_agent_id": {
+      "type": "string"
+    },
+    "target_agent_id": {
+      "type": "string"
+    },
+    "conflict_report": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

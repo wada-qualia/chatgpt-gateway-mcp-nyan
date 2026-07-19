@@ -33,3 +33,45 @@ spec:
     - gateway.thin_client.enrolled.v1
     - gateway.access_grant.changed.v1
     - gateway.audit.recorded.v1
+    - gateway.command_session.started.v1
+    - gateway.command_session.output.v1
+    - gateway.command_session.finished.v1
+    - gateway.command_session.terminated.v1
+    - gateway.agent.registered.v1
+    - gateway.agent.heartbeat.v1
+    - gateway.agent.unregistered.v1
+    - gateway.collaboration.room.created.v1
+    - gateway.agent.room_joined.v1
+    - gateway.agent.message.sent.v1
+    - gateway.agent.message.acknowledged.v1
+    - gateway.agent.command.issued.v1
+    - gateway.agent.command.acknowledged.v1
+    - gateway.agent.command.accepted.v1
+    - gateway.agent.command.completed.v1
+    - gateway.agent.command.cancelled.v1
+    - gateway.work_item.created.v1
+    - gateway.work_item.claimed.v1
+    - gateway.work_item.updated.v1
+    - gateway.resource_lease.acquired.v1
+    - gateway.resource_lease.renewed.v1
+    - gateway.resource_lease.released.v1
+    - gateway.agent.handoff.created.v1
+    - gateway.agent.handoff.ready.v1
+    - gateway.agent.handoff.accepted.v1
+    - gateway.agent.integration.created.v1
+    - gateway.agent.integration.updated.v1
+    - gateway.file_change.created.v1
+    - gateway.autonomy.policy.created.v1
+    - gateway.autonomy.policy.updated.v1
+    - gateway.autonomy.control.changed.v1
+    - gateway.autonomy.assignment.proposed.v1
+    - gateway.autonomy.assignment.applied.v1
+    - gateway.autonomy.approval.requested.v1
+    - gateway.autonomy.approval.voted.v1
+    - gateway.autonomy.permit.issued.v1
+    - gateway.autonomy.permit.claimed.v1
+    - gateway.autonomy.action.receipt.recorded.v1
+    - gateway.autonomy.recovery.created.v1
+    - gateway.autonomy.recovery.attempted.v1
+    - gateway.autonomy.recovery.completed.v1
+    - gateway.autonomy.override.applied.v1

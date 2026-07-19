@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.registered.v1",
+  "title": "AgentRegistered",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "agent_id",
+    "logical_agent_id",
+    "instance_id",
+    "status",
+    "room_id"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "logical_agent_id": {
+      "type": "string"
+    },
+    "instance_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

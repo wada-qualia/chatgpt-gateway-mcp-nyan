@@ -3,10 +3,12 @@ from __future__ import annotations
 import ast
 import io
 import json
+import os
 import re
 import socket
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from fastapi import HTTPException, status
@@ -166,6 +168,33 @@ def _status_from_ssh_exception(exc: Exception) -> int:
     if "timed out" in message or "timeout" in message:
         return 504
     return 502
+
+
+def _managed_known_hosts_path(raw_path: str) -> Path:
+    path = Path(raw_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        try:
+            with path.open("x", encoding="utf-8"):
+                pass
+        except FileExistsError:
+            pass
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
+def _configure_host_key_verification(client: SshClientProtocol, paramiko: Any) -> None:
+    settings = get_settings()
+    client.load_system_host_keys()
+    known_hosts_path = _managed_known_hosts_path(settings.gateway_ssh_known_hosts_path)
+    client.load_host_keys(str(known_hosts_path))
+    if settings.gateway_ssh_known_hosts_policy == "accept-new":
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    else:
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
 
 def _ssh_client(

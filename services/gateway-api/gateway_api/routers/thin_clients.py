@@ -24,6 +24,16 @@ from ..thin_client_control import thin_client_manager
 router = APIRouter(prefix="/api/thin-clients", tags=["thin-clients"])
 activation_router = APIRouter(tags=["thin-client-activation"])
 _UNBOUND_DEVICE_CODE_SUBJECT_PREFIX = "device-code:"
+THIN_CLIENT_SESSION_FINISH_STATUSES = {"completed", "failed", "terminated"}
+THIN_CLIENT_SESSION_STREAMS = {"stdout", "stderr"}
+
+
+def _session_exit_code(value: object) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return max(-(2**31), min(parsed, 2**31 - 1))
 
 
 def _normalize_user_code(value: str) -> str:
@@ -316,7 +326,7 @@ async def register_thin_client(request: Request, payload: ThinClientRegister, db
     client.status = "online"
     client.meta = {"labels": payload.labels}
     client.last_seen_at = utcnow()
-    db.commit()
+    db.flush()
     db.refresh(client)
     emit_event(
         db,
@@ -326,7 +336,9 @@ async def register_thin_client(request: Request, payload: ThinClientRegister, db
         resource_type="thin_client",
         resource_id=client.id,
         payload={"client_id": client.id, "hostname": client.hostname, "directory": client.directory},
+        commit=False,
     )
+    db.commit()
     return client
 
 
@@ -406,8 +418,6 @@ async def delete_thin_client(
     hostname = client.hostname
     directory = client.directory
     db.delete(client)
-    db.commit()
-    await thin_client_manager.disconnect(client_id)
     emit_event(
         db,
         event_type="gateway.thin_client.changed.v1",
@@ -416,7 +426,10 @@ async def delete_thin_client(
         resource_type="thin_client",
         resource_id=client_id,
         payload={"client_id": client_id, "hostname": hostname, "directory": directory},
+        commit=False,
     )
+    db.commit()
+    await thin_client_manager.disconnect(client_id)
     return {"ok": True}
 
 
@@ -459,25 +472,67 @@ async def websocket_control(websocket: WebSocket, client_id: str, token: str | N
             elif message.get("type") == "tool_result":
                 await thin_client_manager.complete(str(message.get("request_id", "")), message)
             elif message.get("type") == "session_output":
+                stream = str(message.get("stream", "stdout"))
+                if stream not in THIN_CLIENT_SESSION_STREAMS:
+                    stream = "stdout"
                 monitoring_service.append_output(
                     str(message.get("session_id", "")),
-                    stream=str(message.get("stream", "stdout")),
+                    stream=stream,
                     text=str(message.get("text", "")),
+                    owner_subject=str(claims["sub"]),
+                    origin="thin_client",
+                    resource_id=client_id,
                 )
             elif message.get("type") == "session_finished":
+                status_value = str(message.get("status") or "completed")
+                if status_value not in THIN_CLIENT_SESSION_FINISH_STATUSES:
+                    continue
                 monitoring_service.finish_session(
                     str(message.get("session_id", "")),
-                    status_value=str(message.get("status") or "completed"),
-                    exit_code=int(message.get("exit_code", 0)),
+                    status_value=status_value,
+                    exit_code=_session_exit_code(message.get("exit_code", 0)),
+                    owner_subject=str(claims["sub"]),
+                    origin="thin_client",
+                    resource_id=client_id,
                 )
             elif message.get("type") == "session_failed":
                 session_id = str(message.get("session_id", ""))
-                monitoring_service.append_output(session_id, stream="stderr", text=str(message.get("error", "")) + "\n")
-                monitoring_service.finish_session(session_id, status_value="failed", exit_code=None, meta={"error": str(message.get("error", ""))})
+                error = str(message.get("error", ""))
+                monitoring_service.append_output(
+                    session_id,
+                    stream="stderr",
+                    text=error + "\n",
+                    owner_subject=str(claims["sub"]),
+                    origin="thin_client",
+                    resource_id=client_id,
+                )
+                monitoring_service.finish_session(
+                    session_id,
+                    status_value="failed",
+                    exit_code=None,
+                    meta={"error": error},
+                    owner_subject=str(claims["sub"]),
+                    origin="thin_client",
+                    resource_id=client_id,
+                )
             elif message.get("type") == "session_snapshot":
+                snapshot_items = message.get("sessions")
+                if not isinstance(snapshot_items, list):
+                    continue
                 with SessionLocal() as db:
-                    for item in list(message.get("sessions") or []):
-                        current_session = db.get(CommandSession, str(item.get("session_id", "")))
+                    for item in snapshot_items:
+                        if not isinstance(item, dict):
+                            continue
+                        current_session = (
+                            db.query(CommandSession)
+                            .filter(
+                                CommandSession.id == str(item.get("session_id", "")),
+                                CommandSession.owner_subject == str(claims["sub"]),
+                                CommandSession.origin == "thin_client",
+                                CommandSession.resource_id == client_id,
+                            )
+                            .one_or_none()
+                        )
                         if current_session and current_session.status in {"running", "disconnecting", "lost"}:
                             current_session.pid = str(item.get("pid") or current_session.pid or "")
                             current_session.status = "running"

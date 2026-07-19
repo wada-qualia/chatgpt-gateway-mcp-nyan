@@ -96,7 +96,7 @@ async def create_device(payload: DeviceCreate, user: User = Depends(get_current_
         updated_at=utcnow(),
     )
     db.add(device)
-    db.commit()
+    db.flush()
     db.refresh(device)
     emit_event(
         db,
@@ -106,7 +106,9 @@ async def create_device(payload: DeviceCreate, user: User = Depends(get_current_
         resource_type="device",
         resource_id=device.id,
         payload={"device_id": device.id, "kind": device.kind, "host": device.host, "port": device.port},
+        commit=False,
     )
+    db.commit()
     return device
 
 
@@ -154,11 +156,8 @@ async def update_device(
 
     device.status = "registered"
     device.updated_at = utcnow()
-    db.commit()
-    db.refresh(device)
     if old_secret_id and old_secret_id != device.credential_secret_id:
         db.query(SecretBlob).filter(SecretBlob.id == old_secret_id).delete()
-        db.commit()
     emit_event(
         db,
         event_type="gateway.device.updated.v1",
@@ -167,7 +166,10 @@ async def update_device(
         resource_type="device",
         resource_id=device.id,
         payload={"device_id": device.id, "host": device.host, "port": device.port},
+        commit=False,
     )
+    db.commit()
+    db.refresh(device)
     return device
 
 
@@ -196,7 +198,7 @@ async def test_device_connection(device_id: str, user: User = Depends(get_curren
         except HTTPException as exc:
             device.status = _device_test_status_from_exception(exc)
     device.updated_at = utcnow()
-    db.commit()
+    db.flush()
     db.refresh(device)
     emit_event(
         db,
@@ -207,7 +209,9 @@ async def test_device_connection(device_id: str, user: User = Depends(get_curren
         resource_id=device.id,
         payload={"device_id": device.id, "status": device.status, "host": device.host, "port": device.port},
         status="success" if device.status == "verified" else "warning",
+        commit=False,
     )
+    db.commit()
     return device
 
 
@@ -220,7 +224,6 @@ async def delete_device(device_id: str, user: User = Depends(get_current_user), 
     db.delete(device)
     if secret_id:
         db.query(SecretBlob).filter(SecretBlob.id == secret_id).delete()
-    db.commit()
     emit_event(
         db,
         event_type="gateway.device.deleted.v1",
@@ -229,5 +232,7 @@ async def delete_device(device_id: str, user: User = Depends(get_current_user), 
         resource_type="device",
         resource_id=device_id,
         payload=event_payload,
+        commit=False,
     )
+    db.commit()
     return {"ok": True}

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.autonomy.approval.requested.v1",
+  "title": "AutonomyApprovalRequested",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "approval_request_id",
+    "policy_id",
+    "room_id",
+    "command_id",
+    "executor_agent_id",
+    "action_class",
+    "tool",
+    "quorum_required",
+    "require_admin_approval",
+    "status",
+    "policy_generation",
+    "payload_hash"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "approval_request_id": {
+      "type": "string"
+    },
+    "policy_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "command_id": {
+      "type": "string"
+    },
+    "executor_agent_id": {
+      "type": "string"
+    },
+    "action_class": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "quorum_required": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "require_admin_approval": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string"
+    },
+    "policy_generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "payload_hash": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

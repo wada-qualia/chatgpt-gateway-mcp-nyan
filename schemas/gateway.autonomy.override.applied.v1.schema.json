@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.autonomy.override.applied.v1",
+  "title": "AutonomyOverrideApplied",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "override_id",
+    "scope_type",
+    "scope_id",
+    "action",
+    "evidence"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "override_id": {
+      "type": "string"
+    },
+    "scope_type": {
+      "type": "string"
+    },
+    "scope_id": {
+      "type": "string"
+    },
+    "action": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.work_item.created.v1",
+  "title": "Work_ItemCreated",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "work_item_id",
+    "room_id",
+    "priority",
+    "version"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "work_item_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false
+}

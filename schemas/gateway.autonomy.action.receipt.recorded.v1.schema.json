@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.autonomy.action.receipt.recorded.v1",
+  "title": "AutonomyActionReceiptRecorded",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "receipt_id",
+    "permit_id",
+    "approval_request_id",
+    "command_id",
+    "executor_agent_id",
+    "action_class",
+    "tool",
+    "status",
+    "input_hash",
+    "output_hash",
+    "fencing_token"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "receipt_id": {
+      "type": "string"
+    },
+    "permit_id": {
+      "type": "string"
+    },
+    "approval_request_id": {
+      "type": "string"
+    },
+    "command_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "executor_agent_id": {
+      "type": "string"
+    },
+    "action_class": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "input_hash": {
+      "type": "string"
+    },
+    "output_hash": {
+      "type": "string"
+    },
+    "fencing_token": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

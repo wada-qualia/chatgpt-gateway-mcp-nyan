@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.command.acknowledged.v1",
+  "title": "AgentCommandAcknowledged",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "command_id",
+    "room_id",
+    "target_agent_id"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "command_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "target_agent_id": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.file_change.created.v1",
+  "title": "File_ChangeCreated",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "origin",
+    "resource_id",
+    "room_id",
+    "agent_id",
+    "lease_id",
+    "fencing_token",
+    "path",
+    "operation",
+    "before_sha256",
+    "after_sha256",
+    "added_lines",
+    "removed_lines",
+    "suppressed",
+    "truncated"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "origin": {
+      "type": "string"
+    },
+    "resource_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "room_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "agent_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lease_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fencing_token": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "path": {
+      "type": "string"
+    },
+    "operation": {
+      "type": "string"
+    },
+    "before_sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "after_sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "added_lines": {
+      "type": "integer"
+    },
+    "removed_lines": {
+      "type": "integer"
+    },
+    "suppressed": {
+      "type": "boolean"
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

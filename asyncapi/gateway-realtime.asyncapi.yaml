@@ -1,0 +1,86 @@
+asyncapi: 2.6.0
+info:
+  title: ChatGPT MCP SSH Gateway Agent Realtime API
+  version: 0.1.0
+  description: >-
+    WebSocket optimization for agent availability notifications. PostgreSQL
+    notifications and the REST inbox remain the durable source of truth.
+servers:
+  gateway:
+    url: localhost:8000
+    protocol: ws
+    description: Gateway API WebSocket endpoint
+channels:
+  /api/agent-realtime/ws/{agent_id}:
+    parameters:
+      agent_id:
+        description: Tenant-scoped AgentInstance id.
+        schema:
+          type: string
+    subscribe:
+      operationId: receiveAgentRealtimeNotifications
+      message:
+        oneOf:
+          - $ref: '#/components/messages/Connected'
+          - $ref: '#/components/messages/Notification'
+          - $ref: '#/components/messages/HeartbeatAcknowledged'
+          - $ref: '#/components/messages/NotificationAcknowledged'
+    publish:
+      operationId: sendAgentRealtimeControl
+      message:
+        oneOf:
+          - $ref: '#/components/messages/Heartbeat'
+          - $ref: '#/components/messages/AcknowledgeNotification'
+components:
+  messages:
+    Connected:
+      payload:
+        type: object
+        required: [type, connection_id, replica_id]
+        properties:
+          type:
+            const: connected
+          connection_id:
+            type: string
+          replica_id:
+            type: string
+        additionalProperties: false
+    Notification:
+      payload:
+        $ref: '../schemas/gateway.realtime.notification.v1.schema.json'
+    HeartbeatAcknowledged:
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type:
+            const: heartbeat_ack
+        additionalProperties: false
+    NotificationAcknowledged:
+      payload:
+        type: object
+        required: [type, notification]
+        properties:
+          type:
+            const: acknowledged
+          notification:
+            type: object
+        additionalProperties: false
+    Heartbeat:
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type:
+            const: heartbeat
+        additionalProperties: false
+    AcknowledgeNotification:
+      payload:
+        type: object
+        required: [type, notification_id]
+        properties:
+          type:
+            const: ack
+          notification_id:
+            type: string
+        additionalProperties: false

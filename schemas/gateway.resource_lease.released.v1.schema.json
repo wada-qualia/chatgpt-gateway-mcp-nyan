@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.resource_lease.released.v1",
+  "title": "Resource_LeaseReleased",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "lease_id",
+    "room_id",
+    "holder_agent_id",
+    "actor_agent_id",
+    "fencing_token",
+    "status"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "lease_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "holder_agent_id": {
+      "type": "string"
+    },
+    "actor_agent_id": {
+      "type": "string"
+    },
+    "fencing_token": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "released",
+        "revoked"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

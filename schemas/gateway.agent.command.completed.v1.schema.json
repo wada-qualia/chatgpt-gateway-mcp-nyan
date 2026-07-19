@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.agent.command.completed.v1",
+  "title": "AgentCommandCompleted",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "command_id",
+    "room_id",
+    "status"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "command_id": {
+      "type": "string"
+    },
+    "room_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "rejected"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.autonomy.permit.issued.v1",
+  "title": "AutonomyPermitIssued",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "permit_id",
+    "approval_request_id",
+    "policy_id",
+    "command_id",
+    "executor_agent_id",
+    "action_class",
+    "tool",
+    "payload_hash",
+    "policy_generation",
+    "fencing_token",
+    "expires_at"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "permit_id": {
+      "type": "string"
+    },
+    "approval_request_id": {
+      "type": "string"
+    },
+    "policy_id": {
+      "type": "string"
+    },
+    "command_id": {
+      "type": "string"
+    },
+    "executor_agent_id": {
+      "type": "string"
+    },
+    "action_class": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "payload_hash": {
+      "type": "string"
+    },
+    "policy_generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fencing_token": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}

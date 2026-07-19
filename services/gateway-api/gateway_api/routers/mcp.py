@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
+import subprocess
 import threading
 import uuid
 from pathlib import Path
@@ -12,12 +14,34 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..adapters.docker import DockerAdapter, safe_container_name
-from ..adapters.ssh import load_device_credentials, run_ssh_command, verify_ssh_connection
+from ..adapters.ssh import (
+    load_device_credentials,
+    run_ssh_command,
+    verify_ssh_connection,
+)
+from ..agent_autonomy_tools import (
+    agent_autonomy_tool_names,
+    agent_autonomy_tools,
+    call_agent_autonomy_tool,
+)
+from ..agent_collaboration_tools import (
+    agent_collaboration_tool_names,
+    agent_collaboration_tools,
+    call_agent_collaboration_tool,
+)
+from ..agent_coordination import WriteLeaseContext, agent_coordination_service
+from ..agent_coordination_tools import (
+    agent_coordination_tool_names,
+    agent_coordination_tools,
+    call_agent_coordination_tool,
+)
 from ..auth import get_bearer_or_dev_user
 from ..config import Settings, get_settings
 from ..database import get_db
 from ..events import emit_event
-from ..models import CommandSession, Device, DockerWorkspace, FileChangeSet, ThinClient, User, utcnow
+from ..models import (
+    CommandSession, Device, DockerWorkspace, FileChangeSet, ThinClient, User, utcnow,
+)
 from ..monitoring import CommandRunResult, monitoring_service
 from ..policy import enforce
 from ..thin_client_control import thin_client_manager
@@ -38,6 +62,44 @@ def _safe_path(user: User, settings: Settings, relative: str = ".") -> Path:
     if root != target and root not in target.parents:
         raise HTTPException(status_code=400, detail="Path escapes user workspace")
     return target
+
+
+def _local_git_state(worktree: Path, base_commit: str) -> dict[str, Any]:
+    if not worktree.is_dir():
+        raise HTTPException(status_code=409, detail="Lease worktree path is not a directory")
+
+    def git(*arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        completed = subprocess.run(
+            ["git", "-C", str(worktree), *arguments],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        if check and completed.returncode != 0:
+            raise HTTPException(status_code=409, detail="Lease worktree is not a valid Git worktree")
+        return completed
+
+    toplevel = Path(git("rev-parse", "--show-toplevel").stdout.strip()).resolve()
+    if toplevel != worktree.resolve():
+        raise HTTPException(status_code=409, detail="Lease worktree path is not the Git worktree root")
+    branch = git("symbolic-ref", "--quiet", "--short", "HEAD").stdout.strip()
+    head = git("rev-parse", "HEAD").stdout.strip()
+    ancestor = git("merge-base", "--is-ancestor", base_commit, head, check=False).returncode == 0
+    return {"branch_name": branch, "head": head, "base_commit": base_commit, "base_is_ancestor": ancestor}
+
+
+def _validate_write_git_state(state: dict[str, Any], context: WriteLeaseContext) -> None:
+    if str(state.get("branch_name") or "") != context.branch_name:
+        raise HTTPException(status_code=409, detail="Lease worktree branch does not match branch_name")
+    head = str(state.get("head") or "")
+    if not head:
+        raise HTTPException(status_code=409, detail="Lease worktree HEAD is unavailable")
+    if context.expected_head and head != context.expected_head:
+        raise HTTPException(status_code=409, detail="Lease worktree HEAD is stale")
+    if str(state.get("base_commit") or "") != context.base_commit or not bool(state.get("base_is_ancestor")):
+        raise HTTPException(status_code=409, detail="Lease base commit is not an ancestor of worktree HEAD")
 
 
 def _object_schema(properties: dict[str, Any] | None = None, required: list[str] | None = None) -> dict[str, Any]:
@@ -73,7 +135,8 @@ def _boolean(description: str, *, default: bool | None = None) -> dict[str, Any]
 
 
 def _array(description: str, items: dict[str, Any], *, default: list[Any] | None = None) -> dict[str, Any]:
-    schema: dict[str, Any] = {"type": "array", "description": description, "items": items}
+    schema: dict[str, Any] = {"type": "array", "description": description, "items": items,
+    }
     if default is not None:
         schema["default"] = default
     return schema
@@ -88,7 +151,8 @@ def _integer_or_null(description: str) -> dict[str, Any]:
 
 
 def _enum(description: str, values: list[str], *, default: str | None = None) -> dict[str, Any]:
-    schema: dict[str, Any] = {"type": "string", "enum": values, "description": description}
+    schema: dict[str, Any] = {"type": "string", "enum": values, "description": description,
+    }
     if default is not None:
         schema["default"] = default
     return schema
@@ -196,6 +260,24 @@ def _diff_schema() -> dict[str, Any]:
     )
 
 
+def _write_guard_schema_properties() -> dict[str, Any]:
+    return {
+        "room_id": _string("Collaboration room id for a guarded write."),
+        "agent_id": _string("Agent instance id holding the write lease."),
+        "lease_id": _string("Active resource lease id."),
+        "fencing_token": _integer(
+            "Monotonic fencing token issued with the lease.", minimum=1
+        ),
+        "expected_sha256": _string("Expected full SHA-256 of an existing file."),
+        "expected_absent": _boolean(
+            "Require the path to be absent before writing.", default=False
+        ),
+        "base_commit": _string("Lease base commit."),
+        "branch_name": _string("Lease-owned branch name."),
+        "worktree_path": _string("Lease-owned worktree path."),
+    }
+
+
 def _file_change_schema() -> dict[str, Any]:
     return _object_schema(
         {
@@ -203,8 +285,21 @@ def _file_change_schema() -> dict[str, Any]:
             "origin": _string("Origin resource type, for example thin_client."),
             "resource_id": _string_or_null("Origin resource id."),
             "tool_call_id": _string_or_null("MCP tool call id that produced the change."),
+            "room_id": _string_or_null(
+                "Collaboration room id associated with the guarded write."
+            ),
+            "agent_id": _string_or_null("Agent instance id that held the write lease."),
+            "lease_id": _string_or_null("Resource lease id that authorized the write."),
+            "fencing_token": _integer_or_null(
+                "Monotonic fencing token used by the write."
+            ),
             "path": _string("Changed file path relative to origin workspace."),
             "operation": _string("Write/edit operation that was applied."),
+            "before_sha256": _string_or_null("Full file SHA-256 before the write."),
+            "after_sha256": _string_or_null("Full file SHA-256 after the write."),
+            "base_commit": _string_or_null("Lease base commit."),
+            "branch_name": _string_or_null("Lease-owned branch name."),
+            "worktree_path": _string_or_null("Lease-owned worktree path."),
             "added_lines": _integer("Inserted lines included in the diff."),
             "removed_lines": _integer("Deleted lines included in the diff."),
             "bytes_before": _integer("File size before the operation."),
@@ -215,7 +310,8 @@ def _file_change_schema() -> dict[str, Any]:
             "diff": _diff_schema(),
             "created_at": _string("Creation timestamp."),
         },
-        ["id", "origin", "path", "operation", "added_lines", "removed_lines", "bytes_before", "bytes_after", "replacements", "truncated", "suppressed", "diff", "created_at"],
+        ["id", "origin", "path", "operation", "added_lines", "removed_lines", "bytes_before", "bytes_after", "replacements", "truncated", "suppressed", "diff", "created_at",
+        ],
     )
 
 
@@ -225,8 +321,17 @@ def _file_change_payload(change: FileChangeSet) -> dict[str, Any]:
         "origin": change.origin,
         "resource_id": change.resource_id,
         "tool_call_id": change.tool_call_id,
+        "room_id": change.room_id,
+        "agent_id": change.agent_id,
+        "lease_id": change.lease_id,
+        "fencing_token": change.fencing_token,
         "path": change.path,
         "operation": change.operation,
+        "before_sha256": change.before_sha256,
+        "after_sha256": change.after_sha256,
+        "base_commit": change.base_commit,
+        "branch_name": change.branch_name,
+        "worktree_path": change.worktree_path,
         "added_lines": change.added_lines,
         "removed_lines": change.removed_lines,
         "bytes_before": change.bytes_before,
@@ -247,6 +352,7 @@ def _persist_file_change(
     resource_id: str | None,
     tool_call_id: str | None,
     structured: dict[str, Any],
+    lease_context: WriteLeaseContext | None = None,
 ) -> FileChangeSet:
     diff = structured.get("diff") if isinstance(structured.get("diff"), dict) else {}
     change = FileChangeSet(
@@ -255,8 +361,21 @@ def _persist_file_change(
         origin=origin,
         resource_id=resource_id,
         tool_call_id=tool_call_id,
+        room_id=lease_context.room_id if lease_context else None,
+        agent_id=lease_context.agent_id if lease_context else None,
+        lease_id=lease_context.lease_id if lease_context else None,
+        fencing_token=lease_context.fencing_token if lease_context else None,
         path=str(structured.get("path", "")),
         operation=str(structured.get("operation", "write")),
+        before_sha256=str(structured.get("before_sha256"))
+        if structured.get("before_sha256")
+        else None,
+        after_sha256=str(structured.get("after_sha256"))
+        if structured.get("after_sha256")
+        else None,
+        base_commit=lease_context.base_commit if lease_context else None,
+        branch_name=lease_context.branch_name if lease_context else None,
+        worktree_path=lease_context.worktree_path if lease_context else None,
         added_lines=int(diff.get("added_lines", 0) or 0),
         removed_lines=int(diff.get("removed_lines", 0) or 0),
         bytes_before=int(structured.get("bytes_before", 0) or 0),
@@ -267,7 +386,7 @@ def _persist_file_change(
         suppressed=bool(diff.get("suppressed", False)),
     )
     db.add(change)
-    db.commit()
+    db.flush()
     db.refresh(change)
     emit_event(
         db,
@@ -279,14 +398,22 @@ def _persist_file_change(
         payload={
             "origin": change.origin,
             "resource_id": change.resource_id,
+            "room_id": change.room_id,
+            "agent_id": change.agent_id,
+            "lease_id": change.lease_id,
+            "fencing_token": change.fencing_token,
             "path": change.path,
             "operation": change.operation,
+            "before_sha256": change.before_sha256,
+            "after_sha256": change.after_sha256,
             "added_lines": change.added_lines,
             "removed_lines": change.removed_lines,
             "suppressed": change.suppressed,
             "truncated": change.truncated,
         },
+        commit=False,
     )
+    db.commit()
     return change
 
 
@@ -305,9 +432,8 @@ def _command_output_schema() -> dict[str, Any]:
     )
 
 
-def _ssh_device_output_schema() -> dict[str, Any]:
-    return _output_schema(
-        {
+def _ssh_device_schema() -> dict[str, Any]:
+    properties = {
             "device_id": _string("SSH device id."),
             "name": _string("SSH device display name."),
             "host": _string("SSH host name or address."),
@@ -316,7 +442,11 @@ def _ssh_device_output_schema() -> dict[str, Any]:
             "auth_type": _string("Configured SSH authentication type."),
             "status": _string("Current device connection status."),
         }
-    )
+    return _object_schema(properties, list(properties))
+
+
+def _ssh_device_output_schema() -> dict[str, Any]:
+    return _output_schema(_ssh_device_schema()["properties"])
 
 
 def _ssh_connection_output_schema() -> dict[str, Any]:
@@ -332,13 +462,15 @@ def _ssh_connection_output_schema() -> dict[str, Any]:
 def _ssh_tools(settings: Settings) -> list[dict[str, Any]]:
     if not settings.gateway_ssh_enabled:
         return []
-    allowed_actions = settings.ssh_allowed_actions or ["uptime", "disk_usage", "memory_usage", "whoami", "pwd", "home_list"]
+    allowed_actions = settings.ssh_allowed_actions or ["uptime", "disk_usage", "memory_usage", "whoami", "pwd", "home_list",
+    ]
     tools = [
         _tool(
             "ssh_device_info",
             "Return safe metadata for a registered SSH device without exposing credentials.",
             _object_schema({"device_id": _string("SSH device id.")}, ["device_id"]),
-            _annotations(title="SSH device info", read_only=True, idempotent=True, open_world=False),
+            _annotations(title="SSH device info", read_only=True, idempotent=True, open_world=False,
+            ),
             output_schema=_ssh_device_output_schema(),
         ),
         _tool(
@@ -347,11 +479,13 @@ def _ssh_tools(settings: Settings) -> list[dict[str, Any]]:
             _object_schema(
                 {
                     "device_id": _string("SSH device id."),
-                    "timeout_seconds": _integer("Optional SSH connection timeout in seconds.", default=15, minimum=1),
+                    "timeout_seconds": _integer("Optional SSH connection timeout in seconds.", default=15, minimum=1,
+                    ),
                 },
                 ["device_id"],
             ),
-            _annotations(title="Check SSH connection", read_only=True, idempotent=False, open_world=True),
+            _annotations(title="Check SSH connection", read_only=True, idempotent=False, open_world=True,
+            ),
             output_schema=_ssh_connection_output_schema(),
         ),
         _tool(
@@ -361,13 +495,16 @@ def _ssh_tools(settings: Settings) -> list[dict[str, Any]]:
                 {
                     "device_id": _string("SSH device id."),
                     "action": _enum("Allowlisted SSH action to run.", allowed_actions),
-                    "timeout_seconds": _integer("Optional SSH command timeout in seconds.", default=30, minimum=1),
-                    "background": _boolean("Start immediately as a background monitoring session.", default=False),
+                    "timeout_seconds": _integer("Optional SSH command timeout in seconds.", default=30, minimum=1,
+                    ),
+                    "background": _boolean("Start immediately as a background monitoring session.", default=False,
+                    ),
                     "session_name": _string("Optional display name for the monitoring session."),
                 },
                 ["device_id", "action"],
             ),
-            _annotations(title="Run SSH allowlisted action", read_only=False, destructive=True, open_world=True),
+            _annotations(title="Run SSH allowlisted action", read_only=False, destructive=True, open_world=True,
+            ),
             output_schema=_command_output_schema(),
         ),
         _tool(
@@ -376,11 +513,13 @@ def _ssh_tools(settings: Settings) -> list[dict[str, Any]]:
             _object_schema(
                 {
                     "device_id": _string("SSH device id."),
-                    "timeout_seconds": _integer("Optional SSH command timeout in seconds.", default=30, minimum=1),
+                    "timeout_seconds": _integer("Optional SSH command timeout in seconds.", default=30, minimum=1,
+                    ),
                 },
                 ["device_id"],
             ),
-            _annotations(title="Read SSH home listing", read_only=True, idempotent=False, open_world=True),
+            _annotations(title="Read SSH home listing", read_only=True, idempotent=False, open_world=True,
+            ),
             output_schema=_command_output_schema(),
         ),
     ]
@@ -394,13 +533,16 @@ def _ssh_tools(settings: Settings) -> list[dict[str, Any]]:
                         "device_id": _string("SSH device id."),
                         "command": _string("Raw shell command to run on the SSH device."),
                         "cwd": _string("Remote working directory.", default="~"),
-                        "timeout_seconds": _integer("Optional SSH command timeout in seconds.", default=30, minimum=1),
-                        "background": _boolean("Start immediately as a background monitoring session.", default=False),
+                        "timeout_seconds": _integer("Optional SSH command timeout in seconds.", default=30, minimum=1,
+                        ),
+                        "background": _boolean("Start immediately as a background monitoring session.", default=False,
+                        ),
                         "session_name": _string("Optional display name for the monitoring session."),
                     },
                     ["device_id", "command"],
                 ),
-                _annotations(title="Run raw SSH command", read_only=False, destructive=True, open_world=True),
+                _annotations(title="Run raw SSH command", read_only=False, destructive=True, open_world=True,
+                ),
                 output_schema=_command_output_schema(),
             )
         )
@@ -411,7 +553,8 @@ def _browser_base_properties() -> dict[str, Any]:
     return {
         "client_id": _string("Thin-client id."),
         "session_id": _string("Optional page handle. Usually omit it when one page is open."),
-        "browser": _enum("Browser engine to launch for a new session.", ["chromium", "firefox", "webkit"], default="chromium"),
+        "browser": _enum("Browser engine to launch for a new session.", ["chromium", "firefox", "webkit"], default="chromium",
+        ),
         "width": _integer("Viewport width in CSS pixels.", default=1440, minimum=1),
         "height": _integer("Viewport height in CSS pixels.", default=900, minimum=1),
         "headless": _boolean("Launch browser in headless mode.", default=True),
@@ -439,20 +582,25 @@ def _browser_output_schema() -> dict[str, Any]:
             "url": _string_or_null("Current page URL."),
             "title": _string_or_null("Current page title."),
             "file_dir": _string_or_null("Workspace-relative browser file directory."),
-            "screenshot": {"type": ["object", "null"], "description": "Screenshot metadata when a screenshot was created."},
-            "trace": {"type": ["object", "null"], "description": "Trace metadata when a trace export was produced."},
+            "screenshot": {"type": ["object", "null"], "description": "Screenshot metadata when a screenshot was created.",
+            },
+            "trace": {"type": ["object", "null"], "description": "Trace metadata when a trace export was produced.",
+            },
             "nodes": _array("Accessibility-oriented page-state nodes.", {"type": "object"}),
             "request_failures": _array("Failed browser requests and HTTP error responses.", {"type": "object"}),
             "status": _string_or_null("Local page capture status."),
             "note": _string_or_null("Capture note supplied by the caller."),
-            "capture": {"type": ["object", "null"], "description": "Local page capture summary."},
-            "page_status": {"type": ["object", "null"], "description": "Compact page status summary."},
+            "capture": {"type": ["object", "null"], "description": "Local page capture summary.",
+            },
+            "page_status": {"type": ["object", "null"], "description": "Compact page status summary.",
+            },
             "note_count": _integer_or_null("Number of captured page notes."),
             "warning_count": _integer_or_null("Number of captured page warnings."),
             "error_count": _integer_or_null("Number of page failures."),
             "issue_count": _integer_or_null("Number of application failures."),
             "failed_request_count": _integer_or_null("Number of failed requests and HTTP error responses."),
-            "detail_file": {"type": ["object", "null"], "description": "Workspace-relative detail file metadata."},
+            "detail_file": {"type": ["object", "null"], "description": "Workspace-relative detail file metadata.",
+            },
         }
     )
 
@@ -465,7 +613,8 @@ def _browser_tools() -> list[dict[str, Any]]:
             "thin_client_browser_open_session",
             "Open a Playwright browser session inside an online thin client's launch directory.",
             _object_schema(base, ["client_id"]),
-            _annotations(title="Open thin-client browser", read_only=False, destructive=False, idempotent=False, open_world=True),
+            _annotations(title="Open thin-client browser", read_only=False, destructive=False, idempotent=False, open_world=True,
+            ),
             output_schema=_browser_output_schema(),
         ),
         _tool(
@@ -475,26 +624,37 @@ def _browser_tools() -> list[dict[str, Any]]:
                 {
                     **base,
                     "url": _string("URL to open in the browser."),
-                    "wait_until": _enum("Playwright navigation wait condition.", ["commit", "domcontentloaded", "load", "networkidle"], default="networkidle"),
+                    "wait_until": _enum("Playwright navigation wait condition.", ["commit", "domcontentloaded", "load", "networkidle"], default="networkidle",
+                    ),
                     "timeout_ms": _integer("Navigation timeout in milliseconds.", default=30000, minimum=1),
                 },
                 ["client_id", "url"],
             ),
-            _annotations(title="Navigate thin-client browser", read_only=False, destructive=False, idempotent=False, open_world=True),
+            _annotations(title="Navigate thin-client browser", read_only=False, destructive=False, idempotent=False, open_world=True,
+            ),
             output_schema=_browser_output_schema(),
         ),
         _tool(
             "thin_client_browser_page_state",
             "Return an accessibility-oriented page state of visible interactive and semantic elements with stable refs for follow-up actions.",
-            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "limit": _integer("Maximum number of visible nodes to return.", default=150, minimum=1)}, ["client_id"]),
-            _annotations(title="Read thin-client browser page state", read_only=True, idempotent=False, open_world=True),
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "limit": _integer("Maximum number of visible nodes to return.", default=150, minimum=1,
+                    ),
+                },
+                ["client_id"],
+            ),
+            _annotations(title="Read thin-client browser page state", read_only=True, idempotent=False, open_world=True,
+            ),
             output_schema=_browser_output_schema(),
         ),
         _tool(
             "thin_client_browser_click",
             "Click a browser target by CSS selector, page-state ref, visible text, or role+name.",
-            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], **target, "timeout_ms": _integer("Click timeout in milliseconds.", default=10000, minimum=1)}, ["client_id"]),
-            _annotations(title="Click thin-client browser", read_only=False, destructive=True, idempotent=False, open_world=True),
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], **target, "timeout_ms": _integer("Click timeout in milliseconds.", default=10000, minimum=1),
+                },
+                ["client_id"],
+            ),
+            _annotations(title="Click thin-client browser", read_only=False, destructive=True, idempotent=False, open_world=True,
+            ),
             output_schema=_browser_output_schema(),
         ),
         _tool(
@@ -506,13 +666,16 @@ def _browser_tools() -> list[dict[str, Any]]:
                     "session_id": base["session_id"],
                     **target,
                     "value": _string("Text value to enter."),
-                    "clear": _boolean("Whether to replace the existing value instead of typing after it.", default=True),
-                    "delay_ms": _integer("Delay between keystrokes when clear=false.", default=0, minimum=0),
+                    "clear": _boolean("Whether to replace the existing value instead of typing after it.", default=True,
+                    ),
+                    "delay_ms": _integer("Delay between keystrokes when clear=false.", default=0, minimum=0,
+                    ),
                     "timeout_ms": _integer("Typing timeout in milliseconds.", default=10000, minimum=1),
                 },
                 ["client_id", "value"],
             ),
-            _annotations(title="Type into thin-client browser", read_only=False, destructive=True, idempotent=False, open_world=True),
+            _annotations(title="Type into thin-client browser", read_only=False, destructive=True, idempotent=False, open_world=True,
+            ),
             output_schema=_browser_output_schema(),
         ),
         _tool(
@@ -527,7 +690,8 @@ def _browser_tools() -> list[dict[str, Any]]:
                 },
                 ["client_id"],
             ),
-            _annotations(title="Screenshot thin-client browser", read_only=True, idempotent=False, open_world=True),
+            _annotations(title="Screenshot thin-client browser", read_only=True, idempotent=False, open_world=True,
+            ),
             output_schema=_browser_output_schema(),
         ),
         _tool(
@@ -543,42 +707,60 @@ def _browser_tools() -> list[dict[str, Any]]:
                 },
                 ["client_id", "note"],
             ),
-            _annotations(title="Capture browser page", read_only=True, idempotent=False, open_world=True),
+            _annotations(title="Capture browser page", read_only=True, idempotent=False, open_world=True,
+            ),
             output_schema=_browser_output_schema(),
         ),
         _tool(
             "thin_client_browser_page_status",
             "Return compact page status and save details to a file.",
-            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "limit": _integer("Maximum entries to include in the saved file.", default=100, minimum=1)}, ["client_id"]),
-            _annotations(title="Read browser page status", read_only=True, idempotent=False, open_world=True),
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "limit": _integer("Maximum entries to include in the saved file.", default=100, minimum=1,
+                    ),
+                },
+                ["client_id"],
+            ),
+            _annotations(title="Read browser page status", read_only=True, idempotent=False, open_world=True,
+            ),
             output_schema=_browser_output_schema(),
         ),
         _tool(
             "thin_client_browser_request_failures",
             "Return failed browser requests and HTTP error responses.",
-            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "limit": _integer("Maximum entries to return.", default=100, minimum=1)}, ["client_id"]),
-            _annotations(title="Read thin-client browser request failures", read_only=True, idempotent=False, open_world=True),
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "limit": _integer("Maximum entries to return.", default=100, minimum=1),
+                },
+                ["client_id"],
+            ),
+            _annotations(title="Read thin-client browser request failures", read_only=True, idempotent=False, open_world=True,
+            ),
             output_schema=_browser_output_schema(),
         ),
         _tool(
             "thin_client_browser_start_trace",
             "Start Playwright tracing for the browser context.",
-            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"]}, ["client_id"]),
-            _annotations(title="Start thin-client browser trace", read_only=False, destructive=False, idempotent=True, open_world=True),
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"]}, ["client_id"],
+            ),
+            _annotations(title="Start thin-client browser trace", read_only=False, destructive=False, idempotent=True, open_world=True,
+            ),
             output_schema=_browser_output_schema(),
         ),
         _tool(
             "thin_client_browser_trace_export",
             "Export Playwright tracing to a trace.zip file and end the active trace capture.",
-            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "name": _string("Trace file filename stem or zip filename.")}, ["client_id"]),
-            _annotations(title="Export thin-client browser trace", read_only=True, destructive=False, idempotent=False, open_world=True),
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"], "name": _string("Trace file filename stem or zip filename."),
+                },
+                ["client_id"],
+            ),
+            _annotations(title="Export thin-client browser trace", read_only=True, destructive=False, idempotent=False, open_world=True,
+            ),
             output_schema=_browser_output_schema(),
         ),
         _tool(
             "thin_client_browser_release_page",
             "Release one browser page, or all browser pages when session_id is omitted.",
-            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"]}, ["client_id"]),
-            _annotations(title="Release browser page", read_only=False, destructive=False, idempotent=True, open_world=False),
+            _object_schema({"client_id": base["client_id"], "session_id": base["session_id"]}, ["client_id"],
+            ),
+            _annotations(title="Release browser page", read_only=False, destructive=False, idempotent=True, open_world=False,
+            ),
             output_schema=_browser_output_schema(),
         ),
     ]
@@ -635,7 +817,8 @@ def _tool(
         "inputSchema": input_schema or _object_schema(),
         "outputSchema": output_schema or _output_schema(),
         "annotations": annotations
-        or _annotations(title=name.replace("_", " ").title(), read_only=True, idempotent=True, open_world=False),
+        or _annotations(title=name.replace("_", " ").title(), read_only=True, idempotent=True, open_world=False,
+        ),
     }
 
 
@@ -661,7 +844,10 @@ def _tools() -> list[dict[str, Any]]:
                     "devices": _integer("Number of registered SSH devices."),
                     "docker_workspaces": _integer("Number of registered Docker workspaces."),
                     "thin_clients": _integer("Number of registered thin clients."),
-                    "ssh_devices": _array("Safe metadata for registered SSH devices.", _ssh_device_resource_schema()),
+                    "ssh_devices": _array(
+                        "Safe metadata for registered SSH devices.",
+                        _ssh_device_resource_schema(),
+                    ),
                     "docker_workspace_items": _array(
                         "Safe metadata for registered Docker workspaces.",
                         _docker_workspace_resource_schema(),
@@ -702,14 +888,21 @@ def _tools() -> list[dict[str, Any]]:
                 {
                     "path": _string("Workspace-relative file path."),
                     "content": _string("UTF-8 text content to write."),
+                    **_write_guard_schema_properties(),
                 },
                 ["path", "content"],
             ),
-            _annotations(title="Write workspace file", read_only=False, destructive=True, open_world=False),
+            _annotations(title="Write workspace file", read_only=False, destructive=True, open_world=False,
+            ),
             output_schema=_output_schema(
                 {
                     "path": _string("Workspace-relative file path that was written."),
                     "bytes": _integer("Number of UTF-8 bytes written."),
+                    "before_sha256": _string_or_null(
+                        "Full file SHA-256 before the write."
+                    ),
+                    "after_sha256": _string("Full file SHA-256 after the write."),
+                    "file_change_id": _string("Persisted FileChangeSet id."),
                 }
             ),
         ),
@@ -721,12 +914,14 @@ def _tools() -> list[dict[str, Any]]:
                     "command": _string("Shell command to run inside the isolated workspace."),
                     "cwd": _string("Workspace-relative working directory.", default="."),
                     "timeout_seconds": _integer("Optional timeout in seconds.", minimum=1),
-                    "background": _boolean("Start immediately as a background monitoring session.", default=False),
+                    "background": _boolean("Start immediately as a background monitoring session.", default=False,
+                    ),
                     "session_name": _string("Optional display name for the monitoring session."),
                 },
                 ["command"],
             ),
-            _annotations(title="Run workspace command", read_only=False, destructive=True, open_world=True),
+            _annotations(title="Run workspace command", read_only=False, destructive=True, open_world=True,
+            ),
             output_schema=_command_output_schema(),
         ),
         _tool(
@@ -738,12 +933,14 @@ def _tools() -> list[dict[str, Any]]:
                     "command": _string("Shell command to run inside the container."),
                     "workdir": _string("Container working directory.", default="/workspace"),
                     "timeout_seconds": _integer("Optional timeout in seconds.", minimum=1),
-                    "background": _boolean("Start immediately as a background monitoring session.", default=False),
+                    "background": _boolean("Start immediately as a background monitoring session.", default=False,
+                    ),
                     "session_name": _string("Optional display name for the monitoring session."),
                 },
                 ["workspace_id", "command"],
             ),
-            _annotations(title="Run Docker workspace command", read_only=False, destructive=True, open_world=True),
+            _annotations(title="Run Docker workspace command", read_only=False, destructive=True, open_world=True,
+            ),
             output_schema=_command_output_schema(),
         ),
         _tool(
@@ -757,7 +954,8 @@ def _tools() -> list[dict[str, Any]]:
                 },
                 ["workspace_id"],
             ),
-            _annotations(title="Update Docker workspace metadata", read_only=False, destructive=False, idempotent=True, open_world=False),
+            _annotations(title="Update Docker workspace metadata", read_only=False, destructive=False, idempotent=True, open_world=False,
+            ),
             output_schema=_output_schema(
                 {
                     "workspace_id": _string("Docker workspace id."),
@@ -771,7 +969,8 @@ def _tools() -> list[dict[str, Any]]:
             "docker_workspace_stop",
             "Stop a Docker workspace container to save host resources.",
             _object_schema({"workspace_id": _string("Docker workspace id.")}, ["workspace_id"]),
-            _annotations(title="Stop Docker workspace", read_only=False, destructive=False, idempotent=True, open_world=False),
+            _annotations(title="Stop Docker workspace", read_only=False, destructive=False, idempotent=True, open_world=False,
+            ),
             output_schema=_output_schema(
                 {
                     "workspace_id": _string("Docker workspace id."),
@@ -783,7 +982,8 @@ def _tools() -> list[dict[str, Any]]:
             "docker_workspace_start",
             "Start a stopped Docker workspace container.",
             _object_schema({"workspace_id": _string("Docker workspace id.")}, ["workspace_id"]),
-            _annotations(title="Start Docker workspace", read_only=False, destructive=False, idempotent=True, open_world=False),
+            _annotations(title="Start Docker workspace", read_only=False, destructive=False, idempotent=True, open_world=False,
+            ),
             output_schema=_output_schema(
                 {
                     "workspace_id": _string("Docker workspace id."),
@@ -795,7 +995,8 @@ def _tools() -> list[dict[str, Any]]:
             "docker_workspace_delete",
             "Remove a Docker workspace container and unregister it.",
             _object_schema({"workspace_id": _string("Docker workspace id.")}, ["workspace_id"]),
-            _annotations(title="Delete Docker workspace", read_only=False, destructive=True, idempotent=False, open_world=False),
+            _annotations(title="Delete Docker workspace", read_only=False, destructive=True, idempotent=False, open_world=False,
+            ),
             output_schema=_output_schema(
                 {
                     "workspace_id": _string("Docker workspace id."),
@@ -811,7 +1012,8 @@ def _tools() -> list[dict[str, Any]]:
             _object_schema(
                 {
                     "client_id": _string("Thin-client id."),
-                    "path": _string("Directory-relative path inside the thin-client sandbox.", default="."),
+                    "path": _string("Directory-relative path inside the thin-client sandbox.", default=".",
+                    ),
                 },
                 ["client_id"],
             ),
@@ -853,31 +1055,39 @@ def _tools() -> list[dict[str, Any]]:
                     "path": _string("Directory-relative file path inside the thin-client sandbox."),
                     "operation": _enum(
                         "Write/edit operation to apply.",
-                        ["write", "append", "replace", "regex_replace", "remove_markdown_code_blocks"],
+                        ["write", "append", "replace", "regex_replace", "remove_markdown_code_blocks",
+                        ],
                         default="write",
                     ),
                     "content": _string("UTF-8 text content for operation=write or operation=append."),
                     "content_base64": _string("Base64 binary content for operation=write. Alternative to content."),
-                    "overwrite": _boolean("Whether operation=write may replace an existing file.", default=True),
+                    "overwrite": _boolean("Whether operation=write may replace an existing file.", default=True,
+                    ),
                     "mode": _integer("Optional POSIX file mode, for example 420 for 0644."),
                     "old_text": _string("Exact text to replace when operation=replace."),
                     "new_text": _string("Replacement text for operation=replace.", default=""),
                     "pattern": _string("Python regex pattern when operation=regex_replace."),
                     "replacement": _string("Regex replacement when operation=regex_replace.", default=""),
-                    "count": _integer("Maximum replacements; 0 means replace all.", default=0, minimum=0),
+                    "count": _integer("Maximum replacements; 0 means replace all.", default=0, minimum=0,
+                    ),
                     "flags": _array(
                         "Regex flags for operation=regex_replace.",
-                        {"type": "string", "enum": ["ignorecase", "multiline", "dotall"]},
+                        {"type": "string", "enum": ["ignorecase", "multiline", "dotall"],
+                        },
                         default=[],
                     ),
                     "language": _string("Optional Markdown code fence language filter for operation=remove_markdown_code_blocks."),
                     "expected_replacements": _integer("Optional exact replacement count guard.", minimum=0),
-                    "return_content": _boolean("Return edited UTF-8 content in addition to diff.", default=False),
-                    "diff": _boolean("Return structured diff payload when possible.", default=True),
+                    "return_content": _boolean("Return edited UTF-8 content in addition to diff.", default=False,
+                    ),
+                    "diff": _boolean("Return structured diff payload when possible.", default=True
+                    ),
+                    **_write_guard_schema_properties(),
                 },
                 ["client_id", "path"],
             ),
-            _annotations(title="Write thin-client file", read_only=False, destructive=True, open_world=False),
+            _annotations(title="Write thin-client file", read_only=False, destructive=True, open_world=False,
+            ),
             output_schema=_output_schema(
                 {
                     "client_id": _string("Thin-client id."),
@@ -889,6 +1099,13 @@ def _tools() -> list[dict[str, Any]]:
                     "encoding": _string_or_null("Content encoding used by the write operation."),
                     "replacements": _integer("Number of replacements applied for edit operations."),
                     "content": _string_or_null("Edited UTF-8 content when return_content is true."),
+                    "before_sha256": _string_or_null(
+                        "Full file SHA-256 before the write."
+                    ),
+                    "after_sha256": _string_or_null(
+                        "Full file SHA-256 after the write."
+                    ),
+                    "file_change_id": _string("Persisted FileChangeSet id."),
                     "diff": _diff_schema(),
                 }
             ),
@@ -900,14 +1117,17 @@ def _tools() -> list[dict[str, Any]]:
                 {
                     "client_id": _string("Thin-client id."),
                     "command": _string("Shell command to run inside the thin-client sandbox."),
-                    "cwd": _string("Directory-relative working directory inside the sandbox.", default="."),
+                    "cwd": _string("Directory-relative working directory inside the sandbox.", default=".",
+                    ),
                     "timeout_seconds": _integer("Optional timeout in seconds.", minimum=1),
-                    "background": _boolean("Start immediately as a background monitoring session.", default=False),
+                    "background": _boolean("Start immediately as a background monitoring session.", default=False,
+                    ),
                     "session_name": _string("Optional display name for the monitoring session."),
                 },
                 ["client_id", "command"],
             ),
-            _annotations(title="Run thin-client command", read_only=False, destructive=True, open_world=True),
+            _annotations(title="Run thin-client command", read_only=False, destructive=True, open_world=True,
+            ),
             output_schema=_command_output_schema(),
         ),
         *_browser_tools(),
@@ -950,15 +1170,20 @@ def _tools() -> list[dict[str, Any]]:
                 },
                 ["session_id"],
             ),
-            _annotations(title="Terminate command session", read_only=False, destructive=True, open_world=False),
+            _annotations(title="Terminate command session", read_only=False, destructive=True, open_world=False,
+            ),
             output_schema=_output_schema({"session": {"type": "object"}}),
         ),
+        *agent_collaboration_tools(),
+        *agent_coordination_tools(),
+        *agent_autonomy_tools(),
         _tool(
             "file_changes_list",
             "List recent server-side file change records produced by write/edit tool calls.",
             _object_schema(
                 {
-                    "limit": _integer("Maximum number of file changes to return.", default=100, minimum=1),
+                    "limit": _integer("Maximum number of file changes to return.", default=100, minimum=1,
+                    ),
                     "origin": _string("Optional origin filter, for example thin_client."),
                     "resource_id": _string("Optional resource id filter."),
                 }
@@ -1013,12 +1238,15 @@ def _relative_or_dot(root: Path, target: Path) -> str:
     return "." if target == root else str(target.relative_to(root))
 
 
-def _result(data: dict[str, Any], *, is_error: bool = False, extra_content: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    structured = {"ok": not is_error, "error": None if not is_error else str(data.get("error") or "Tool call failed"), **data}
+def _result(data: dict[str, Any], *, is_error: bool = False, extra_content: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    structured = {"ok": not is_error, "error": None if not is_error else str(data.get("error") or "Tool call failed"), **data,
+    }
     if not is_error:
         structured["error"] = None
     return {
-        "content": [{"type": "text", "text": json.dumps(structured, ensure_ascii=False)}, *(extra_content or [])],
+        "content": [{"type": "text", "text": json.dumps(structured, ensure_ascii=False)}, *(extra_content or []),
+        ],
         "structuredContent": structured,
         "isError": is_error,
     }
@@ -1027,7 +1255,8 @@ def _result(data: dict[str, Any], *, is_error: bool = False, extra_content: list
 def _refresh_result_content(result: dict[str, Any]) -> dict[str, Any]:
     structured = result.get("structuredContent") or {}
     preserved = [item for item in result.get("content", []) if isinstance(item, dict) and item.get("type") != "text"]
-    result["content"] = [{"type": "text", "text": json.dumps(structured, ensure_ascii=False)}, *preserved]
+    result["content"] = [{"type": "text", "text": json.dumps(structured, ensure_ascii=False)}, *preserved,
+    ]
     return result
 
 
@@ -1049,7 +1278,8 @@ def _command_result(
         "backgrounded": run_result.backgrounded,
         "recommendation": run_result.recommendation,
     }
-    return _result(payload, is_error=(run_result.exit_code is not None and run_result.exit_code != 0))
+    return _result(payload, is_error=(run_result.exit_code is not None and run_result.exit_code != 0),
+    )
 
 
 def _query_visible_ssh_device(device_id: str, user: User, db: Session) -> Device:
@@ -1147,7 +1377,8 @@ def _ssh_session_meta(device: Device, *, action: str | None = None) -> dict[str,
     }
 
 
-def _finish_ssh_worker(session_id: str, device: Device, credentials: Any, *, command: str, timeout_seconds: int) -> HTTPException | None:
+def _finish_ssh_worker(session_id: str, device: Device, credentials: Any, *, command: str, timeout_seconds: int,
+) -> HTTPException | None:
     try:
         result = run_ssh_command(device, credentials, command=command, timeout_seconds=timeout_seconds)
         monitoring_service.append_output(session_id, stream="stdout", text=result.stdout)
@@ -1160,7 +1391,8 @@ def _finish_ssh_worker(session_id: str, device: Device, credentials: Any, *, com
         return None
     except HTTPException as exc:
         monitoring_service.append_output(session_id, stream="stderr", text=f"SSH command failed: {exc.detail}\n")
-        monitoring_service.finish_session(session_id, status_value="failed", exit_code=1, meta={"error": str(exc.detail)})
+        monitoring_service.finish_session(session_id, status_value="failed", exit_code=1, meta={"error": str(exc.detail)},
+        )
         return exc
     except Exception as exc:  # pragma: no cover - defensive safety net for unexpected adapter failures.
         monitoring_service.append_output(session_id, stream="stderr", text="SSH command failed\n")
@@ -1251,7 +1483,8 @@ def _session_payload(session: CommandSession) -> dict[str, Any]:
 
 @router.get("/mcp")
 async def mcp_info(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
-    return {"name": settings.app_name, "transport": "http-json-rpc", "tools": [tool["name"] for tool in _tools()]}
+    return {"name": settings.app_name, "transport": "http-json-rpc", "tools": [tool["name"] for tool in _tools()],
+    }
 
 
 @router.post("/mcp")
@@ -1289,10 +1522,12 @@ async def mcp(
                     session_id=str(session_id) if session_id else None,
                     error=str(structured.get("error")) if result.get("isError") else None,
                 )
-                structured["background_session_tails"] = monitoring_service.background_tails(
+                structured["background_session_tails"] = (
+                    monitoring_service.background_tails(
                     db,
                     owner_subject=user.subject,
                     tool_call_id=tool_call.id,
+                    )
                 )
                 result["structuredContent"] = structured
                 result = _refresh_result_content(result)
@@ -1303,10 +1538,18 @@ async def mcp(
             raise HTTPException(status_code=400, detail=f"Unsupported JSON-RPC method: {method}")
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
     except HTTPException as exc:
-        return {"jsonrpc": "2.0", "id": request_id, "error": {"code": exc.status_code, "message": str(exc.detail)}}
+        return {"jsonrpc": "2.0", "id": request_id, "error": {"code": exc.status_code, "message": str(exc.detail)},
+        }
 
 
-async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, settings: Settings, tool_call_id: str | None = None) -> dict[str, Any]:
+async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, settings: Settings, tool_call_id: str | None = None,
+) -> dict[str, Any]:
+    if name in agent_collaboration_tool_names():
+        return _result(await call_agent_collaboration_tool(name, args, user, db))
+    if name in agent_coordination_tool_names():
+        return _result(await call_agent_coordination_tool(name, args, user, db))
+    if name in agent_autonomy_tool_names():
+        return _result(await call_agent_autonomy_tool(name, args, user, db))
     if name == "workspace_info":
         path = _workspace(user, settings)
         return _result({"workspace": str(path), "user": user.username})
@@ -1358,7 +1601,7 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 device.status = status_value
                 detail = str(exc.detail)
             device.updated_at = utcnow()
-            db.commit()
+            db.flush()
             db.refresh(device)
             emit_event(
                 db,
@@ -1367,9 +1610,12 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 action="verified" if device.status == "verified" else "verification_failed",
                 resource_type="device",
                 resource_id=device.id,
-                payload={"device_id": device.id, "status": device.status, "host": device.host, "port": device.port},
+                payload={"device_id": device.id, "status": device.status, "host": device.host, "port": device.port,
+                },
                 status="success" if device.status == "verified" else "warning",
+                commit=False,
             )
+            db.commit()
             return _result({"device_id": device.id, "status": device.status, "detail": detail})
         if name == "ssh_device_run_command":
             if not settings.gateway_ssh_allow_raw_command:
@@ -1377,7 +1623,8 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
             command = _validate_ssh_raw_command(str(args.get("command", "")), settings)
             action = "raw_command"
         else:
-            action = "home_list" if name == "ssh_device_read_home" else str(args.get("action", ""))
+            action = (
+                "home_list" if name == "ssh_device_read_home" else str(args.get("action", "")))
             if action not in set(settings.ssh_allowed_actions):
                 raise HTTPException(status_code=400, detail="Unsupported SSH action")
             command = _ssh_action_command(action)
@@ -1400,7 +1647,8 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
             extra={"device_id": device.id, "action": action},
         )
     if name == "monitoring_list_sessions":
-        query = db.query(CommandSession).filter(CommandSession.owner_subject == user.subject).order_by(CommandSession.updated_at.desc())
+        query = (
+            db.query(CommandSession).filter(CommandSession.owner_subject == user.subject).order_by(CommandSession.updated_at.desc()))
         if args.get("status"):
             query = query.filter(CommandSession.status == str(args.get("status")))
         sessions = [_session_payload(session) for session in query.limit(20).all()]
@@ -1434,7 +1682,8 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 await thin_client_manager.request(
                     session.resource_id,
                     tool="terminate_session",
-                    arguments={"session_id": session.id, "force": bool(args.get("force", False))},
+                    arguments={"session_id": session.id, "force": bool(args.get("force", False)),
+                    },
                     timeout_seconds=10,
                 )
             except HTTPException as exc:
@@ -1454,7 +1703,8 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
     if name == "file_changes_list":
         enforce(user, action="read")
         safe_limit = min(max(int(args.get("limit", 100) or 100), 1), 500)
-        query = db.query(FileChangeSet).filter(FileChangeSet.owner_subject == user.subject).order_by(FileChangeSet.created_at.desc())
+        query = (
+            db.query(FileChangeSet).filter(FileChangeSet.owner_subject == user.subject).order_by(FileChangeSet.created_at.desc()))
         if args.get("origin"):
             query = query.filter(FileChangeSet.origin == str(args["origin"]))
         if args.get("resource_id"):
@@ -1467,7 +1717,8 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
             raise HTTPException(status_code=404, detail="Path not found")
         entries = []
         for child in sorted(target.iterdir()):
-            entries.append({"path": str(child.relative_to(root)), "kind": "dir" if child.is_dir() else "file", "size": child.stat().st_size if child.is_file() else None})
+            entries.append({"path": str(child.relative_to(root)), "kind": "dir" if child.is_dir() else "file", "size": child.stat().st_size if child.is_file() else None,
+                })
         return _result({"path": _relative_or_dot(root, target), "entries": entries})
     if name == "read_file":
         root = _workspace(user, settings)
@@ -1485,13 +1736,86 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
     if name == "write_file":
         root = _workspace(user, settings)
         target = _safe_path(user, settings, str(args.get("path", ".")))
+        relative_path = _relative_or_dot(root, target)
+        lease_context = agent_coordination_service.validate_write_context(
+            db,
+            owner_subject=user.subject,
+            origin="server",
+            resource_id=None,
+            path=relative_path,
+            data=args,
+        )
+        if lease_context and not settings.gateway_agent_allow_unverified_git_context:
+            worktree = _safe_path(user, settings, lease_context.worktree_path)
+            _validate_write_git_state(
+                _local_git_state(worktree, lease_context.base_commit),
+                lease_context,
+            )
+        if target.exists() and not target.is_file():
+            raise HTTPException(
+                status_code=409, detail="Write path exists and is not a file"
+            )
+        existed_before = target.is_file()
+        before_raw = target.read_bytes() if existed_before else b""
+        before_sha256 = (
+            hashlib.sha256(before_raw).hexdigest() if existed_before else None
+        )
+        if lease_context:
+            if lease_context.expected_absent and target.exists():
+                raise HTTPException(
+                    status_code=409,
+                    detail="File precondition failed: path already exists",
+                )
+            if (
+                lease_context.expected_sha256
+                and before_sha256 != lease_context.expected_sha256
+            ):
+                raise HTTPException(
+                    status_code=409, detail="File precondition failed: sha256 mismatch"
+                )
         text = str(args.get("content", ""))
         raw = text.encode("utf-8")
         if len(raw) > settings.max_file_write_bytes:
             raise HTTPException(status_code=413, detail="File content is too large")
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-        return _result({"path": _relative_or_dot(root, target), "bytes": len(raw)})
+        target.write_bytes(raw)
+        after_sha256 = hashlib.sha256(raw).hexdigest()
+        structured = {
+            "path": relative_path,
+            "operation": "write",
+            "bytes": len(raw),
+            "bytes_before": len(before_raw),
+            "bytes_after": len(raw),
+            "replacements": 0,
+            "before_sha256": before_sha256,
+            "after_sha256": after_sha256,
+            "diff": {
+                "format": "unified",
+                "suppressed": True,
+                "reason": "server write diff is not materialized",
+                "truncated": False,
+                "added_lines": 0,
+                "removed_lines": 0,
+                "hunks": [],
+            },
+        }
+        file_change = _persist_file_change(
+            db,
+            user=user,
+            origin="server",
+            resource_id=None,
+            tool_call_id=tool_call_id,
+            structured=structured,
+            lease_context=lease_context,
+        )
+        return _result(
+            {
+                "path": relative_path,
+                "bytes": len(raw),
+                "before_sha256": before_sha256,
+                "after_sha256": after_sha256,
+                "file_change_id": file_change.id,
+            })
     if name == "run_cli_command":
         command = str(args.get("command", ""))
         cwd = _safe_path(user, settings, str(args.get("cwd", ".")))
@@ -1529,7 +1853,8 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
             resource_id=workspace.id,
             command=command,
             cwd=workdir,
-            args=["docker", "exec", "-w", workdir, workspace.container_id, "sh", "-lc", command],
+            args=["docker", "exec", "-w", workdir, workspace.container_id, "sh", "-lc", command,
+            ],
             settings=settings,
             background=bool(args.get("background", False)),
             session_name=str(args.get("session_name") or "") or None,
@@ -1570,7 +1895,7 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
             meta["detail"] = detail
         workspace.meta = meta
         workspace.updated_at = utcnow()
-        db.commit()
+        db.flush()
         db.refresh(workspace)
         emit_event(
             db,
@@ -1585,7 +1910,9 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 "container_name": workspace.container_name,
                 "description_set": workspace.description is not None,
             },
+            commit=False,
         )
+        db.commit()
         return _result(
             {
                 "workspace_id": workspace.id,
@@ -1594,7 +1921,8 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 "container_name": workspace.container_name,
             }
         )
-    if name in {"docker_workspace_stop", "docker_workspace_start", "docker_workspace_delete"}:
+    if name in {"docker_workspace_stop", "docker_workspace_start", "docker_workspace_delete",
+    }:
         workspace = db.get(DockerWorkspace, str(args.get("workspace_id", "")))
         if workspace is None or workspace.owner_subject != user.subject:
             raise HTTPException(status_code=404, detail="Workspace not found")
@@ -1604,7 +1932,6 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
             container_name = workspace.container_name
             detail = adapter.remove_workspace(container_id=container_id)
             db.delete(workspace)
-            db.commit()
             emit_event(
                 db,
                 event_type="gateway.workspace.changed.v1",
@@ -1612,9 +1939,13 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 action="deleted",
                 resource_type="docker_workspace",
                 resource_id=str(args.get("workspace_id", "")),
-                payload={"workspace_id": str(args.get("workspace_id", "")), "container_id": container_id, "container_name": container_name, "detail": detail},
+                payload={"workspace_id": str(args.get("workspace_id", "")), "container_id": container_id, "container_name": container_name, "detail": detail,
+                },
+                commit=False,
             )
-            return _result({"workspace_id": str(args.get("workspace_id", "")), "deleted": True, "detail": detail})
+            db.commit()
+            return _result({"workspace_id": str(args.get("workspace_id", "")), "deleted": True, "detail": detail,
+                })
         if name == "docker_workspace_stop":
             result = adapter.stop_workspace(container_id=workspace.container_id)
             action = "stopped"
@@ -1624,7 +1955,7 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
         workspace.status = result.status
         workspace.meta = {**(workspace.meta or {}), "detail": result.detail}
         workspace.updated_at = utcnow()
-        db.commit()
+        db.flush()
         db.refresh(workspace)
         emit_event(
             db,
@@ -1633,8 +1964,11 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
             action=action,
             resource_type="docker_workspace",
             resource_id=workspace.id,
-            payload={"workspace_id": workspace.id, "container_id": workspace.container_id, "status": workspace.status},
+            payload={"workspace_id": workspace.id, "container_id": workspace.container_id, "status": workspace.status,
+            },
+            commit=False,
         )
+        db.commit()
         return _result({"workspace_id": workspace.id, "status": workspace.status})
     if name.startswith("thin_client_"):
         client = db.get(ThinClient, str(args.get("client_id", "")))
@@ -1646,7 +1980,82 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
         elif tool == "read_file":
             arguments = {"path": args.get("path", "")}
         elif tool == "write_file":
-            arguments = {key: value for key, value in args.items() if key != "client_id"}
+            lease_context = agent_coordination_service.validate_write_context(
+                db,
+                owner_subject=user.subject,
+                origin="thin_client",
+                resource_id=client.id,
+                path=str(args.get("path", "")),
+                data=args,
+            )
+            if lease_context:
+                if not settings.gateway_agent_allow_unverified_git_context:
+                    git_response = await thin_client_manager.request(
+                        client.id,
+                        tool="git_state",
+                        arguments={
+                            "worktree_path": lease_context.worktree_path,
+                            "base_commit": lease_context.base_commit,
+                        },
+                        timeout_seconds=_bounded_timeout(
+                            args.get("timeout_seconds"), settings
+                        ),
+                    )
+                    if not git_response.get("ok") or not isinstance(
+                        git_response.get("result"), dict
+                    ):
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Thin client does not support guarded Git worktree checks",
+                        )
+                    git_state = dict(git_response["result"])
+                    if str(git_state.get("toplevel") or "") != lease_context.worktree_path:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Thin-client lease path is not the Git worktree root",
+                        )
+                    _validate_write_git_state(git_state, lease_context)
+                state_response = await thin_client_manager.request(
+                    client.id,
+                    tool="file_state",
+                    arguments={"path": args.get("path", "")},
+                    timeout_seconds=_bounded_timeout(
+                        args.get("timeout_seconds"), settings
+                    ),
+                )
+                if not state_response.get("ok") or not isinstance(
+                    state_response.get("result"), dict
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Thin client does not support guarded file state checks",
+                    )
+                state = dict(state_response["result"])
+                if lease_context.expected_absent and bool(state.get("exists")):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="File precondition failed: path already exists",
+                    )
+                if (
+                    lease_context.expected_sha256
+                    and str(state.get("sha256") or "") != lease_context.expected_sha256
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="File precondition failed: sha256 mismatch",
+                    )
+            arguments = {key: value for key, value in args.items() if key
+                not in {
+                    "client_id",
+                    "room_id",
+                    "agent_id",
+                    "lease_id",
+                    "fencing_token",
+                    "base_commit",
+                    "branch_name",
+                    "worktree_path",
+                }
+            }
         elif tool.startswith("browser_"):
             arguments = {key: value for key, value in args.items() if key != "client_id"}
         elif tool == "run_command":
@@ -1660,7 +2069,8 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 cwd=str(args.get("cwd", ".")),
                 name=str(args.get("session_name") or "") or None,
                 settings=settings,
-                meta={"client_id": client.id, "hostname": client.hostname, "directory": client.directory},
+                meta={"client_id": client.id, "hostname": client.hostname, "directory": client.directory,
+                },
             )
             arguments = {
                 "session_id": session.id,
@@ -1687,7 +2097,10 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                     exit_code=None,
                     meta={"error": str(response.get("error") or "Thin client tool failed")},
                 )
-            return _result({"client_id": client.id, "error": str(response.get("error") or "Thin client tool failed")}, is_error=True)
+            return _result({"client_id": client.id, "error": str(response.get("error") or "Thin client tool failed"),
+                },
+                is_error=True,
+            )
         result = response.get("result")
         if not isinstance(result, dict):
             result = {"output": str(result)}
@@ -1715,6 +2128,8 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 "encoding": result.get("encoding"),
                 "replacements": int(result.get("replacements", 0)),
                 "content": result.get("content"),
+                "before_sha256": result.get("before_sha256"),
+                "after_sha256": result.get("after_sha256"),
                 "diff": result.get("diff")
                 or {
                     "format": "unified",
@@ -1726,6 +2141,17 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                     "hunks": [],
                 },
             }
+            if lease_context and (
+                (
+                    not structured.get("before_sha256")
+                    and not lease_context.expected_absent
+                )
+                or not structured.get("after_sha256")
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Thin client did not return guarded write hashes",
+                )
             file_change = _persist_file_change(
                 db,
                 user=user,
@@ -1733,6 +2159,7 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
                 resource_id=client.id,
                 tool_call_id=tool_call_id,
                 structured=structured,
+                lease_context=lease_context,
             )
             structured["file_change_id"] = file_change.id
         elif tool.startswith("browser_"):

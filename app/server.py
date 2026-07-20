@@ -13,7 +13,7 @@ import signal
 import subprocess
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -25,7 +25,7 @@ from fastmcp.server.auth import AccessToken
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from pydantic import BaseModel, Field
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -40,7 +40,7 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 AUTH_ISSUER = (os.environ.get("AUTH_ISSUER") or PUBLIC_BASE_URL or "http://localhost:8000").rstrip("/")
 AUTH_AUDIENCE = (os.environ.get("AUTH_AUDIENCE") or PUBLIC_BASE_URL or "docker-workspace-mcp").rstrip("/")
 AUTH_JWT_SECRET = os.environ.get("AUTH_JWT_SECRET", "")
-AUTH_ACCESS_TOKEN_TTL_SECONDS = int(os.environ.get("AUTH_ACCESS_TOKEN_TTL_SECONDS", "28800"))
+AUTH_ACCESS_TOKEN_TTL_SECONDS = int(os.environ.get("AUTH_ACCESS_TOKEN_TTL_SECONDS", "864000"))
 AUTH_CODE_TTL_SECONDS = int(os.environ.get("AUTH_CODE_TTL_SECONDS", "600"))
 AUTH_DEFAULT_SCOPES = [scope for scope in os.environ.get("AUTH_DEFAULT_SCOPES", "workspace:read workspace:write workspace:exec").split() if scope]
 AUTH_SUPPORTED_SCOPES = [scope for scope in os.environ.get("AUTH_SUPPORTED_SCOPES", "workspace:read workspace:write workspace:exec").split() if scope]

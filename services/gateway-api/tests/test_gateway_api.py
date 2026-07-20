@@ -150,6 +150,11 @@ def test_oauth_facade_pkce_flow(client: TestClient) -> None:
     )
     assert token.status_code == 200
     assert token.json()["token_type"] == "Bearer"
+    assert token.json()["expires_in"] == 864000
+    from gateway_api.auth import decode_jwt
+
+    claims = decode_jwt(token.json()["access_token"])
+    assert claims["exp"] - claims["iat"] == 864000
 
 
 def test_device_registration_encrypts_secret(client: TestClient) -> None:
@@ -5396,14 +5401,14 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert health.json() == {
         "status": "ok",
         "service": "gateway-api",
-        "version": "0.3.2",
+        "version": "0.3.3",
         "revision": "",
         "slot": "local",
     }
     ready = client.get("/ready")
     assert ready.status_code == 200
     readiness = ready.json()
-    assert readiness["release_version"] == "0.3.2"
+    assert readiness["release_version"] == "0.3.3"
     assert readiness["release_revision"] == ""
     assert readiness["deployment_slot"] == "local"
 

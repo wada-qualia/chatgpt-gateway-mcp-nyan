@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "ChatGPT MCP SSH Gateway"
-    gateway_release_version: str = "0.3.2"
+    gateway_release_version: str = "0.3.3"
     gateway_release_revision: str = ""
     gateway_deployment_slot: str = "local"
     public_base_url: str = "http://localhost:8000"
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     gateway_dev_username: str = "darius"
     gateway_dev_email: str | None = "local@example.invalid"
     gateway_dev_roles: str = "gateway-admin,gateway-user,gateway-auditor"
-    gateway_access_token_ttl_seconds: int = 28800
+    gateway_access_token_ttl_seconds: int = 864000
     gateway_thin_client_token_ttl_seconds: int = 2592000
     gateway_auth_code_ttl_seconds: int = 600
     gateway_device_code_ttl_seconds: int = 900

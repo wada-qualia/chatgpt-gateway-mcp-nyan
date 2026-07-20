@@ -486,6 +486,11 @@ def test_thin_client_device_code_registration(client: TestClient) -> None:
     assert code.status_code == 201
     token = client.post("/api/thin-clients/token", json={"device_code": code.json()["device_code"]})
     assert token.status_code == 200
+    assert token.json()["expires_in"] == 2592000
+    from gateway_api.auth import decode_jwt
+
+    claims = decode_jwt(token.json()["access_token"])
+    assert claims["exp"] - claims["iat"] == 2592000
     registered = client.post(
         "/api/thin-clients/register",
         json={"hostname": "workstation", "directory": "/tmp/project", "labels": {"version": "0.2.0"},
@@ -5391,14 +5396,14 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert health.json() == {
         "status": "ok",
         "service": "gateway-api",
-        "version": "0.3.0",
+        "version": "0.3.2",
         "revision": "",
         "slot": "local",
     }
     ready = client.get("/ready")
     assert ready.status_code == 200
     readiness = ready.json()
-    assert readiness["release_version"] == "0.3.0"
+    assert readiness["release_version"] == "0.3.2"
     assert readiness["release_revision"] == ""
     assert readiness["deployment_slot"] == "local"
 

@@ -279,9 +279,13 @@ async def token(payload: dict, db: Session = Depends(get_db), settings: Settings
         roles=user.roles,
         scopes=["thin-client:register", "thin-client:control"],
         token_type="agent",
-        ttl_seconds=settings.gateway_access_token_ttl_seconds,
+        ttl_seconds=settings.gateway_thin_client_token_ttl_seconds,
     )
-    return {"access_token": agent_token, "token_type": "Bearer", "expires_in": settings.gateway_access_token_ttl_seconds}
+    return {
+        "access_token": agent_token,
+        "token_type": "Bearer",
+        "expires_in": settings.gateway_thin_client_token_ttl_seconds,
+    }
 
 
 def _agent_user_from_request(request: Request, db: Session) -> User:

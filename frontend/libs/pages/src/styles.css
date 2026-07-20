@@ -44,6 +44,39 @@
   gap: 18px;
 }
 
+.settings-card {
+  background: #ffffff;
+  border: 1px solid #dfe4ea;
+  border-radius: 10px;
+  display: grid;
+  gap: 20px;
+  max-width: 760px;
+  padding: 24px;
+}
+
+.settings-card h2,
+.settings-card p {
+  margin: 0;
+}
+
+.settings-field {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-field select {
+  background: #ffffff;
+  border: 1px solid #c8d0da;
+  border-radius: 7px;
+  font: inherit;
+  max-width: 460px;
+  padding: 10px 12px;
+}
+
+.settings-note {
+  color: #596675;
+}
+
 .cards-grid {
   display: grid;
   gap: 16px;

@@ -64,6 +64,36 @@ def test_auth_me_dev_user(client: TestClient) -> None:
     assert response.json()["username"] == "darius"
 
 
+def test_account_ssh_command_profile_defaults_and_override(client: TestClient) -> None:
+    current = client.get("/api/account/settings")
+    assert current.status_code == 200
+    assert current.json() == {
+        "ssh_command_profile": "unrestricted",
+        "ssh_command_profile_override": None,
+        "ssh_command_profile_default": "unrestricted",
+        "raw_commands_enabled": True,
+        "deny_patterns_enabled": False,
+    }
+
+    restricted = client.patch(
+        "/api/account/settings",
+        json={"ssh_command_profile": "restricted"},
+    )
+    assert restricted.status_code == 200
+    assert restricted.json()["ssh_command_profile"] == "restricted"
+    assert restricted.json()["ssh_command_profile_override"] == "restricted"
+    assert restricted.json()["raw_commands_enabled"] is False
+
+    inherited = client.patch(
+        "/api/account/settings",
+        json={"ssh_command_profile": "inherit"},
+    )
+    assert inherited.status_code == 200
+    assert inherited.json()["ssh_command_profile"] == "unrestricted"
+    assert inherited.json()["ssh_command_profile_override"] is None
+    assert inherited.json()["raw_commands_enabled"] is True
+
+
 @pytest.mark.parametrize("client", [False], indirect=True)
 def test_keycloak_login_uses_pkce_and_signed_state(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     from gateway_api import config
@@ -874,7 +904,7 @@ def test_mcp_tools_list(client: TestClient) -> None:
     assert "ssh_device_check_connection" in names
     assert "ssh_device_run_action" in names
     assert "ssh_device_read_home" in names
-    assert "ssh_device_run_command" not in names
+    assert "ssh_device_run_command" in names
     assert browser_safe_names <= set(names)
     assert browser_hidden_names.isdisjoint(names)
     assert all(tool["inputSchema"]["type"] == "object" for tool in tools)
@@ -1247,13 +1277,32 @@ def test_mcp_ssh_run_action_rejects_unknown_action(client: TestClient) -> None:
     assert "Unsupported SSH action" in response.json()["error"]["message"]
 
 
-def test_mcp_ssh_raw_command_disabled_by_default(client: TestClient) -> None:
+def test_mcp_ssh_raw_command_can_be_restricted_per_account(client: TestClient) -> None:
     created = client.post(
         "/api/devices",
-        json={"name": "ssh-stage", "target": "robot@192.0.2.23:2222", "auth_type": "password", "password": "stored-value",
+        json={
+            "name": "ssh-stage",
+            "target": "robot@192.0.2.23:2222",
+            "auth_type": "password",
+            "password": "stored-value",
         },
     )
     assert created.status_code == 201
+
+    settings_response = client.patch(
+        "/api/account/settings",
+        json={"ssh_command_profile": "restricted"},
+    )
+    assert settings_response.status_code == 200
+    assert settings_response.json()["ssh_command_profile"] == "restricted"
+    assert settings_response.json()["raw_commands_enabled"] is False
+
+    tools_response = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 64, "method": "tools/list"},
+    )
+    tool_names = {tool["name"] for tool in tools_response.json()["result"]["tools"]}
+    assert "ssh_device_run_command" not in tool_names
 
     response = client.post(
         "/mcp",
@@ -1325,13 +1374,13 @@ def test_mcp_ssh_raw_command_enabled_runs_safe_single_line(
     assert calls == [{"device_id": device_id, "command": "id", "timeout_seconds": 6}]
 
 
-def test_mcp_ssh_raw_command_policy_blocks_denied_pattern(
+def test_mcp_ssh_filtered_profile_blocks_denied_pattern(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import gateway_api.config as config
     import gateway_api.routers.mcp as mcp_router
 
-    monkeypatch.setenv("GATEWAY_SSH_ALLOW_RAW_COMMAND", "true")
+    monkeypatch.setenv("GATEWAY_SSH_COMMAND_PROFILE_DEFAULT", "filtered")
     config.get_settings.cache_clear()
 
     created = client.post(
@@ -1367,7 +1416,7 @@ def test_mcp_ssh_raw_command_policy_blocks_denied_pattern(
 
     assert response.status_code == 200
     assert response.json()["error"]["code"] == 400
-    assert "raw-mode policy" in response.json()["error"]["message"]
+    assert "filtered-mode policy" in response.json()["error"]["message"]
     assert calls["count"] == 0
 
 
@@ -5401,14 +5450,14 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert health.json() == {
         "status": "ok",
         "service": "gateway-api",
-        "version": "0.3.3",
+        "version": "0.3.4",
         "revision": "",
         "slot": "local",
     }
     ready = client.get("/ready")
     assert ready.status_code == 200
     readiness = ready.json()
-    assert readiness["release_version"] == "0.3.3"
+    assert readiness["release_version"] == "0.3.4"
     assert readiness["release_revision"] == ""
     assert readiness["deployment_slot"] == "local"
 

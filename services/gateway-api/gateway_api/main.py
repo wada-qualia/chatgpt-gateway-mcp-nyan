@@ -10,6 +10,7 @@ from .config import get_settings
 from .database import SessionLocal, init_db
 from .routers import (
     access,
+    account,
     agent_autonomy,
     agent_collaboration,
     agent_coordination,
@@ -77,6 +78,7 @@ def create_app() -> FastAPI:
         return state
 
     app.include_router(auth.router)
+    app.include_router(account.router)
     app.include_router(oauth.router)
     app.include_router(devices.router)
     app.include_router(docker.router)

@@ -63,6 +63,10 @@ WORK_ITEM_AUTONOMY_ADDITIVE_COLUMNS = {
     "assignment_constraints": "JSON",
 }
 
+USER_ADDITIVE_COLUMNS = {
+    "preferences": "JSON",
+}
+
 
 def _apply_additive_schema_upgrades(connection: Connection | None = None) -> None:
     if connection is None:
@@ -87,6 +91,20 @@ def _apply_additive_schema_upgrades(connection: Connection | None = None) -> Non
                 f"ON file_change_sets ({name})"
             )
         )
+
+
+def _apply_user_upgrades(connection: Connection | None = None) -> None:
+    if connection is None:
+        with engine.begin() as owned_connection:
+            _apply_user_upgrades(owned_connection)
+        return
+    inspector = inspect(connection)
+    if "users" not in inspector.get_table_names():
+        return
+    existing = {column["name"] for column in inspector.get_columns("users")}
+    for name, sql_type in USER_ADDITIVE_COLUMNS.items():
+        if name not in existing:
+            connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {sql_type}"))
 
 
 def _apply_work_item_autonomy_upgrades(connection: Connection | None = None) -> None:
@@ -119,6 +137,7 @@ def init_db() -> None:
         Base.metadata.create_all(bind=connection)
         _apply_additive_schema_upgrades(connection)
         _apply_work_item_autonomy_upgrades(connection)
+        _apply_user_upgrades(connection)
 
 
 def get_db() -> Iterator[Session]:

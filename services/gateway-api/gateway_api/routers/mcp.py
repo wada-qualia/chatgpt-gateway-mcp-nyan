@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from ..account_settings import effective_ssh_command_profile, raw_ssh_commands_enabled
 from ..adapters.docker import DockerAdapter, safe_container_name
 from ..adapters.ssh import (
     load_device_credentials,
@@ -459,7 +460,7 @@ def _ssh_connection_output_schema() -> dict[str, Any]:
     )
 
 
-def _ssh_tools(settings: Settings) -> list[dict[str, Any]]:
+def _ssh_tools(settings: Settings, ssh_command_profile: str) -> list[dict[str, Any]]:
     if not settings.gateway_ssh_enabled:
         return []
     allowed_actions = settings.ssh_allowed_actions or ["uptime", "disk_usage", "memory_usage", "whoami", "pwd", "home_list",
@@ -523,11 +524,11 @@ def _ssh_tools(settings: Settings) -> list[dict[str, Any]]:
             output_schema=_command_output_schema(),
         ),
     ]
-    if settings.gateway_ssh_allow_raw_command:
+    if ssh_command_profile != "restricted":
         tools.append(
             _tool(
                 "ssh_device_run_command",
-                "Run a raw shell command on a registered SSH device. This high-risk tool is disabled by default and must be explicitly enabled by configuration.",
+                "Run an arbitrary shell command on a registered SSH device when the effective account SSH command profile is filtered or unrestricted. The unrestricted profile is the deployment default.",
                 _object_schema(
                     {
                         "device_id": _string("SSH device id."),
@@ -822,7 +823,12 @@ def _tool(
     }
 
 
-def _tools() -> list[dict[str, Any]]:
+def _tools(
+    settings: Settings | None = None,
+    ssh_command_profile: str | None = None,
+) -> list[dict[str, Any]]:
+    resolved_settings = settings or get_settings()
+    resolved_profile = ssh_command_profile or resolved_settings.ssh_command_profile_default
     return [
         _tool(
             "workspace_info",
@@ -1005,7 +1011,7 @@ def _tools() -> list[dict[str, Any]]:
                 }
             ),
         ),
-        *_ssh_tools(get_settings()),
+        *_ssh_tools(resolved_settings, resolved_profile),
         _tool(
             "thin_client_list_files",
             "List files inside an online thin client's launch directory.",
@@ -1194,8 +1200,12 @@ def _tools() -> list[dict[str, Any]]:
     ]
 
 
-def _tool_by_name(name: str) -> dict[str, Any] | None:
-    for tool in _tools():
+def _tool_by_name(
+    name: str,
+    settings: Settings,
+    ssh_command_profile: str,
+) -> dict[str, Any] | None:
+    for tool in _tools(settings, ssh_command_profile):
         if tool["name"] == name:
             return tool
     return None
@@ -1205,10 +1215,15 @@ def _normalized_arg_name(name: str) -> str:
     return "".join(char for char in name.lower() if char.isalnum() or char == "_")
 
 
-def _validate_tool_arguments(name: str, args: dict[str, Any]) -> dict[str, Any]:
+def _validate_tool_arguments(
+    name: str,
+    args: dict[str, Any],
+    settings: Settings,
+    ssh_command_profile: str,
+) -> dict[str, Any]:
     if not isinstance(args, dict):
         raise HTTPException(status_code=400, detail="Tool arguments must be an object")
-    tool = _tool_by_name(name)
+    tool = _tool_by_name(name, settings, ssh_command_profile)
     if tool is None:
         raise HTTPException(status_code=404, detail=f"Unknown tool: {name}")
     schema = tool.get("inputSchema") or {}
@@ -1347,7 +1362,11 @@ def _ssh_action_command(action: str) -> str:
         raise HTTPException(status_code=400, detail="Unsupported SSH action") from exc
 
 
-def _validate_ssh_raw_command(command: str, settings: Settings) -> str:
+def _validate_ssh_raw_command(
+    command: str,
+    settings: Settings,
+    ssh_command_profile: str,
+) -> str:
     normalized = command.strip()
     if not normalized:
         raise HTTPException(status_code=400, detail="SSH command must not be empty")
@@ -1355,13 +1374,14 @@ def _validate_ssh_raw_command(command: str, settings: Settings) -> str:
         raise HTTPException(status_code=400, detail="SSH command must be a single line")
     if len(normalized) > int(settings.gateway_ssh_raw_command_max_chars):
         raise HTTPException(status_code=400, detail="SSH command exceeds configured length limit")
-    for pattern in settings.ssh_raw_command_denied_patterns:
-        try:
-            matched = re.search(pattern, normalized, flags=re.IGNORECASE)
-        except re.error as exc:
-            raise HTTPException(status_code=500, detail="Invalid SSH raw command deny pattern") from exc
-        if matched:
-            raise HTTPException(status_code=400, detail="SSH command is blocked by raw-mode policy")
+    if ssh_command_profile == "filtered":
+        for pattern in settings.ssh_raw_command_denied_patterns:
+            try:
+                matched = re.search(pattern, normalized, flags=re.IGNORECASE)
+            except re.error as exc:
+                raise HTTPException(status_code=500, detail="Invalid SSH raw command deny pattern") from exc
+            if matched:
+                raise HTTPException(status_code=400, detail="SSH command is blocked by filtered-mode policy")
     return normalized
 
 
@@ -1505,11 +1525,16 @@ async def mcp(
                 "serverInfo": {"name": settings.app_name, "version": "0.1.0"},
             }
         elif method == "tools/list":
-            result = {"tools": _tools()}
+            result = {"tools": _tools(settings, effective_ssh_command_profile(user, settings))}
         elif method == "tools/call":
             params = body.get("params") or {}
             name = str(params.get("name") or "")
-            arguments = _validate_tool_arguments(name, params.get("arguments") or {})
+            arguments = _validate_tool_arguments(
+                name,
+                params.get("arguments") or {},
+                settings,
+                effective_ssh_command_profile(user, settings),
+            )
             tool_call = monitoring_service.create_tool_call(db, owner_subject=user.subject, tool_name=name, arguments=arguments)
             try:
                 result = await _call_tool(name, arguments, user, db, settings, tool_call_id=tool_call.id)
@@ -1618,9 +1643,14 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
             db.commit()
             return _result({"device_id": device.id, "status": device.status, "detail": detail})
         if name == "ssh_device_run_command":
-            if not settings.gateway_ssh_allow_raw_command:
+            ssh_command_profile = effective_ssh_command_profile(user, settings)
+            if not raw_ssh_commands_enabled(user, settings):
                 raise HTTPException(status_code=404, detail=f"Unknown tool: {name}")
-            command = _validate_ssh_raw_command(str(args.get("command", "")), settings)
+            command = _validate_ssh_raw_command(
+                str(args.get("command", "")),
+                settings,
+                ssh_command_profile,
+            )
             action = "raw_command"
         else:
             action = (

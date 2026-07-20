@@ -20,6 +20,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(120), index=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     roles: Mapped[list[str]] = mapped_column(JSON, default=list)
+    preferences: Mapped[dict] = mapped_column(JSON, default=dict)
     provider: Mapped[str] = mapped_column(String(40), default="keycloak")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

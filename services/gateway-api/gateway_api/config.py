@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "ChatGPT MCP SSH Gateway"
-    gateway_release_version: str = "0.3.3"
+    gateway_release_version: str = "0.3.4"
     gateway_release_revision: str = ""
     gateway_deployment_slot: str = "local"
     public_base_url: str = "http://localhost:8000"
@@ -40,8 +40,9 @@ class Settings(BaseSettings):
     gateway_ssh_enabled: bool = True
     gateway_ssh_known_hosts_path: str | None = None
     gateway_ssh_allowed_actions: str = Field(default="uptime,disk_usage,memory_usage,whoami,pwd,home_list")
-    gateway_ssh_allow_raw_command: bool = False
-    gateway_ssh_raw_command_max_chars: int = 500
+    gateway_ssh_command_profile_default: Literal["restricted", "filtered", "unrestricted"] | None = None
+    gateway_ssh_allow_raw_command: bool | None = None
+    gateway_ssh_raw_command_max_chars: int = 8000
     gateway_agent_allow_unverified_git_context: bool = False
     gateway_replica_id: str = ""
     gateway_broker_backend: Literal["disabled", "memory", "nats"] = "disabled"
@@ -91,6 +92,16 @@ class Settings(BaseSettings):
     @property
     def ssh_allowed_actions(self) -> list[str]:
         return [action.strip() for action in self.gateway_ssh_allowed_actions.split(",") if action.strip()]
+
+    @property
+    def ssh_command_profile_default(self) -> Literal["restricted", "filtered", "unrestricted"]:
+        if self.gateway_ssh_command_profile_default is not None:
+            return self.gateway_ssh_command_profile_default
+        if self.gateway_ssh_allow_raw_command is True:
+            return "filtered"
+        if self.gateway_ssh_allow_raw_command is False:
+            return "restricted"
+        return "unrestricted"
 
     @property
     def ssh_raw_command_denied_patterns(self) -> list[str]:

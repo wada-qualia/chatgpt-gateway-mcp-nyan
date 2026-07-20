@@ -6,6 +6,16 @@ export type GatewayUser = {
   provider: string;
 };
 
+export type SshCommandProfile = 'restricted' | 'filtered' | 'unrestricted';
+
+export type AccountSettings = {
+  ssh_command_profile: SshCommandProfile;
+  ssh_command_profile_override: SshCommandProfile | null;
+  ssh_command_profile_default: SshCommandProfile;
+  raw_commands_enabled: boolean;
+  deny_patterns_enabled: boolean;
+};
+
 export type Device = {
   id: string;
   owner_subject: string;
@@ -186,6 +196,14 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   me: () => request<GatewayUser>('/auth/me'),
+  accountSettings: () => request<AccountSettings>('/api/account/settings'),
+  updateAccountSettings: (payload: {
+    ssh_command_profile: 'inherit' | SshCommandProfile;
+  }) =>
+    request<AccountSettings>('/api/account/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
   devices: () => request<Device[]>('/api/devices'),
   createDevice: (payload: { name: string; target: string; auth_type: string; password?: string; private_key?: string }) =>
     request<Device>('/api/devices', { method: 'POST', body: JSON.stringify(payload) }),

@@ -18,6 +18,18 @@ class UserOut(OrmModel):
     provider: str
 
 
+class AccountSettingsOut(BaseModel):
+    ssh_command_profile: Literal["restricted", "filtered", "unrestricted"]
+    ssh_command_profile_override: Literal["restricted", "filtered", "unrestricted"] | None = None
+    ssh_command_profile_default: Literal["restricted", "filtered", "unrestricted"]
+    raw_commands_enabled: bool
+    deny_patterns_enabled: bool
+
+
+class AccountSettingsUpdate(BaseModel):
+    ssh_command_profile: Literal["inherit", "restricted", "filtered", "unrestricted"]
+
+
 class DeviceCreate(BaseModel):
     name: str
     target: str = Field(description="SSH target in user@host:port form")

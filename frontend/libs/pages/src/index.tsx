@@ -10,6 +10,7 @@ import {
   KeyRound,
   Plus,
   Server,
+  Settings,
   TerminalSquare,
 } from "lucide-react";
 import {
@@ -29,7 +30,13 @@ import { Button } from "@gateway/ui";
 import { api } from "@gateway/generated/client";
 
 export type GatewayPageId =
-  "devices" | "workspaces" | "thin" | "monitoring" | "access" | "audit";
+  | "devices"
+  | "workspaces"
+  | "thin"
+  | "monitoring"
+  | "access"
+  | "audit"
+  | "settings";
 
 const pageRoutes: Record<GatewayPageId, string> = {
   devices: "/devices",
@@ -38,6 +45,7 @@ const pageRoutes: Record<GatewayPageId, string> = {
   monitoring: "/monitoring",
   access: "/chatgpt-access",
   audit: "/audit",
+  settings: "/settings",
 };
 
 const pageByPath: Record<string, GatewayPageId> = {
@@ -51,6 +59,7 @@ const pageByPath: Record<string, GatewayPageId> = {
   "/chatgpt-access": "access",
   "/access": "access",
   "/audit": "audit",
+  "/settings": "settings",
 };
 
 const nav: GatewayNavItem[] = [
@@ -60,6 +69,7 @@ const nav: GatewayNavItem[] = [
   { id: "monitoring", label: "Monitoring", icon: Activity },
   { id: "access", label: "ChatGPT Access", icon: KeyRound },
   { id: "audit", label: "Audit", icon: FileText },
+  { id: "settings", label: "Settings", icon: Settings },
 ];
 
 const DEVICE_PANEL_CLOSED = "__device_panel_closed__";
@@ -358,6 +368,60 @@ export function AuditPage({ controller }: { controller: GatewayController }) {
   );
 }
 
+export function SettingsPage({ controller }: { controller: GatewayController }) {
+  const settings = controller.accountSettings;
+  const selected = settings?.ssh_command_profile_override ?? "inherit";
+  return (
+    <div className="subview">
+      <div className="section-title">
+        <h1>Settings</h1>
+      </div>
+      <section className="settings-card">
+        <div>
+          <h2>SSH command security profile</h2>
+          <p>
+            Controls whether ChatGPT may execute arbitrary commands on SSH devices
+            registered to your account.
+          </p>
+        </div>
+        {controller.accountSettingsState.isLoading ? (
+          <p>Loading account settings…</p>
+        ) : controller.accountSettingsState.errorMessage ? (
+          <p role="alert">{controller.accountSettingsState.errorMessage}</p>
+        ) : (
+          <label className="settings-field">
+            <span>Profile</span>
+            <select
+              disabled={controller.updateAccountSettings.isPending}
+              onChange={(event) =>
+                controller.updateAccountSettings.mutate({
+                  ssh_command_profile: event.target.value as
+                    | "inherit"
+                    | "restricted"
+                    | "filtered"
+                    | "unrestricted",
+                })
+              }
+              value={selected}
+            >
+              <option value="inherit">
+                Inherit system default ({settings?.ssh_command_profile_default})
+              </option>
+              <option value="unrestricted">Unrestricted — allow any command</option>
+              <option value="filtered">Filtered — apply deny patterns</option>
+              <option value="restricted">Restricted — fixed actions only</option>
+            </select>
+          </label>
+        )}
+        <p className="settings-note">
+          Effective profile: <strong>{settings?.ssh_command_profile ?? "unknown"}</strong>.
+          Commands execute with the permissions of the configured SSH user.
+        </p>
+      </section>
+    </div>
+  );
+}
+
 function ActiveGatewayPage({ controller }: { controller: GatewayController }) {
   if (controller.active === "workspaces")
     return <DockerWorkspacesPage controller={controller} />;
@@ -369,6 +433,8 @@ function ActiveGatewayPage({ controller }: { controller: GatewayController }) {
     return <ChatGPTAccessPage controller={controller} />;
   if (controller.active === "audit")
     return <AuditPage controller={controller} />;
+  if (controller.active === "settings")
+    return <SettingsPage controller={controller} />;
   return <DevicesPage controller={controller} />;
 }
 
@@ -416,6 +482,10 @@ function useGatewayController(
   const queryClient = useQueryClient();
 
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const accountSettingsQuery = useQuery({
+    queryKey: ["accountSettings"],
+    queryFn: api.accountSettings,
+  });
   const devicesQuery = useQuery({
     queryKey: ["devices"],
     queryFn: api.devices,
@@ -699,6 +769,12 @@ function useGatewayController(
       queryClient.invalidateQueries({ queryKey: ["commandSessionToolCalls"] });
     },
   });
+  const updateAccountSettings = useMutation({
+    mutationFn: api.updateAccountSettings,
+    onSuccess: (settings) => {
+      queryClient.setQueryData(["accountSettings"], settings);
+    },
+  });
   const operationError =
     [
       createDevice.error,
@@ -715,12 +791,15 @@ function useGatewayController(
       deleteThinClient.error,
       terminateCommandSession.error,
       forceTerminateCommandSession.error,
+      updateAccountSettings.error,
     ]
       .map(getErrorMessage)
       .find(Boolean) ?? null;
 
   return {
     active,
+    accountSettings: accountSettingsQuery.data,
+    accountSettingsState: getQueryState(accountSettingsQuery),
     audit,
     auditState: getQueryState(auditQuery),
     authType,
@@ -779,6 +858,7 @@ function useGatewayController(
     thinClientsState: getQueryState(thinClientsQuery),
     terminateCommandSession,
     testDeviceConnection,
+    updateAccountSettings,
     updateDevice,
     updateWorkspace,
     workspaces,

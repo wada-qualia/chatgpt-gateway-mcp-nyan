@@ -1,3 +1,4 @@
+import i18n from '@gateway/shared/i18n';
 import type {
   ButtonHTMLAttributes,
   HTMLAttributes,
@@ -31,7 +32,7 @@ export function StatusPill({ status }: { status: string }) {
   return (
     <span className={`status-pill ${statusClass(status)}`}>
       <span className="dot" />
-      {status}
+      {String(i18n.t(`status.${status}`, { defaultValue: status }))}
     </span>
   );
 }

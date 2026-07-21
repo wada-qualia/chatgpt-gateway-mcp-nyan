@@ -11,10 +11,12 @@ import DockerWorkspacesRemote from '../src/features/docker/DockerWorkspacesRemot
 import MonitoringRemote from '../src/features/monitoring/MonitoringRemote';
 import ThinClientsRemote from '../src/features/thin-clients/ThinClientsRemote';
 import { GatewayTopbar } from '@gateway/components';
+import i18n from '../src/shared/i18n';
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   vi.unstubAllGlobals();
+  await i18n.changeLanguage('en');
 });
 
 function jsonResponse(data: unknown) {
@@ -450,7 +452,7 @@ test('devices pagination renders only available pages', async () => {
 
   expect(await screen.findAllByText('10.0.1.65')).toHaveLength(2);
   expect(screen.getAllByText('Needs test').length).toBeGreaterThan(0);
-  expect(screen.getByText('1 devices')).toBeInTheDocument();
+  expect(screen.getByText('1 device')).toBeInTheDocument();
   expect(screen.getByText('1-1 of 1')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '1' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '2' })).not.toBeInTheDocument();
@@ -696,4 +698,59 @@ test('devices remote shows a loader while API data is pending', () => {
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => undefined)));
   renderWithQuery(<DevicesRemote />);
   expect(screen.getByText('Loading devices...')).toBeInTheDocument();
+});
+
+
+test('settings language dropdown switches and persists Russian UI', async () => {
+  let settings = {
+    ui_language: 'en',
+    ssh_command_profile: 'unrestricted',
+    ssh_command_profile_override: null,
+    ssh_command_profile_default: 'unrestricted',
+    raw_commands_enabled: true,
+    deny_patterns_enabled: false
+  };
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === '/auth/me') {
+      return jsonResponse({ subject: 'dev:local', username: 'darius', email: 'dev@k-lab.local', roles: [], provider: 'keycloak' });
+    }
+    if (url === '/api/account/settings') {
+      if (init?.method === 'PATCH') {
+        settings = { ...settings, ...JSON.parse(String(init.body ?? '{}')) };
+      }
+      return jsonResponse(settings);
+    }
+    if (url === '/api/docker/images') return jsonResponse({ images: ['ubuntu:24.04'] });
+    if (
+      url === '/api/devices' ||
+      url === '/api/docker/workspaces' ||
+      url === '/api/thin-clients' ||
+      url === '/api/command-sessions' ||
+      url === '/api/access/grants' ||
+      url === '/api/audit/events' ||
+      url.startsWith('/api/file-changes')
+    ) {
+      return jsonResponse([]);
+    }
+    return jsonResponse({});
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  renderWithQuery(<App />, '/settings');
+  const language = await screen.findByRole('combobox', { name: 'Language' });
+  fireEvent.change(language, { target: { value: 'ru' } });
+
+  expect(await screen.findByRole('heading', { name: 'Настройки' })).toBeInTheDocument();
+  expect(screen.getByText('Устройства')).toBeInTheDocument();
+  expect(document.documentElement.lang).toBe('ru');
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/account/settings',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ ui_language: 'ru' })
+      })
+    );
+  });
 });

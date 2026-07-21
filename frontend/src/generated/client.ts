@@ -8,7 +8,10 @@ export type GatewayUser = {
 
 export type SshCommandProfile = 'restricted' | 'filtered' | 'unrestricted';
 
+export type UiLanguage = 'en' | 'ru';
+
 export type AccountSettings = {
+  ui_language: UiLanguage;
   ssh_command_profile: SshCommandProfile;
   ssh_command_profile_override: SshCommandProfile | null;
   ssh_command_profile_default: SshCommandProfile;
@@ -198,7 +201,8 @@ export const api = {
   me: () => request<GatewayUser>('/auth/me'),
   accountSettings: () => request<AccountSettings>('/api/account/settings'),
   updateAccountSettings: (payload: {
-    ssh_command_profile: 'inherit' | SshCommandProfile;
+    ui_language?: UiLanguage;
+    ssh_command_profile?: 'inherit' | SshCommandProfile;
   }) =>
     request<AccountSettings>('/api/account/settings', {
       method: 'PATCH',

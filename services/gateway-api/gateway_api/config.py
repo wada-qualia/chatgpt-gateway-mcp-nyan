@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "ChatGPT MCP SSH Gateway"
-    gateway_release_version: str = "0.3.4"
+    gateway_release_version: str = "0.3.5"
     gateway_release_revision: str = ""
     gateway_deployment_slot: str = "local"
     public_base_url: str = "http://localhost:8000"

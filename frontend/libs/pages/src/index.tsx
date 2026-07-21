@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -27,7 +28,12 @@ import {
   type GatewayNavItem,
 } from "@gateway/components";
 import { Button } from "@gateway/ui";
-import { api } from "@gateway/generated/client";
+import {
+  api,
+  type AccountSettings,
+  type UiLanguage,
+} from "@gateway/generated/client";
+import i18n from "@gateway/shared/i18n";
 
 export type GatewayPageId =
   | "devices"
@@ -62,15 +68,15 @@ const pageByPath: Record<string, GatewayPageId> = {
   "/settings": "settings",
 };
 
-const nav: GatewayNavItem[] = [
-  { id: "devices", label: "Devices", icon: Server },
-  { id: "workspaces", label: "Docker Workspaces", icon: Box },
-  { id: "thin", label: "Thin Clients", icon: TerminalSquare },
-  { id: "monitoring", label: "Monitoring", icon: Activity },
-  { id: "access", label: "ChatGPT Access", icon: KeyRound },
-  { id: "audit", label: "Audit", icon: FileText },
-  { id: "settings", label: "Settings", icon: Settings },
-];
+const navDefinitions = [
+  { id: "devices", labelKey: "nav.devices", icon: Server },
+  { id: "workspaces", labelKey: "nav.workspaces", icon: Box },
+  { id: "thin", labelKey: "nav.thinClients", icon: TerminalSquare },
+  { id: "monitoring", labelKey: "nav.monitoring", icon: Activity },
+  { id: "access", labelKey: "nav.access", icon: KeyRound },
+  { id: "audit", labelKey: "nav.audit", icon: FileText },
+  { id: "settings", labelKey: "nav.settings", icon: Settings },
+] as const;
 
 const DEVICE_PANEL_CLOSED = "__device_panel_closed__";
 
@@ -79,8 +85,14 @@ export function GatewayDashboardPage({
 }: {
   initialPage?: GatewayPageId;
 }) {
+  const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
+  const nav: GatewayNavItem[] = navDefinitions.map((item) => ({
+    id: item.id,
+    label: t(item.labelKey),
+    icon: item.icon,
+  }));
   const routePage = getPageFromPath(location.pathname);
   const activePage = routePage ?? initialPage;
   const setRoutePage = useCallback(
@@ -194,17 +206,18 @@ export function AuditRemote() {
 }
 
 export function DevicesPage({ controller }: { controller: GatewayController }) {
+  const { t } = useTranslation();
   return (
     <>
       <div className="section-title">
-        <h1>Devices</h1>
+        <h1>{t("devices.title")}</h1>
       </div>
       <DeviceTable
         devices={controller.filteredDevices}
         emptyMessage={
           controller.devices.length === 0
-            ? "No devices registered yet."
-            : "No devices match the current search."
+            ? t("devices.empty")
+            : t("devices.noMatch")
         }
         errorMessage={controller.devicesState.errorMessage}
         isLoading={controller.devicesState.isLoading}
@@ -232,10 +245,11 @@ export function DockerWorkspacesPage({
 }: {
   controller: GatewayController;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="subview">
       <div className="section-title">
-        <h1>Docker Workspaces</h1>
+        <h1>{t("workspaces.title")}</h1>
         <Button
           disabled={!controller.canCreateWorkspace}
           onClick={() => controller.createWorkspace.mutate()}
@@ -243,14 +257,14 @@ export function DockerWorkspacesPage({
           type="button"
           variant="solid"
         >
-          <Plus size={18} /> Create Ubuntu
+          <Plus size={18} /> {t("workspaces.createUbuntu")}
         </Button>
       </div>
       <DockerWorkspaceGrid
         editDescription={controller.editWorkspaceDescription}
         editName={controller.editWorkspaceName}
         editingWorkspaceId={controller.editingWorkspaceId}
-        emptyMessage="No Docker workspaces yet."
+        emptyMessage={t("workspaces.empty")}
         errorMessage={controller.workspacesState.errorMessage}
         isLoading={controller.workspacesState.isLoading}
         onBeginEdit={controller.beginWorkspaceEdit}
@@ -277,21 +291,22 @@ export function ThinClientsPage({
 }: {
   controller: GatewayController;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="subview">
       <div className="section-title">
-        <h1>Thin Clients</h1>
+        <h1>{t("thinClients.title")}</h1>
         <Button
           variant="solid"
           onClick={() => controller.installClient.mutate()}
           type="button"
         >
-          <Download size={18} /> Issue device code
+          <Download size={18} /> {t("thinClients.issueCode")}
         </Button>
       </div>
       <ThinClientPanel
         clientCommand={controller.clientCommand}
-        emptyMessage="No thin clients registered yet."
+        emptyMessage={t("thinClients.empty")}
         errorMessage={controller.thinClientsState.errorMessage}
         isLoading={controller.thinClientsState.isLoading}
         onDelete={(clientId) => controller.deleteThinClient.mutate(clientId)}
@@ -306,13 +321,14 @@ export function ChatGPTAccessPage({
 }: {
   controller: GatewayController;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="subview">
       <div className="section-title">
-        <h1>ChatGPT Access</h1>
+        <h1>{t("access.title")}</h1>
       </div>
       <AccessGrantsTable
-        emptyMessage="No ChatGPT access grants yet."
+        emptyMessage={t("access.empty")}
         errorMessage={controller.grantsState.errorMessage}
         grants={controller.grants}
         isLoading={controller.grantsState.isLoading}
@@ -322,13 +338,14 @@ export function ChatGPTAccessPage({
 }
 
 export function MonitoringPage({ controller }: { controller: GatewayController }) {
+  const { t } = useTranslation();
   return (
     <div className="subview">
       <div className="section-title">
-        <h1>Monitoring</h1>
+        <h1>{t("monitoring.title")}</h1>
       </div>
       <MonitoringSessionsPanel
-        emptyMessage="No command sessions yet."
+        emptyMessage={t("monitoring.empty")}
         errorMessage={controller.commandSessionsState.errorMessage}
         fileChanges={controller.fileChanges}
         fileChangesErrorMessage={controller.fileChangesState.errorMessage}
@@ -353,14 +370,15 @@ export function MonitoringPage({ controller }: { controller: GatewayController }
 }
 
 export function AuditPage({ controller }: { controller: GatewayController }) {
+  const { t } = useTranslation();
   return (
     <div className="subview">
       <div className="section-title">
-        <h1>Audit</h1>
+        <h1>{t("audit.title")}</h1>
       </div>
       <AuditEventsTable
         audit={controller.audit}
-        emptyMessage="No audit events recorded yet."
+        emptyMessage={t("audit.empty")}
         errorMessage={controller.auditState.errorMessage}
         isLoading={controller.auditState.isLoading}
       />
@@ -369,55 +387,91 @@ export function AuditPage({ controller }: { controller: GatewayController }) {
 }
 
 export function SettingsPage({ controller }: { controller: GatewayController }) {
+  const { t } = useTranslation();
   const settings = controller.accountSettings;
-  const selected = settings?.ssh_command_profile_override ?? "inherit";
+  const selectedProfile = settings?.ssh_command_profile_override ?? "inherit";
+  const selectedLanguage = settings?.ui_language ?? "en";
+
+  const changeLanguage = (language: UiLanguage) => {
+    void i18n.changeLanguage(language);
+    controller.updateAccountSettings.mutate({ ui_language: language });
+  };
+
   return (
     <div className="subview">
       <div className="section-title">
-        <h1>Settings</h1>
+        <h1>{t("settings.title")}</h1>
       </div>
-      <section className="settings-card">
-        <div>
-          <h2>SSH command security profile</h2>
-          <p>
-            Controls whether ChatGPT may execute arbitrary commands on SSH devices
-            registered to your account.
+      <div className="settings-stack">
+        <section className="settings-card">
+          <div>
+            <h2>{t("settings.language.title")}</h2>
+            <p>{t("settings.language.description")}</p>
+          </div>
+          {controller.accountSettingsState.isLoading ? (
+            <p>{t("settings.loading")}</p>
+          ) : controller.accountSettingsState.errorMessage ? (
+            <p role="alert">{controller.accountSettingsState.errorMessage}</p>
+          ) : (
+            <label className="settings-field">
+              <span>{t("settings.language.label")}</span>
+              <select
+                aria-label={t("settings.language.label")}
+                disabled={controller.updateAccountSettings.isPending}
+                onChange={(event) => changeLanguage(event.target.value as UiLanguage)}
+                value={selectedLanguage}
+              >
+                <option value="en">{t("settings.language.english")}</option>
+                <option value="ru">{t("settings.language.russian")}</option>
+              </select>
+            </label>
+          )}
+        </section>
+
+        <section className="settings-card">
+          <div>
+            <h2>{t("settings.ssh.title")}</h2>
+            <p>{t("settings.ssh.description")}</p>
+          </div>
+          {controller.accountSettingsState.isLoading ? (
+            <p>{t("settings.loading")}</p>
+          ) : controller.accountSettingsState.errorMessage ? (
+            <p role="alert">{controller.accountSettingsState.errorMessage}</p>
+          ) : (
+            <label className="settings-field">
+              <span>{t("settings.ssh.profile")}</span>
+              <select
+                disabled={controller.updateAccountSettings.isPending}
+                onChange={(event) =>
+                  controller.updateAccountSettings.mutate({
+                    ssh_command_profile: event.target.value as
+                      | "inherit"
+                      | "restricted"
+                      | "filtered"
+                      | "unrestricted",
+                  })
+                }
+                value={selectedProfile}
+              >
+                <option value="inherit">
+                  {t("settings.ssh.inherit", {
+                    profile: settings?.ssh_command_profile_default,
+                  })}
+                </option>
+                <option value="unrestricted">{t("settings.ssh.unrestricted")}</option>
+                <option value="filtered">{t("settings.ssh.filtered")}</option>
+                <option value="restricted">{t("settings.ssh.restricted")}</option>
+              </select>
+            </label>
+          )}
+          <p className="settings-note">
+            {t("settings.ssh.effective", {
+              profile: settings?.ssh_command_profile ?? t("common.unknown"),
+            })}{" "}
+            {t("settings.ssh.permissions")}
           </p>
-        </div>
-        {controller.accountSettingsState.isLoading ? (
-          <p>Loading account settings…</p>
-        ) : controller.accountSettingsState.errorMessage ? (
-          <p role="alert">{controller.accountSettingsState.errorMessage}</p>
-        ) : (
-          <label className="settings-field">
-            <span>Profile</span>
-            <select
-              disabled={controller.updateAccountSettings.isPending}
-              onChange={(event) =>
-                controller.updateAccountSettings.mutate({
-                  ssh_command_profile: event.target.value as
-                    | "inherit"
-                    | "restricted"
-                    | "filtered"
-                    | "unrestricted",
-                })
-              }
-              value={selected}
-            >
-              <option value="inherit">
-                Inherit system default ({settings?.ssh_command_profile_default})
-              </option>
-              <option value="unrestricted">Unrestricted — allow any command</option>
-              <option value="filtered">Filtered — apply deny patterns</option>
-              <option value="restricted">Restricted — fixed actions only</option>
-            </select>
-          </label>
-        )}
-        <p className="settings-note">
-          Effective profile: <strong>{settings?.ssh_command_profile ?? "unknown"}</strong>.
-          Commands execute with the permissions of the configured SSH user.
-        </p>
-      </section>
+        </section>
+      </div>
     </div>
   );
 }
@@ -446,6 +500,7 @@ function useGatewayController(
   initialPage: GatewayPageId,
   navigateToPage?: (page: GatewayPageId) => void,
 ) {
+  const { t } = useTranslation();
   const [localActive, setLocalActive] = useState<GatewayPageId>(initialPage);
   const active = navigateToPage ? initialPage : localActive;
   const setActive = useCallback(
@@ -486,6 +541,13 @@ function useGatewayController(
     queryKey: ["accountSettings"],
     queryFn: api.accountSettings,
   });
+
+  useEffect(() => {
+    const language = accountSettingsQuery.data?.ui_language;
+    if (language && i18n.resolvedLanguage !== language) {
+      void i18n.changeLanguage(language);
+    }
+  }, [accountSettingsQuery.data?.ui_language]);
   const devicesQuery = useQuery({
     queryKey: ["devices"],
     queryFn: api.devices,
@@ -536,11 +598,11 @@ function useGatewayController(
   });
   const availableImages = imagesQuery.data?.images ?? [];
   const createWorkspaceTitle = imagesQuery.isPending
-    ? "Loading Docker image allowlist"
+    ? t("workspaces.imageAllowlistLoading")
     : imagesQuery.isError
-      ? (getErrorMessage(imagesQuery.error) ?? "Docker images unavailable")
+      ? (getErrorMessage(imagesQuery.error) ?? t("workspaces.imagesUnavailable"))
       : availableImages.length === 0
-        ? "No Docker images available from API"
+        ? t("workspaces.noImages")
         : undefined;
   const selected =
     selectedId === DEVICE_PANEL_CLOSED
@@ -561,13 +623,13 @@ function useGatewayController(
       const trimmedTarget = target.trim();
       const trimmedSecret = secret.trim();
       if (!trimmedTarget) {
-        throw new Error("Enter SSH target in user@host:port format.");
+        throw new Error(t("devices.form.enterTarget"));
       }
       if (!trimmedSecret) {
         throw new Error(
           authType === "password"
-            ? "Enter SSH password."
-            : "Paste SSH private key.",
+            ? t("devices.form.enterPassword")
+            : t("devices.form.enterPrivateKey"),
         );
       }
       return api.createDevice({
@@ -627,7 +689,7 @@ function useGatewayController(
       const image = availableImages[0];
       if (!image) {
         throw new Error(
-          "Docker image list is empty. Configure allowlisted Ubuntu images first.",
+          t("workspaces.imageListEmpty"),
         );
       }
       return api.createWorkspace({
@@ -666,7 +728,7 @@ function useGatewayController(
     mutationFn: (workspaceId: string) => {
       const name = editWorkspaceName.trim();
       if (!name) {
-        throw new Error("Enter Docker workspace name.");
+        throw new Error(t("workspaces.enterName"));
       }
       return api.updateWorkspace(workspaceId, {
         name,
@@ -686,7 +748,7 @@ function useGatewayController(
         workspaces.find((workspace) => workspace.id === workspaceId) ??
         workspaces[0];
       if (!source) {
-        throw new Error("No Docker workspace is available to clone.");
+        throw new Error(t("workspaces.noCloneSource"));
       }
       return api.cloneWorkspace({
         source_workspace_id: source.id,
@@ -773,6 +835,17 @@ function useGatewayController(
     mutationFn: api.updateAccountSettings,
     onSuccess: (settings) => {
       queryClient.setQueryData(["accountSettings"], settings);
+      if (i18n.resolvedLanguage !== settings.ui_language) {
+        void i18n.changeLanguage(settings.ui_language);
+      }
+    },
+    onError: () => {
+      const current = queryClient.getQueryData<AccountSettings>([
+        "accountSettings",
+      ]);
+      if (current && i18n.resolvedLanguage !== current.ui_language) {
+        void i18n.changeLanguage(current.ui_language);
+      }
     },
   });
   const operationError =

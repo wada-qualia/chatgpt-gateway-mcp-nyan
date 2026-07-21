@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
+import i18n from "@gateway/shared/i18n";
 import {
   Button,
   CommandBox,
@@ -35,6 +36,10 @@ import {
   StatusPill,
   TableFrame,
 } from "@gateway/ui";
+
+function tr(key: string, options?: Record<string, unknown>): string {
+  return String(i18n.t(key, options));
+}
 
 export type GatewayNavItem = {
   id: string;
@@ -194,7 +199,7 @@ export function GatewaySidebar({
   return (
     <aside className="sidebar">
       <div className="brand-row">
-        <strong>ChatGPT MCP SSH Gateway</strong>
+        <strong>{tr("brand")}</strong>
       </div>
       <nav>
         {items.map((item) => {
@@ -214,7 +219,7 @@ export function GatewaySidebar({
       </nav>
       <Button className="collapse-button" type="button">
         <ChevronLeft size={18} />
-        <span>Collapse</span>
+        <span>{tr("nav.collapse")}</span>
       </Button>
     </aside>
   );
@@ -230,20 +235,20 @@ export function GatewayTopbar({
   user?: GatewayUserSummary;
 }) {
   const username = isLoading
-    ? "Loading SSO user"
-    : (user?.username ?? "No SSO session");
+    ? tr("auth.loadingUser")
+    : (user?.username ?? tr("auth.noSession"));
   const nextPath = typeof window === "undefined" ? "/" : window.location.pathname;
   return (
     <header className="topbar">
       {!isLoading && !user ? (
         <a className="login-link" href={`/auth/login?next=${encodeURIComponent(nextPath)}`}>
-          Sign in with Keycloak
+          {tr("auth.signIn")}
         </a>
       ) : null}
       <div className="avatar">{username.slice(0, 2).toUpperCase()}</div>
       <div className="user-block">
         <strong>{username}</strong>
-        <span>{errorMessage ?? user?.email ?? "No email from SSO"}</span>
+        <span>{errorMessage ?? user?.email ?? tr("auth.noEmail")}</span>
       </div>
     </header>
   );
@@ -251,7 +256,7 @@ export function GatewayTopbar({
 
 export function DeviceTable({
   devices,
-  emptyMessage = "No devices registered yet.",
+  emptyMessage = tr("devices.empty"),
   errorMessage,
   isLoading = false,
   onSearch,
@@ -288,15 +293,15 @@ export function DeviceTable({
         <SearchField
           icon={<Search size={18} />}
           onChange={onSearch}
-          placeholder="Search devices..."
+          placeholder={tr("devices.search")}
           value={search}
         />
         <Button type="button">
-          <Filter size={18} /> Filters
+          <Filter size={18} /> {tr("devices.filters")}
         </Button>
         <span className="spacer" />
-        <span className="muted">{total} devices</span>
-        <IconButton aria-label="Refresh">
+        <span className="muted">{tr("devices.count", { count: total })}</span>
+        <IconButton aria-label={tr("common.actions.refresh")}>
           <RefreshCw size={18} />
         </IconButton>
       </div>
@@ -305,16 +310,16 @@ export function DeviceTable({
           <thead>
             <tr>
               <th className="check-cell">
-                <input type="checkbox" aria-label="Select all devices" />
+                <input type="checkbox" aria-label={tr("devices.selectAll")} />
               </th>
-              <th>Status</th>
-              <th>Hostname</th>
-              <th>User</th>
-              <th>IP Address</th>
-              <th>Auth</th>
-              <th>SSH Ready</th>
-              <th>Last Seen</th>
-              <th>SSO Linked</th>
+              <th>{tr("common.fields.status")}</th>
+              <th>{tr("common.fields.hostname")}</th>
+              <th>{tr("common.fields.user")}</th>
+              <th>{tr("common.fields.ipAddress")}</th>
+              <th>{tr("common.fields.auth")}</th>
+              <th>{tr("devices.table.sshReady")}</th>
+              <th>{tr("devices.table.lastSeen")}</th>
+              <th>{tr("devices.table.ssoLinked")}</th>
               <th className="menu-cell" />
             </tr>
           </thead>
@@ -323,13 +328,13 @@ export function DeviceTable({
               <TableNoticeRow
                 colSpan={10}
                 state="loading"
-                title="Loading devices..."
+                title={tr("devices.loading")}
               />
             ) : errorMessage ? (
               <TableNoticeRow
                 colSpan={10}
                 state="error"
-                title="Devices unavailable"
+                title={tr("devices.unavailable")}
                 description={errorMessage}
               />
             ) : devices.length === 0 ? (
@@ -346,7 +351,7 @@ export function DeviceTable({
                       type="checkbox"
                       checked={selectedId === device.id}
                       readOnly
-                      aria-label={`Select ${device.name}`}
+                      aria-label={tr("devices.select", { name: device.name })}
                     />
                   </td>
                   <td>
@@ -357,17 +362,17 @@ export function DeviceTable({
                   <td>{device.host}</td>
                   <td>
                     {device.auth_type === "private_key"
-                      ? "SSH Key"
-                      : "Password"}
+                      ? tr("devices.auth.key")
+                      : tr("devices.auth.password")}
                   </td>
                   <td>
                     <span className={`readiness-badge ${sshReadinessClass(device.status)}`}>
                       {sshReadinessLabel(device.status)}
                     </span>
                   </td>
-                  <td>2m ago</td>
+                  <td>{tr("devices.lastSeenTwoMinutes")}</td>
                   <td>
-                    <span className="linked">Linked</span>
+                    <span className="linked">{tr("common.linked")}</span>
                   </td>
                   <td className="menu-cell">
                     <MoreVertical size={18} />
@@ -379,16 +384,16 @@ export function DeviceTable({
         </table>
       </TableFrame>
       <div className="pager">
-        <span>Rows per page:</span>
+        <span>{tr("common.rowsPerPage")}</span>
         <Button type="button">
           10 <ChevronDown size={14} />
         </Button>
         <span className="spacer" />
         <span>
-          {rangeStart}-{rangeEnd} of {devices.length}
+          {tr("common.range", { start: rangeStart, end: rangeEnd, total: devices.length })}
         </span>
         <IconButton
-          aria-label="Previous page"
+          aria-label={tr("common.previousPage")}
           disabled={safeCurrentPage <= 1}
           onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
         >
@@ -408,7 +413,7 @@ export function DeviceTable({
           );
         })}
         <IconButton
-          aria-label="Next page"
+          aria-label={tr("common.nextPage")}
           disabled={safeCurrentPage >= pageCount}
           onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))}
         >
@@ -439,8 +444,8 @@ export function DeviceForm({
   return (
     <div className="inline-panel">
       <div className="panel-heading">
-        <h2>New SSH device</h2>
-        <IconButton aria-label="Close form">
+        <h2>{tr("devices.form.title")}</h2>
+        <IconButton aria-label={tr("devices.form.close")}>
           <X size={18} />
         </IconButton>
       </div>
@@ -454,40 +459,40 @@ export function DeviceForm({
           />
         </label>
         <label>
-          Secret
+          {tr("devices.form.secret")}
           <input
             value={secret}
             onChange={(event) => setSecret(event.target.value)}
-            placeholder={authType === "password" ? "Password" : "Private key"}
+            placeholder={authType === "password" ? tr("devices.auth.password") : tr("devices.form.privateKey")}
             type="password"
           />
         </label>
         <label>
-          Auth method
+          {tr("devices.auth.method")}
           <SegmentedControl
             onChange={setAuthType}
             options={[
-              { label: "Password", value: "password" },
-              { label: "Key", value: "private_key" },
+              { label: tr("devices.auth.password"), value: "password" },
+              { label: tr("devices.auth.shortKey"), value: "private_key" },
             ]}
             value={authType}
           />
         </label>
         <label>
-          Directory
+          {tr("common.fields.directory")}
           <input placeholder="/home/user" />
         </label>
         <label>
-          Access scope
+          {tr("devices.form.accessScope")}
           <select defaultValue="engineers">
-            <option value="engineers">K-Lab Engineers</option>
-            <option value="chatgpt">ChatGPT Connector</option>
+            <option value="engineers">{tr("devices.form.engineers")}</option>
+            <option value="chatgpt">{tr("devices.form.connector")}</option>
           </select>
         </label>
         <div className="form-actions">
-          <Button type="button">Cancel</Button>
+          <Button type="button">{tr("common.actions.cancel")}</Button>
           <Button variant="solid" onClick={onCreate} type="button">
-            Add device
+            {tr("devices.form.add")}
           </Button>
         </div>
       </div>
@@ -550,19 +555,19 @@ export function DeviceDetailPanel({
     return (
       <aside className="detail-panel">
         <DataNotice
-          description="Register an SSH device or wait for the devices API to return data."
-          title="No device selected"
+          description={tr("devices.detail.noneDescription")}
+          title={tr("devices.detail.noneTitle")}
         />
       </aside>
     );
   }
 
   const logs = [
-    { label: "SSO login", actor: "jane.kim@k-lab.io", status: "ok", time: "10:13:07" },
-    { label: "SSH session", actor: selected.username, status: "ok", time: "10:12:07" },
-    { label: "SSH session", actor: selected.username, status: "ok", time: "10:11:07" },
-    { label: "Auth failed", actor: selected.username, status: "bad", time: "10:10:07" },
-    { label: "SSH session", actor: selected.username, status: "ok", time: "10:09:07" },
+    { label: tr("devices.logs.ssoLogin"), actor: "jane.kim@k-lab.io", status: "ok", time: "10:13:07" },
+    { label: tr("devices.logs.sshSession"), actor: selected.username, status: "ok", time: "10:12:07" },
+    { label: tr("devices.logs.sshSession"), actor: selected.username, status: "ok", time: "10:11:07" },
+    { label: tr("devices.logs.authFailed"), actor: selected.username, status: "bad", time: "10:10:07" },
+    { label: tr("devices.logs.sshSession"), actor: selected.username, status: "ok", time: "10:09:07" },
   ];
 
   const saveEdit = () => {
@@ -583,18 +588,18 @@ export function DeviceDetailPanel({
         <Server size={22} />
         <h2>{selected.name}</h2>
         <StatusPill status={selected.status} />
-        <IconButton aria-label="Close details" onClick={onClose}>
+        <IconButton aria-label={tr("devices.detail.close")} onClick={onClose}>
           <X size={18} />
         </IconButton>
       </div>
-      <div className="tabs" role="tablist" aria-label="Device details">
+      <div className="tabs" role="tablist" aria-label={tr("devices.detail.aria")}>
         <Button
           className={activeTab === "overview" ? "active" : ""}
           onClick={() => setActiveTab("overview")}
           role="tab"
           type="button"
         >
-          Overview
+          {tr("devices.detail.overview")}
         </Button>
         <Button
           className={activeTab === "workspaces" ? "active" : ""}
@@ -602,7 +607,7 @@ export function DeviceDetailPanel({
           role="tab"
           type="button"
         >
-          Workspaces ({workspaces})
+          {tr("devices.detail.workspaces", { count: workspaces })}
         </Button>
         <Button
           className={activeTab === "thin" ? "active" : ""}
@@ -610,7 +615,7 @@ export function DeviceDetailPanel({
           role="tab"
           type="button"
         >
-          Thin Clients ({thinClients})
+          {tr("devices.detail.thinClients", { count: thinClients })}
         </Button>
         <Button
           className={activeTab === "audit" ? "active" : ""}
@@ -618,7 +623,7 @@ export function DeviceDetailPanel({
           role="tab"
           type="button"
         >
-          Audit
+          {tr("nav.audit")}
         </Button>
       </div>
 
@@ -626,99 +631,99 @@ export function DeviceDetailPanel({
         isEditing ? (
           <div className="detail-edit-form">
             <label>
-              Device name
+              {tr("devices.detail.deviceName")}
               <input
-                aria-label="Device name"
+                aria-label={tr("devices.detail.deviceName")}
                 onChange={(event) => setEditName(event.target.value)}
                 value={editName}
               />
             </label>
             <label>
-              SSH target
+              {tr("devices.detail.sshTarget")}
               <input
-                aria-label="SSH target"
+                aria-label={tr("devices.detail.sshTarget")}
                 onChange={(event) => setEditTarget(event.target.value)}
                 value={editTarget}
               />
             </label>
             <label>
-              Auth method
+              {tr("devices.auth.method")}
               <SegmentedControl
                 options={[
-                  { label: "Password", value: "password" },
-                  { label: "Key", value: "private_key" },
+                  { label: tr("devices.auth.password"), value: "password" },
+                  { label: tr("devices.auth.shortKey"), value: "private_key" },
                 ]}
                 onChange={(value) => setEditAuthType(value as "password" | "private_key")}
                 value={editAuthType}
               />
             </label>
             <label>
-              New secret
+              {tr("devices.detail.newSecret")}
               <input
-                aria-label="New secret"
+                aria-label={tr("devices.detail.newSecret")}
                 onChange={(event) => setEditSecret(event.target.value)}
-                placeholder="Leave empty to keep current credential"
+                placeholder={tr("devices.detail.keepSecret")}
                 type={editAuthType === "password" ? "password" : "text"}
                 value={editSecret}
               />
             </label>
             <div className="edit-actions">
               <Button disabled={isUpdating} onClick={saveEdit} type="button" variant="solid">
-                {isUpdating ? "Saving..." : "Save"}
+                {isUpdating ? tr("common.actions.saving") : tr("common.actions.save")}
               </Button>
               <Button onClick={() => setIsEditing(false)} type="button">
-                Cancel
+                {tr("common.actions.cancel")}
               </Button>
             </div>
           </div>
         ) : (
           <>
             <dl className="details">
-              <dt>Hostname</dt>
+              <dt>{tr("common.fields.hostname")}</dt>
               <dd>
                 {selected.name} <Copy size={15} />
               </dd>
-              <dt>IP Address</dt>
+              <dt>{tr("common.fields.ipAddress")}</dt>
               <dd>
                 {selected.host} <Copy size={15} />
               </dd>
-              <dt>User</dt>
+              <dt>{tr("common.fields.user")}</dt>
               <dd>{selected.username}</dd>
-              <dt>Port</dt>
+              <dt>{tr("common.fields.port")}</dt>
               <dd>{selected.port}</dd>
-              <dt>OS</dt>
+              <dt>{tr("devices.detail.os")}</dt>
               <dd>Ubuntu 22.04 LTS</dd>
-              <dt>Status</dt>
+              <dt>{tr("common.fields.status")}</dt>
               <dd>
                 <StatusPill status={selected.status} />
               </dd>
-              <dt>SSH Readiness</dt>
+              <dt>{tr("devices.detail.sshReadiness")}</dt>
               <dd>
                 <span className={`readiness-badge ${sshReadinessClass(selected.status)}`}>
                   {sshReadinessLabel(selected.status)}
                 </span>
               </dd>
-              <dt>MCP Tools</dt>
+              <dt>{tr("devices.detail.mcpTools")}</dt>
               <dd>{sshMcpToolSummary(selected.status)}</dd>
-              <dt>Auth Method</dt>
-              <dd>{selected.auth_type === "private_key" ? "SSH Key" : "Password"}</dd>
-              <dt>Directory</dt>
+              <dt>{tr("devices.detail.authMethod")}</dt>
+              <dd>{selected.auth_type === "private_key" ? tr("devices.auth.key") : tr("devices.auth.password")}</dd>
+              <dt>{tr("common.fields.directory")}</dt>
               <dd>/home/{selected.username}</dd>
-              <dt>Access Scope</dt>
+              <dt>{tr("devices.detail.accessScope")}</dt>
               <dd>
                 <span className="scope-chip">
-                  K-Lab Engineers <Copy size={14} />
+                  {tr("devices.form.engineers")} <Copy size={14} />
                 </span>
               </dd>
-              <dt>SSO Linked</dt>
+              <dt>{tr("devices.detail.ssoLinked")}</dt>
               <dd>
-                <span className="linked">Linked</span>
+                <span className="linked">{tr("common.linked")}</span>
               </dd>
             </dl>
             <div className="recent-head">
-              <h3>Recent Connection Logs</h3>
+              <h3>{tr("devices.detail.recentLogs")}</h3>
               <Button onClick={() => setActiveTab("audit")} type="button">
-                View all
+                {tr("common.actions.viewAll")}
               </Button>
             </div>
             <ConnectionLogList logs={logs} />
@@ -728,22 +733,22 @@ export function DeviceDetailPanel({
 
       {activeTab === "workspaces" ? (
         <DataNotice
-          description="Device-linked workspace attachment is not configured for this resource yet."
-          title={workspaces > 0 ? `${workspaces} workspaces available` : "No workspaces attached"}
+          description={tr("devices.detail.workspaceDescription")}
+          title={workspaces > 0 ? tr("devices.detail.workspaceCount", { count: workspaces }) : tr("devices.detail.workspaceNone")}
         />
       ) : null}
 
       {activeTab === "thin" ? (
         <DataNotice
-          description="Thin clients are shown globally until per-device linking is implemented."
-          title={thinClients > 0 ? `${thinClients} thin clients online or registered` : "No thin clients linked"}
+          description={tr("devices.detail.thinDescription")}
+          title={thinClients > 0 ? tr("devices.detail.thinCount", { count: thinClients }) : tr("devices.detail.thinNone")}
         />
       ) : null}
 
       {activeTab === "audit" ? (
         <>
           <div className="recent-head no-border">
-            <h3>Device Audit</h3>
+            <h3>{tr("devices.detail.audit")}</h3>
           </div>
           <ConnectionLogList logs={logs} />
         </>
@@ -751,7 +756,7 @@ export function DeviceDetailPanel({
 
       <div className="detail-actions">
         <Button disabled={isTesting} onClick={() => onTestConnection(selected.id)} type="button">
-          <RefreshCw size={17} /> {isTesting ? "Testing..." : "Test Connection"}
+          <RefreshCw size={17} /> {isTesting ? tr("common.actions.testing") : tr("devices.detail.testConnection")}
         </Button>
         <Button
           onClick={() => {
@@ -760,23 +765,23 @@ export function DeviceDetailPanel({
           }}
           type="button"
         >
-          <Edit3 size={17} /> Edit
+          <Edit3 size={17} /> {tr("common.actions.edit")}
         </Button>
         <Button disabled={isDeleting} onClick={() => setShowDeleteConfirm(true)} variant="danger" type="button">
-          <Trash2 size={17} /> Delete
+          <Trash2 size={17} /> {tr("common.actions.delete")}
         </Button>
       </div>
 
       {showDeleteConfirm ? (
         <div className="modal-backdrop" role="presentation">
           <div aria-modal="true" className="confirm-modal" role="dialog" aria-labelledby="delete-device-title">
-            <h3 id="delete-device-title">Delete SSH device?</h3>
+            <h3 id="delete-device-title">{tr("devices.detail.deleteTitle")}</h3>
             <p>
-              This will remove {selected.name} from the gateway and revoke its stored credential reference.
+              {tr("devices.detail.deleteDescription", { name: selected.name })}
             </p>
             <div className="confirm-actions">
               <Button onClick={() => setShowDeleteConfirm(false)} type="button">
-                Cancel
+                {tr("common.actions.cancel")}
               </Button>
               <Button
                 disabled={isDeleting}
@@ -787,7 +792,7 @@ export function DeviceDetailPanel({
                 type="button"
                 variant="danger"
               >
-                {isDeleting ? "Deleting..." : "Delete device"}
+                {isDeleting ? tr("devices.detail.deleting") : tr("devices.detail.deleteDevice")}
               </Button>
             </div>
           </div>
@@ -827,7 +832,7 @@ export function DockerWorkspaceGrid({
   editDescription,
   editName,
   editingWorkspaceId,
-  emptyMessage = "No Docker workspaces yet.",
+  emptyMessage = tr("workspaces.empty"),
   errorMessage,
   isLoading = false,
   onBeginEdit,
@@ -856,14 +861,14 @@ export function DockerWorkspaceGrid({
   workspaces: GatewayWorkspace[];
 } & GatewayDataStateProps) {
   if (isLoading) {
-    return <DataNotice state="loading" title="Loading Docker workspaces..." />;
+    return <DataNotice state="loading" title={tr("workspaces.loading")} />;
   }
   if (errorMessage) {
     return (
       <DataNotice
         description={errorMessage}
         state="error"
-        title="Docker workspaces unavailable"
+        title={tr("workspaces.unavailable")}
       />
     );
   }
@@ -880,7 +885,7 @@ export function DockerWorkspaceGrid({
             <Box size={22} />
             {isEditing ? (
               <input
-                aria-label="Workspace name"
+                aria-label={tr("workspaces.name")}
                 className="workspace-title-input"
                 onChange={(event) => onEditName(event.target.value)}
                 value={editName}
@@ -891,10 +896,10 @@ export function DockerWorkspaceGrid({
             <p>{workspace.image}</p>
             {isEditing ? (
               <textarea
-                aria-label="Workspace description"
+                aria-label={tr("workspaces.description")}
                 className="workspace-description-input"
                 onChange={(event) => onEditDescription(event.target.value)}
-                placeholder="Optional context for this container"
+                placeholder={tr("workspaces.optionalDescription")}
                 rows={3}
                 value={editDescription}
               />
@@ -915,27 +920,27 @@ export function DockerWorkspaceGrid({
                     type="button"
                     variant="solid"
                   >
-                    Save
+                    {tr("common.actions.save")}
                   </Button>
                   <Button onClick={onCancelEdit} type="button">
-                    Cancel
+                    {tr("common.actions.cancel")}
                   </Button>
                 </>
               ) : (
                 <>
                   <Button onClick={() => onBeginEdit(workspace)} type="button">
-                    <Edit3 size={16} /> Edit
+                    <Edit3 size={16} /> {tr("common.actions.edit")}
                   </Button>
                   <Button onClick={() => onClone(workspace.id)} type="button">
-                    <Copy size={16} /> Clone
+                    <Copy size={16} /> {tr("common.actions.clone")}
                   </Button>
                   {isRunning ? (
                     <Button onClick={() => onStop(workspace.id)} type="button">
-                      <PauseCircle size={16} /> Freeze
+                      <PauseCircle size={16} /> {tr("common.actions.freeze")}
                     </Button>
                   ) : (
                     <Button onClick={() => onStart(workspace.id)} type="button">
-                      <PlayCircle size={16} /> Resume
+                      <PlayCircle size={16} /> {tr("common.actions.resume")}
                     </Button>
                   )}
                   <Button
@@ -943,7 +948,7 @@ export function DockerWorkspaceGrid({
                     type="button"
                     variant="danger"
                   >
-                    <Trash2 size={16} /> Delete
+                    <Trash2 size={16} /> {tr("common.actions.delete")}
                   </Button>
                 </>
               )}
@@ -957,7 +962,7 @@ export function DockerWorkspaceGrid({
 
 export function ThinClientPanel({
   clientCommand,
-  emptyMessage = "No thin clients registered yet.",
+  emptyMessage = tr("thinClients.empty"),
   errorMessage,
   isLoading = false,
   onDelete,
@@ -972,10 +977,10 @@ export function ThinClientPanel({
   );
   const copyLabel =
     copyState === "copied"
-      ? "Copied"
+      ? tr("common.actions.copied")
       : copyState === "failed"
-        ? "Copy failed"
-        : "Copy";
+        ? tr("common.actions.copyFailed")
+        : tr("common.actions.copy");
 
   async function copyClientCommand() {
     try {
@@ -990,9 +995,9 @@ export function ThinClientPanel({
     <>
       <div className="command-panel">
         <div className="command-panel-head">
-          <strong>Install command</strong>
+          <strong>{tr("thinClients.installCommand")}</strong>
           <Button
-            aria-label={`${copyLabel} thin client install command`}
+            aria-label={tr("thinClients.copyCommand", { action: copyLabel })}
             onClick={copyClientCommand}
             type="button"
           >
@@ -1002,12 +1007,12 @@ export function ThinClientPanel({
         <CommandBox selectable>{clientCommand}</CommandBox>
       </div>
       {isLoading ? (
-        <DataNotice state="loading" title="Loading thin clients..." />
+        <DataNotice state="loading" title={tr("thinClients.loading")} />
       ) : errorMessage ? (
         <DataNotice
           description={errorMessage}
           state="error"
-          title="Thin clients unavailable"
+          title={tr("thinClients.unavailable")}
         />
       ) : thinClients.length === 0 ? (
         <DataNotice title={emptyMessage} />
@@ -1026,12 +1031,12 @@ export function ThinClientPanel({
                 <StatusPill status={client.status} />
                 <div className="workspace-actions">
                   <Button
-                    aria-label={`Delete thin client ${client.hostname}`}
+                    aria-label={tr("thinClients.deleteClient", { hostname: client.hostname })}
                     onClick={() => onDelete(client.id)}
                     type="button"
                     variant="danger"
                   >
-                    <Trash2 size={16} /> Delete
+                    <Trash2 size={16} /> {tr("common.actions.delete")}
                   </Button>
                 </div>
               </ResourceCard>
@@ -1070,7 +1075,7 @@ async function copyTextToClipboard(text: string) {
 }
 
 export function AccessGrantsTable({
-  emptyMessage = "No ChatGPT access grants yet.",
+  emptyMessage = tr("access.empty"),
   errorMessage,
   isLoading = false,
   grants,
@@ -1082,10 +1087,10 @@ export function AccessGrantsTable({
       <table>
         <thead>
           <tr>
-            <th>Grantee</th>
-            <th>Resource</th>
-            <th>Scopes</th>
-            <th>Status</th>
+            <th>{tr("access.grantee")}</th>
+            <th>{tr("common.fields.resource")}</th>
+            <th>{tr("common.fields.scopes")}</th>
+            <th>{tr("common.fields.status")}</th>
           </tr>
         </thead>
         <tbody>
@@ -1093,13 +1098,13 @@ export function AccessGrantsTable({
             <TableNoticeRow
               colSpan={4}
               state="loading"
-              title="Loading access grants..."
+              title={tr("access.loading")}
             />
           ) : errorMessage ? (
             <TableNoticeRow
               colSpan={4}
               state="error"
-              title="Access grants unavailable"
+              title={tr("access.unavailable")}
               description={errorMessage}
             />
           ) : grants.length === 0 ? (
@@ -1126,7 +1131,7 @@ export function AccessGrantsTable({
 
 export function AuditEventsTable({
   audit,
-  emptyMessage = "No audit events recorded yet.",
+  emptyMessage = tr("audit.empty"),
   errorMessage,
   isLoading = false,
 }: {
@@ -1137,10 +1142,10 @@ export function AuditEventsTable({
       <table>
         <thead>
           <tr>
-            <th>Time</th>
-            <th>Event</th>
-            <th>Actor</th>
-            <th>Status</th>
+            <th>{tr("common.fields.time")}</th>
+            <th>{tr("common.fields.event")}</th>
+            <th>{tr("common.fields.actor")}</th>
+            <th>{tr("common.fields.status")}</th>
           </tr>
         </thead>
         <tbody>
@@ -1148,13 +1153,13 @@ export function AuditEventsTable({
             <TableNoticeRow
               colSpan={4}
               state="loading"
-              title="Loading audit events..."
+              title={tr("audit.loading")}
             />
           ) : errorMessage ? (
             <TableNoticeRow
               colSpan={4}
               state="error"
-              title="Audit events unavailable"
+              title={tr("audit.unavailable")}
               description={errorMessage}
             />
           ) : audit.length === 0 ? (
@@ -1178,7 +1183,7 @@ export function AuditEventsTable({
 }
 
 export function MonitoringSessionsPanel({
-  emptyMessage = "No command sessions yet.",
+  emptyMessage = tr("monitoring.empty"),
   errorMessage,
   fileChanges,
   fileChangesErrorMessage,
@@ -1227,27 +1232,27 @@ export function MonitoringSessionsPanel({
       <div className="monitoring-main-column">
         <div className="monitoring-sessions-panel">
           <div className="monitoring-panel-title">
-            <strong>Command sessions</strong>
-            <span className="muted">{sessions.length} sessions</span>
+            <strong>{tr("monitoring.sessions")}</strong>
+            <span className="muted">{tr("monitoring.sessionCount", { count: sessions.length })}</span>
           </div>
           <TableFrame compact>
             <table>
               <thead>
                 <tr>
-                  <th>Status</th>
-                  <th>Origin</th>
-                  <th>Resource</th>
-                  <th>Command</th>
-                  <th>Lines</th>
-                  <th>Updated</th>
+                  <th>{tr("common.fields.status")}</th>
+                  <th>{tr("common.fields.origin")}</th>
+                  <th>{tr("common.fields.resource")}</th>
+                  <th>{tr("common.fields.command")}</th>
+                  <th>{tr("common.fields.lines")}</th>
+                  <th>{tr("common.fields.updated")}</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {isLoading ? (
-                  <TableNoticeRow colSpan={7} state="loading" title="Loading command sessions..." />
+                  <TableNoticeRow colSpan={7} state="loading" title={tr("monitoring.loadingSessions")} />
                 ) : errorMessage ? (
-                  <TableNoticeRow colSpan={7} state="error" title="Command sessions unavailable" description={errorMessage} />
+                  <TableNoticeRow colSpan={7} state="error" title={tr("monitoring.sessionsUnavailable")} description={errorMessage} />
                 ) : sessions.length === 0 ? (
                   <TableNoticeRow colSpan={7} state="empty" title={emptyMessage} />
                 ) : (
@@ -1272,10 +1277,10 @@ export function MonitoringSessionsPanel({
                       <td>{new Date(session.updated_at).toLocaleTimeString()}</td>
                       <td className="session-actions">
                         <Button disabled={!isRunningStatus(session.status)} onClick={(event) => { event.stopPropagation(); onTerminate(session.id); }} type="button">
-                          <PauseCircle size={16} /> Stop
+                          <PauseCircle size={16} /> {tr("common.actions.stop")}
                         </Button>
                         <Button disabled={!isRunningStatus(session.status)} onClick={(event) => { event.stopPropagation(); onForceTerminate(session.id); }} type="button" variant="danger">
-                          <Trash2 size={16} /> Kill
+                          <Trash2 size={16} /> {tr("common.actions.kill")}
                         </Button>
                       </td>
                     </tr>
@@ -1286,11 +1291,11 @@ export function MonitoringSessionsPanel({
           </TableFrame>
           {!isLoading && !errorMessage && sessions.length > 0 ? (
             <div className="pager monitoring-pager">
-              <span>Rows per page:</span>
+              <span>{tr("common.rowsPerPage")}</span>
               <Button type="button">{rowsPerPage}</Button>
               <span className="spacer" />
-              <span>{pageStart + 1}-{pageEnd} of {sessions.length}</span>
-              <IconButton aria-label="Previous command sessions page" disabled={safePage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">
+              <span>{tr("common.range", { start: pageStart + 1, end: pageEnd, total: sessions.length })}</span>
+              <IconButton aria-label={tr("monitoring.previousSessionsPage")} disabled={safePage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">
                 <ChevronLeft size={16} />
               </IconButton>
               {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
@@ -1298,7 +1303,7 @@ export function MonitoringSessionsPanel({
                   {pageNumber}
                 </Button>
               ))}
-              <IconButton aria-label="Next command sessions page" disabled={safePage >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} type="button">
+              <IconButton aria-label={tr("monitoring.nextSessionsPage")} disabled={safePage >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} type="button">
                 <ChevronRight size={16} />
               </IconButton>
             </div>
@@ -1310,7 +1315,7 @@ export function MonitoringSessionsPanel({
       <div className="monitoring-output-panel terminal-output-panel">
         <div className="panel-heading session-heading">
           <div className="session-title-block">
-            <strong>{selected ? selected.name ?? selected.command : "Session output"}</strong>
+            <strong>{selected ? selected.name ?? selected.command : tr("monitoring.sessionOutput")}</strong>
             {selected ? (
               <span className="muted">
                 {originLabel(selected.origin)} · {sessionResourceLabel(selected)}
@@ -1320,19 +1325,19 @@ export function MonitoringSessionsPanel({
           {selected ? <StatusPill status={selected.status} /> : null}
         </div>
         {outputIsLoading ? (
-          <DataNotice state="loading" title="Loading output..." />
+          <DataNotice state="loading" title={tr("monitoring.loadingOutput")} />
         ) : outputErrorMessage ? (
-          <DataNotice state="error" title="Output unavailable" description={outputErrorMessage} />
+          <DataNotice state="error" title={tr("monitoring.outputUnavailable")} description={outputErrorMessage} />
         ) : !output || output.lines.length === 0 ? (
-          <DataNotice title="No output captured yet." />
+          <DataNotice title={tr("monitoring.noOutput")} />
         ) : (
           <div className="session-output selectable">
             {output.lines.map((line) => (
               <div className={`output-line ${line.stream}`} key={line.line}>
                 <span className="line-number">{line.line}</span>
                 <span className="line-markers">
-                  {line.auto_sent ? <span className="context-badge auto">auto</span> : null}
-                  {line.agent_requested ? <span className="context-badge requested">agent</span> : null}
+                  {line.auto_sent ? <span className="context-badge auto">{tr("monitoring.auto")}</span> : null}
+                  {line.agent_requested ? <span className="context-badge requested">{tr("monitoring.agent")}</span> : null}
                 </span>
                 <code>{line.text}</code>
               </div>
@@ -1340,9 +1345,9 @@ export function MonitoringSessionsPanel({
           </div>
         )}
         <div className="tool-history">
-          <strong>Agent tool history</strong>
+          <strong>{tr("monitoring.agentToolHistory")}</strong>
           {toolCalls.length === 0 ? (
-            <span className="muted">No tool calls linked to this session.</span>
+            <span className="muted">{tr("monitoring.noToolCalls")}</span>
           ) : (
             toolCalls.map((call) => (
               <div className="tool-call-row" key={call.id}>
@@ -1358,15 +1363,15 @@ export function MonitoringSessionsPanel({
 
       <div className="file-changes-panel">
         <div className="panel-heading">
-          <strong>Recent file changes</strong>
-          <span className="muted">{fileChanges.length} changes</span>
+          <strong>{tr("monitoring.recentFileChanges")}</strong>
+          <span className="muted">{tr("monitoring.changeCount", { count: fileChanges.length })}</span>
         </div>
         {fileChangesIsLoading ? (
-          <DataNotice state="loading" title="Loading file changes..." />
+          <DataNotice state="loading" title={tr("monitoring.loadingChanges")} />
         ) : fileChangesErrorMessage ? (
-          <DataNotice state="error" title="File changes unavailable" description={fileChangesErrorMessage} />
+          <DataNotice state="error" title={tr("monitoring.changesUnavailable")} description={fileChangesErrorMessage} />
         ) : fileChanges.length === 0 ? (
-          <DataNotice title="No file changes recorded yet." />
+          <DataNotice title={tr("monitoring.noChanges")} />
         ) : (
           <div className="file-change-list">
             {fileChanges.map((change) => (
@@ -1376,11 +1381,11 @@ export function MonitoringSessionsPanel({
                     <strong>{change.path}</strong>
                     <span>{change.operation} · {change.origin}</span>
                   </div>
-                  <div className="diff-stats" aria-label={`Diff stats for ${change.path}`}>
+                  <div className="diff-stats" aria-label={tr("monitoring.diffStats", { path: change.path })}>
                     <span className="diff-added">+{change.added_lines}</span>
                     <span className="diff-removed">-{change.removed_lines}</span>
-                    {change.truncated ? <span className="context-badge requested">truncated</span> : null}
-                    {change.suppressed ? <span className="context-badge auto">suppressed</span> : null}
+                    {change.truncated ? <span className="context-badge requested">{tr("monitoring.truncated")}</span> : null}
+                    {change.suppressed ? <span className="context-badge auto">{tr("monitoring.suppressed")}</span> : null}
                   </div>
                 </header>
                 <FileDiffView change={change} />
@@ -1398,15 +1403,15 @@ function FileDiffView({ change }: { change: GatewayFileChange }) {
   if (!diff || diff.suppressed) {
     return (
       <div className="diff-suppressed">
-        Diff content suppressed{diff?.reason ? `: ${diff.reason}` : "."}
+        {tr("monitoring.diffSuppressed", { reason: diff?.reason ? `: ${diff.reason}` : "." })}
       </div>
     );
   }
   if (!diff.hunks.length) {
-    return <div className="diff-suppressed">No visible line changes.</div>;
+    return <div className="diff-suppressed">{tr("monitoring.noVisibleChanges")}</div>;
   }
   return (
-    <pre className="diff-view selectable" aria-label={`Diff for ${change.path}`}>
+    <pre className="diff-view selectable" aria-label={tr("monitoring.diffFor", { path: change.path })}>
       {diff.hunks.map((hunk, hunkIndex) => (
         <div className="diff-hunk" key={`${change.id}-${hunkIndex}`}>
           <div className="diff-line diff-header">
@@ -1431,12 +1436,12 @@ function diffPrefix(kind: GatewayFileChangeDiffLine["kind"]) {
 }
 
 function sshReadinessLabel(status: string) {
-  if (status === "verified") return "MCP ready";
-  if (status === "reachable") return "TCP only";
-  if (status === "host_key_untrusted") return "Host key untrusted";
-  if (status === "auth_failed") return "Auth failed";
-  if (status === "unreachable") return "Unreachable";
-  return "Needs test";
+  if (status === "verified") return tr("devices.readiness.mcpReady");
+  if (status === "reachable") return tr("devices.readiness.tcpOnly");
+  if (status === "host_key_untrusted") return tr("devices.readiness.hostKeyUntrusted");
+  if (status === "auth_failed") return tr("devices.readiness.authFailed");
+  if (status === "unreachable") return tr("devices.readiness.unreachable");
+  return tr("devices.readiness.needsTest");
 }
 
 function sshReadinessClass(status: string) {
@@ -1447,20 +1452,18 @@ function sshReadinessClass(status: string) {
 }
 
 function sshMcpToolSummary(status: string) {
-  if (status === "verified") {
-    return "ssh_device_info, ssh_device_check_connection and allowlisted SSH actions are ready.";
-  }
-  if (status === "auth_failed") return "Credentials need attention before SSH actions can run.";
-  if (status === "host_key_untrusted") return "The server fingerprint is not pinned; SSH actions are blocked.";
-  if (status === "unreachable") return "Host is unreachable; SSH actions are blocked.";
-  return "Run Test Connection to verify backend-side SSH authentication.";
+  if (status === "verified") return tr("devices.mcp.readyDetail");
+  if (status === "auth_failed") return tr("devices.mcp.credentialsAttention");
+  if (status === "host_key_untrusted") return tr("devices.mcp.fingerprintBlocked");
+  if (status === "unreachable") return tr("devices.mcp.hostBlocked");
+  return tr("devices.mcp.runTest");
 }
 
 function originLabel(origin: string) {
-  if (origin === "ssh") return "SSH host";
-  if (origin === "thin_client") return "Thin client";
-  if (origin === "docker") return "Docker";
-  if (origin === "server") return "Server";
+  if (origin === "ssh") return tr("monitoring.origins.sshHost");
+  if (origin === "thin_client") return tr("monitoring.origins.thinClient");
+  if (origin === "docker") return tr("monitoring.origins.docker");
+  if (origin === "server") return tr("monitoring.origins.server");
   return origin;
 }
 

@@ -19,6 +19,7 @@ class UserOut(OrmModel):
 
 
 class AccountSettingsOut(BaseModel):
+    ui_language: Literal["en", "ru"]
     ssh_command_profile: Literal["restricted", "filtered", "unrestricted"]
     ssh_command_profile_override: Literal["restricted", "filtered", "unrestricted"] | None = None
     ssh_command_profile_default: Literal["restricted", "filtered", "unrestricted"]
@@ -27,7 +28,8 @@ class AccountSettingsOut(BaseModel):
 
 
 class AccountSettingsUpdate(BaseModel):
-    ssh_command_profile: Literal["inherit", "restricted", "filtered", "unrestricted"]
+    ui_language: Literal["en", "ru"] | None = None
+    ssh_command_profile: Literal["inherit", "restricted", "filtered", "unrestricted"] | None = None
 
 
 class DeviceCreate(BaseModel):

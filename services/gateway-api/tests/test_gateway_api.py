@@ -68,12 +68,24 @@ def test_account_ssh_command_profile_defaults_and_override(client: TestClient) -
     current = client.get("/api/account/settings")
     assert current.status_code == 200
     assert current.json() == {
+        "ui_language": "en",
         "ssh_command_profile": "unrestricted",
         "ssh_command_profile_override": None,
         "ssh_command_profile_default": "unrestricted",
         "raw_commands_enabled": True,
         "deny_patterns_enabled": False,
     }
+
+    russian = client.patch(
+        "/api/account/settings",
+        json={"ui_language": "ru"},
+    )
+    assert russian.status_code == 200
+    assert russian.json()["ui_language"] == "ru"
+    assert russian.json()["ssh_command_profile"] == "unrestricted"
+    persisted = client.get("/api/account/settings")
+    assert persisted.status_code == 200
+    assert persisted.json()["ui_language"] == "ru"
 
     restricted = client.patch(
         "/api/account/settings",
@@ -5450,14 +5462,14 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert health.json() == {
         "status": "ok",
         "service": "gateway-api",
-        "version": "0.3.4",
+        "version": "0.3.5",
         "revision": "",
         "slot": "local",
     }
     ready = client.get("/ready")
     assert ready.status_code == 200
     readiness = ready.json()
-    assert readiness["release_version"] == "0.3.4"
+    assert readiness["release_version"] == "0.3.5"
     assert readiness["release_revision"] == ""
     assert readiness["deployment_slot"] == "local"
 

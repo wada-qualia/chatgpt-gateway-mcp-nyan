@@ -1,0 +1,600 @@
+import i18n from 'i18next';
+import { initReactI18next } from 'react-i18next';
+
+export const supportedLanguages = ['en', 'ru'] as const;
+export type UiLanguage = (typeof supportedLanguages)[number];
+
+const resources = {
+  en: {
+    translation: {
+      brand: 'ChatGPT MCP SSH Gateway',
+      nav: {
+        devices: 'Devices',
+        workspaces: 'Docker Workspaces',
+        thinClients: 'Thin Clients',
+        monitoring: 'Monitoring',
+        access: 'ChatGPT Access',
+        audit: 'Audit',
+        settings: 'Settings',
+        collapse: 'Collapse'
+      },
+      common: {
+        actions: {
+          add: 'Add',
+          cancel: 'Cancel',
+          clone: 'Clone',
+          close: 'Close',
+          copy: 'Copy',
+          copied: 'Copied',
+          copyFailed: 'Copy failed',
+          create: 'Create',
+          delete: 'Delete',
+          edit: 'Edit',
+          freeze: 'Freeze',
+          kill: 'Kill',
+          refresh: 'Refresh',
+          resume: 'Resume',
+          save: 'Save',
+          saving: 'Saving...',
+          stop: 'Stop',
+          test: 'Test',
+          testing: 'Testing...',
+          viewAll: 'View all'
+        },
+        fields: {
+          actor: 'Actor',
+          auth: 'Auth',
+          command: 'Command',
+          directory: 'Directory',
+          event: 'Event',
+          hostname: 'Hostname',
+          ipAddress: 'IP Address',
+          lines: 'Lines',
+          origin: 'Origin',
+          port: 'Port',
+          resource: 'Resource',
+          scopes: 'Scopes',
+          status: 'Status',
+          time: 'Time',
+          updated: 'Updated',
+          user: 'User'
+        },
+        loading: 'Loading...',
+        unknown: 'unknown',
+        linked: 'Linked',
+        notAvailable: 'Unavailable',
+        rowsPerPage: 'Rows per page:',
+        range: '{{start}}-{{end}} of {{total}}',
+        previousPage: 'Previous page',
+        nextPage: 'Next page'
+      },
+      auth: {
+        loadingUser: 'Loading SSO user',
+        noSession: 'No SSO session',
+        signIn: 'Sign in with Keycloak',
+        noEmail: 'No email from SSO'
+      },
+      devices: {
+        title: 'Devices',
+        search: 'Search devices...',
+        filters: 'Filters',
+        count_one: '{{count}} device',
+        count_other: '{{count}} devices',
+        empty: 'No devices registered yet.',
+        noMatch: 'No devices match the current search.',
+        lastSeenTwoMinutes: '2m ago',
+        loading: 'Loading devices...',
+        unavailable: 'Devices unavailable',
+        selectAll: 'Select all devices',
+        select: 'Select {{name}}',
+        table: {
+          sshReady: 'SSH Ready',
+          lastSeen: 'Last Seen',
+          ssoLinked: 'SSO Linked'
+        },
+        auth: {
+          password: 'Password',
+          key: 'SSH Key',
+          shortKey: 'Key',
+          method: 'Auth method'
+        },
+        readiness: {
+          ready: 'Ready',
+          mcpReady: 'MCP ready',
+          tcpOnly: 'TCP only',
+          hostKeyUntrusted: 'Host key untrusted',
+          authFailed: 'Auth failed',
+          unreachable: 'Unreachable',
+          needsTest: 'Needs test',
+          unavailable: 'Unavailable'
+        },
+        form: {
+          title: 'New SSH device',
+          close: 'Close form',
+          secret: 'Secret',
+          privateKey: 'Private key',
+          accessScope: 'Access scope',
+          engineers: 'K-Lab Engineers',
+          connector: 'ChatGPT Connector',
+          add: 'Add device',
+          enterTarget: 'Enter SSH target in user@host:port format.',
+          enterPassword: 'Enter SSH password.',
+          enterPrivateKey: 'Paste SSH private key.'
+        },
+        detail: {
+          noneTitle: 'No device selected',
+          noneDescription: 'Register an SSH device or wait for the devices API to return data.',
+          close: 'Close details',
+          aria: 'Device details',
+          overview: 'Overview',
+          workspaces: 'Workspaces ({{count}})',
+          thinClients: 'Thin Clients ({{count}})',
+          deviceName: 'Device name',
+          sshTarget: 'SSH target',
+          newSecret: 'New secret',
+          keepSecret: 'Leave empty to keep current credential',
+          os: 'OS',
+          sshReadiness: 'SSH Readiness',
+          mcpTools: 'MCP Tools',
+          authMethod: 'Auth Method',
+          accessScope: 'Access Scope',
+          ssoLinked: 'SSO Linked',
+          recentLogs: 'Recent Connection Logs',
+          workspaceNone: 'No workspaces attached',
+          workspaceCount: '{{count}} workspaces available',
+          workspaceDescription: 'Device-linked workspace attachment is not configured for this resource yet.',
+          thinNone: 'No thin clients linked',
+          thinCount: '{{count}} thin clients online or registered',
+          thinDescription: 'Thin clients are shown globally until per-device linking is implemented.',
+          audit: 'Device Audit',
+          testConnection: 'Test Connection',
+          deleteTitle: 'Delete SSH device?',
+          deleteDescription: 'This will remove {{name}} from the gateway and revoke its stored credential reference.',
+          deleteDevice: 'Delete device',
+          deleting: 'Deleting...'
+        },
+        logs: {
+          ssoLogin: 'SSO login',
+          sshSession: 'SSH session',
+          authFailed: 'Auth failed'
+        },
+        mcp: {
+          ready: 'All SSH MCP tools available',
+          needsTest: 'Connection test required',
+          unavailable: 'SSH MCP tools unavailable',
+          readyDetail: 'ssh_device_info, ssh_device_check_connection and allowlisted SSH actions are ready.',
+          credentialsAttention: 'Credentials need attention before SSH actions can run.',
+          fingerprintBlocked: 'The server fingerprint is not pinned; SSH actions are blocked.',
+          hostBlocked: 'Host is unreachable; SSH actions are blocked.',
+          runTest: 'Run Test Connection to verify backend-side SSH authentication.'
+        }
+      },
+      workspaces: {
+        title: 'Docker Workspaces',
+        createUbuntu: 'Create Ubuntu',
+        empty: 'No Docker workspaces yet.',
+        loading: 'Loading Docker workspaces...',
+        unavailable: 'Docker workspaces unavailable',
+        imageAllowlistLoading: 'Loading Docker image allowlist',
+        imagesUnavailable: 'Docker images unavailable',
+        noImages: 'No Docker images available from API',
+        imageListEmpty: 'Docker image list is empty. Configure allowlisted Ubuntu images first.',
+        enterName: 'Enter Docker workspace name.',
+        name: 'Workspace name',
+        description: 'Workspace description',
+        optionalDescription: 'Optional context for this container',
+        noCloneSource: 'No Docker workspace is available to clone.'
+      },
+      thinClients: {
+        title: 'Thin Clients',
+        issueCode: 'Issue device code',
+        empty: 'No thin clients registered yet.',
+        loading: 'Loading thin clients...',
+        unavailable: 'Thin clients unavailable',
+        installCommand: 'Install command',
+        copyCommand: '{{action}} thin client install command',
+        deleteClient: 'Delete thin client {{hostname}}'
+      },
+      monitoring: {
+        title: 'Monitoring',
+        empty: 'No command sessions yet.',
+        sessions: 'Command sessions',
+        sessionCount_one: '{{count}} session',
+        sessionCount_other: '{{count}} sessions',
+        loadingSessions: 'Loading command sessions...',
+        sessionsUnavailable: 'Command sessions unavailable',
+        previousSessionsPage: 'Previous command sessions page',
+        nextSessionsPage: 'Next command sessions page',
+        sessionOutput: 'Session output',
+        loadingOutput: 'Loading output...',
+        outputUnavailable: 'Output unavailable',
+        noOutput: 'No output captured yet.',
+        agentToolHistory: 'Agent tool history',
+        noToolCalls: 'No tool calls linked to this session.',
+        recentFileChanges: 'Recent file changes',
+        changeCount_one: '{{count}} change',
+        changeCount_other: '{{count}} changes',
+        loadingChanges: 'Loading file changes...',
+        changesUnavailable: 'File changes unavailable',
+        noChanges: 'No file changes recorded yet.',
+        diffStats: 'Diff stats for {{path}}',
+        diffFor: 'Diff for {{path}}',
+        diffSuppressed: 'Diff content suppressed{{reason}}',
+        noVisibleChanges: 'No visible line changes.',
+        auto: 'auto',
+        agent: 'agent',
+        truncated: 'truncated',
+        suppressed: 'suppressed',
+        origins: {
+          thinClient: 'Thin client',
+          sshHost: 'SSH host',
+          dockerWorkspace: 'Docker workspace',
+          docker: 'Docker',
+          server: 'Server',
+          gateway: 'Gateway'
+        }
+      },
+      access: {
+        title: 'ChatGPT Access',
+        empty: 'No ChatGPT access grants yet.',
+        loading: 'Loading access grants...',
+        unavailable: 'Access grants unavailable',
+        grantee: 'Grantee'
+      },
+      audit: {
+        title: 'Audit',
+        empty: 'No audit events recorded yet.',
+        loading: 'Loading audit events...',
+        unavailable: 'Audit events unavailable'
+      },
+      settings: {
+        title: 'Settings',
+        language: {
+          title: 'Interface language',
+          description: 'Choose the language used throughout the gateway interface.',
+          label: 'Language',
+          english: 'English',
+          russian: 'Russian'
+        },
+        ssh: {
+          title: 'SSH command security profile',
+          description: 'Controls whether ChatGPT may execute arbitrary commands on SSH devices registered to your account.',
+          profile: 'Profile',
+          inherit: 'Inherit system default ({{profile}})',
+          unrestricted: 'Unrestricted — allow any command',
+          filtered: 'Filtered — apply deny patterns',
+          restricted: 'Restricted — fixed actions only',
+          effective: 'Effective profile: {{profile}}.',
+          permissions: 'Commands execute with the permissions of the configured SSH user.'
+        },
+        loading: 'Loading account settings...'
+      },
+      status: {
+        online: 'Online',
+        running: 'Running',
+        active: 'Active',
+        success: 'Success',
+        completed: 'Completed',
+        reachable: 'Reachable',
+        verified: 'Verified',
+        pending: 'Pending',
+        stopped: 'Stopped',
+        frozen: 'Frozen',
+        disconnecting: 'Disconnecting',
+        registered: 'Registered',
+        failed: 'Failed',
+        error: 'Error',
+        offline: 'Offline',
+        unknown: 'Unknown'
+      }
+    }
+  },
+  ru: {
+    translation: {
+      brand: 'ChatGPT MCP SSH Gateway',
+      nav: {
+        devices: 'Устройства',
+        workspaces: 'Docker-окружения',
+        thinClients: 'Тонкие клиенты',
+        monitoring: 'Мониторинг',
+        access: 'Доступ ChatGPT',
+        audit: 'Аудит',
+        settings: 'Настройки',
+        collapse: 'Свернуть'
+      },
+      common: {
+        actions: {
+          add: 'Добавить',
+          cancel: 'Отмена',
+          clone: 'Клонировать',
+          close: 'Закрыть',
+          copy: 'Копировать',
+          copied: 'Скопировано',
+          copyFailed: 'Ошибка копирования',
+          create: 'Создать',
+          delete: 'Удалить',
+          edit: 'Изменить',
+          freeze: 'Приостановить',
+          kill: 'Завершить принудительно',
+          refresh: 'Обновить',
+          resume: 'Возобновить',
+          save: 'Сохранить',
+          saving: 'Сохранение...',
+          stop: 'Остановить',
+          test: 'Проверить',
+          testing: 'Проверка...',
+          viewAll: 'Показать все'
+        },
+        fields: {
+          actor: 'Инициатор',
+          auth: 'Аутентификация',
+          command: 'Команда',
+          directory: 'Каталог',
+          event: 'Событие',
+          hostname: 'Имя хоста',
+          ipAddress: 'IP-адрес',
+          lines: 'Строки',
+          origin: 'Источник',
+          port: 'Порт',
+          resource: 'Ресурс',
+          scopes: 'Разрешения',
+          status: 'Статус',
+          time: 'Время',
+          updated: 'Обновлено',
+          user: 'Пользователь'
+        },
+        loading: 'Загрузка...',
+        unknown: 'неизвестно',
+        linked: 'Подключено',
+        notAvailable: 'Недоступно',
+        rowsPerPage: 'Строк на странице:',
+        range: '{{start}}–{{end}} из {{total}}',
+        previousPage: 'Предыдущая страница',
+        nextPage: 'Следующая страница'
+      },
+      auth: {
+        loadingUser: 'Загрузка пользователя SSO',
+        noSession: 'Нет сессии SSO',
+        signIn: 'Войти через Keycloak',
+        noEmail: 'SSO не передал email'
+      },
+      devices: {
+        title: 'Устройства',
+        search: 'Поиск устройств...',
+        filters: 'Фильтры',
+        count_one: '{{count}} устройство',
+        count_few: '{{count}} устройства',
+        count_many: '{{count}} устройств',
+        count_other: '{{count}} устройства',
+        empty: 'Устройства ещё не зарегистрированы.',
+        noMatch: 'Нет устройств, соответствующих поиску.',
+        lastSeenTwoMinutes: '2 мин назад',
+        loading: 'Загрузка устройств...',
+        unavailable: 'Устройства недоступны',
+        selectAll: 'Выбрать все устройства',
+        select: 'Выбрать {{name}}',
+        table: {
+          sshReady: 'Готовность SSH',
+          lastSeen: 'Последняя активность',
+          ssoLinked: 'Связь с SSO'
+        },
+        auth: {
+          password: 'Пароль',
+          key: 'SSH-ключ',
+          shortKey: 'Ключ',
+          method: 'Метод аутентификации'
+        },
+        readiness: {
+          ready: 'Готово',
+          mcpReady: 'MCP готов',
+          tcpOnly: 'Только TCP',
+          hostKeyUntrusted: 'Ключ хоста не подтверждён',
+          authFailed: 'Ошибка аутентификации',
+          unreachable: 'Недоступно',
+          needsTest: 'Нужна проверка',
+          unavailable: 'Недоступно'
+        },
+        form: {
+          title: 'Новое SSH-устройство',
+          close: 'Закрыть форму',
+          secret: 'Секрет',
+          privateKey: 'Приватный ключ',
+          accessScope: 'Область доступа',
+          engineers: 'Инженеры K-Lab',
+          connector: 'Коннектор ChatGPT',
+          add: 'Добавить устройство',
+          enterTarget: 'Введите SSH-адрес в формате user@host:port.',
+          enterPassword: 'Введите пароль SSH.',
+          enterPrivateKey: 'Вставьте приватный SSH-ключ.'
+        },
+        detail: {
+          noneTitle: 'Устройство не выбрано',
+          noneDescription: 'Зарегистрируйте SSH-устройство или дождитесь ответа API устройств.',
+          close: 'Закрыть сведения',
+          aria: 'Сведения об устройстве',
+          overview: 'Обзор',
+          workspaces: 'Окружения ({{count}})',
+          thinClients: 'Тонкие клиенты ({{count}})',
+          deviceName: 'Название устройства',
+          sshTarget: 'SSH-адрес',
+          newSecret: 'Новый секрет',
+          keepSecret: 'Оставьте пустым, чтобы сохранить текущие учётные данные',
+          os: 'ОС',
+          sshReadiness: 'Готовность SSH',
+          mcpTools: 'Инструменты MCP',
+          authMethod: 'Метод аутентификации',
+          accessScope: 'Область доступа',
+          ssoLinked: 'Связь с SSO',
+          recentLogs: 'Последние подключения',
+          workspaceNone: 'Нет привязанных окружений',
+          workspaceCount: 'Доступно окружений: {{count}}',
+          workspaceDescription: 'Привязка окружения к этому устройству пока не настроена.',
+          thinNone: 'Нет привязанных тонких клиентов',
+          thinCount: 'Тонких клиентов онлайн или зарегистрировано: {{count}}',
+          thinDescription: 'Пока не реализована привязка к устройствам, тонкие клиенты отображаются глобально.',
+          audit: 'Аудит устройства',
+          testConnection: 'Проверить соединение',
+          deleteTitle: 'Удалить SSH-устройство?',
+          deleteDescription: 'Устройство {{name}} будет удалено из gateway, а ссылка на сохранённые учётные данные будет отозвана.',
+          deleteDevice: 'Удалить устройство',
+          deleting: 'Удаление...'
+        },
+        logs: {
+          ssoLogin: 'Вход через SSO',
+          sshSession: 'SSH-сессия',
+          authFailed: 'Ошибка аутентификации'
+        },
+        mcp: {
+          ready: 'Все SSH-инструменты MCP доступны',
+          needsTest: 'Требуется проверка соединения',
+          unavailable: 'SSH-инструменты MCP недоступны',
+          readyDetail: 'ssh_device_info, ssh_device_check_connection и разрешённые SSH-действия готовы.',
+          credentialsAttention: 'Перед выполнением SSH-действий необходимо исправить учётные данные.',
+          fingerprintBlocked: 'Отпечаток сервера не закреплён; SSH-действия заблокированы.',
+          hostBlocked: 'Хост недоступен; SSH-действия заблокированы.',
+          runTest: 'Запустите проверку соединения для проверки SSH-аутентификации на стороне сервера.'
+        }
+      },
+      workspaces: {
+        title: 'Docker-окружения',
+        createUbuntu: 'Создать Ubuntu',
+        empty: 'Docker-окружений пока нет.',
+        loading: 'Загрузка Docker-окружений...',
+        unavailable: 'Docker-окружения недоступны',
+        imageAllowlistLoading: 'Загрузка разрешённого списка Docker-образов',
+        imagesUnavailable: 'Docker-образы недоступны',
+        noImages: 'API не вернул доступные Docker-образы',
+        imageListEmpty: 'Список Docker-образов пуст. Сначала настройте разрешённые образы Ubuntu.',
+        enterName: 'Введите название Docker-окружения.',
+        name: 'Название окружения',
+        description: 'Описание окружения',
+        optionalDescription: 'Необязательное описание контейнера',
+        noCloneSource: 'Нет Docker-окружения, доступного для клонирования.'
+      },
+      thinClients: {
+        title: 'Тонкие клиенты',
+        issueCode: 'Выпустить код устройства',
+        empty: 'Тонкие клиенты ещё не зарегистрированы.',
+        loading: 'Загрузка тонких клиентов...',
+        unavailable: 'Тонкие клиенты недоступны',
+        installCommand: 'Команда установки',
+        copyCommand: '{{action}} команду установки тонкого клиента',
+        deleteClient: 'Удалить тонкий клиент {{hostname}}'
+      },
+      monitoring: {
+        title: 'Мониторинг',
+        empty: 'Сессий выполнения команд пока нет.',
+        sessions: 'Сессии команд',
+        sessionCount_one: '{{count}} сессия',
+        sessionCount_few: '{{count}} сессии',
+        sessionCount_many: '{{count}} сессий',
+        sessionCount_other: '{{count}} сессии',
+        loadingSessions: 'Загрузка сессий команд...',
+        sessionsUnavailable: 'Сессии команд недоступны',
+        previousSessionsPage: 'Предыдущая страница сессий команд',
+        nextSessionsPage: 'Следующая страница сессий команд',
+        sessionOutput: 'Вывод сессии',
+        loadingOutput: 'Загрузка вывода...',
+        outputUnavailable: 'Вывод недоступен',
+        noOutput: 'Вывод пока не получен.',
+        agentToolHistory: 'История инструментов агента',
+        noToolCalls: 'С этой сессией не связаны вызовы инструментов.',
+        recentFileChanges: 'Последние изменения файлов',
+        changeCount_one: '{{count}} изменение',
+        changeCount_few: '{{count}} изменения',
+        changeCount_many: '{{count}} изменений',
+        changeCount_other: '{{count}} изменения',
+        loadingChanges: 'Загрузка изменений файлов...',
+        changesUnavailable: 'Изменения файлов недоступны',
+        noChanges: 'Изменений файлов пока нет.',
+        diffStats: 'Статистика изменений для {{path}}',
+        diffFor: 'Изменения файла {{path}}',
+        diffSuppressed: 'Содержимое diff скрыто{{reason}}',
+        noVisibleChanges: 'Нет видимых построчных изменений.',
+        auto: 'авто',
+        agent: 'агент',
+        truncated: 'усечено',
+        suppressed: 'скрыто',
+        origins: {
+          thinClient: 'Тонкий клиент',
+          sshHost: 'SSH-хост',
+          dockerWorkspace: 'Docker-окружение',
+          docker: 'Docker',
+          server: 'Сервер',
+          gateway: 'Gateway'
+        }
+      },
+      access: {
+        title: 'Доступ ChatGPT',
+        empty: 'Разрешения доступа ChatGPT ещё не выданы.',
+        loading: 'Загрузка разрешений доступа...',
+        unavailable: 'Разрешения доступа недоступны',
+        grantee: 'Получатель доступа'
+      },
+      audit: {
+        title: 'Аудит',
+        empty: 'События аудита ещё не зарегистрированы.',
+        loading: 'Загрузка событий аудита...',
+        unavailable: 'События аудита недоступны'
+      },
+      settings: {
+        title: 'Настройки',
+        language: {
+          title: 'Язык интерфейса',
+          description: 'Выберите язык всего интерфейса gateway.',
+          label: 'Язык',
+          english: 'Английский',
+          russian: 'Русский'
+        },
+        ssh: {
+          title: 'Профиль безопасности SSH-команд',
+          description: 'Определяет, может ли ChatGPT выполнять произвольные команды на SSH-устройствах вашей учётной записи.',
+          profile: 'Профиль',
+          inherit: 'Наследовать системное значение ({{profile}})',
+          unrestricted: 'Без ограничений — разрешить любые команды',
+          filtered: 'С фильтрацией — применять запрещающие шаблоны',
+          restricted: 'Ограниченный — только фиксированные действия',
+          effective: 'Действующий профиль: {{profile}}.',
+          permissions: 'Команды выполняются с правами настроенного SSH-пользователя.'
+        },
+        loading: 'Загрузка настроек аккаунта...'
+      },
+      status: {
+        online: 'Онлайн',
+        running: 'Выполняется',
+        active: 'Активно',
+        success: 'Успешно',
+        completed: 'Завершено',
+        reachable: 'Доступно',
+        verified: 'Проверено',
+        pending: 'Ожидание',
+        stopped: 'Остановлено',
+        frozen: 'Приостановлено',
+        disconnecting: 'Отключение',
+        registered: 'Зарегистрировано',
+        failed: 'Ошибка',
+        error: 'Ошибка',
+        offline: 'Офлайн',
+        unknown: 'Неизвестно'
+      }
+    }
+  }
+} as const;
+
+void i18n.use(initReactI18next).init({
+  resources,
+  lng: 'en',
+  fallbackLng: 'en',
+  supportedLngs: supportedLanguages,
+  interpolation: { escapeValue: false },
+  returnNull: false
+});
+
+if (typeof document !== 'undefined') {
+  document.documentElement.lang = i18n.resolvedLanguage ?? 'en';
+  i18n.on('languageChanged', (language) => {
+    document.documentElement.lang = language;
+  });
+}
+
+export default i18n;

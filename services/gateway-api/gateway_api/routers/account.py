@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..account_settings import (
+    account_settings_payload,
     set_ssh_command_profile_override,
-    ssh_command_settings_payload,
+    set_ui_language,
 )
 from ..auth import get_current_user
 from ..config import Settings, get_settings
@@ -22,7 +23,7 @@ async def get_account_settings(
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> AccountSettingsOut:
-    return AccountSettingsOut(**ssh_command_settings_payload(user, settings))
+    return AccountSettingsOut(**account_settings_payload(user, settings))
 
 
 @router.patch("/settings", response_model=AccountSettingsOut)
@@ -32,9 +33,23 @@ async def update_account_settings(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> AccountSettingsOut:
-    profile = None if payload.ssh_command_profile == "inherit" else payload.ssh_command_profile
-    set_ssh_command_profile_override(user, profile)
+    changed: dict[str, object] = {}
+
+    if "ssh_command_profile" in payload.model_fields_set:
+        profile = (
+            None
+            if payload.ssh_command_profile == "inherit"
+            else payload.ssh_command_profile
+        )
+        set_ssh_command_profile_override(user, profile)
+        changed["ssh_command_profile"] = profile or "inherit"
+
+    if "ui_language" in payload.model_fields_set and payload.ui_language is not None:
+        set_ui_language(user, payload.ui_language)
+        changed["ui_language"] = payload.ui_language
+
     db.add(user)
+    current = account_settings_payload(user, settings)
     emit_event(
         db,
         event_type="gateway.user.settings_updated.v1",
@@ -42,13 +57,9 @@ async def update_account_settings(
         action="settings_updated",
         resource_type="user",
         resource_id=user.subject,
-        payload={
-            "setting": "ssh_command_profile",
-            "override": profile,
-            "effective": ssh_command_settings_payload(user, settings)["ssh_command_profile"],
-        },
+        payload={"changed": changed, "effective": current},
         commit=False,
     )
     db.commit()
     db.refresh(user)
-    return AccountSettingsOut(**ssh_command_settings_payload(user, settings))
+    return AccountSettingsOut(**account_settings_payload(user, settings))

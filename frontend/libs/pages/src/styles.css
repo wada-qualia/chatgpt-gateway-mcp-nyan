@@ -44,6 +44,16 @@
   gap: 18px;
 }
 
+.settings-stack {
+  display: grid;
+  gap: 20px;
+  max-width: 760px;
+}
+
+.settings-stack .settings-card {
+  max-width: none;
+}
+
 .settings-card {
   background: #ffffff;
   border: 1px solid #dfe4ea;

@@ -813,6 +813,86 @@ def test_mcp_long_command_auto_backgrounds_and_can_be_read(client: TestClient) -
     assert {call["tool_name"] for call in history.json()} == {"run_cli_command"}
 
 
+def test_mcp_missing_command_working_directory_is_a_recorded_failure(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 46,
+            "method": "tools/call",
+            "params": {
+                "name": "run_cli_command",
+                "arguments": {
+                    "command": "pwd",
+                    "cwd": "products/sc-drive",
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["isError"] is True
+    structured = result["structuredContent"]
+    assert structured["status"] == "failed"
+    assert structured["exit_code"] == 127
+    assert "Unable to start command" in structured["output"]
+    assert "products/sc-drive" in structured["output"]
+
+    session = client.get(f"/api/command-sessions/{structured['session_id']}")
+    assert session.status_code == 200
+    assert session.json()["status"] == "failed"
+    assert session.json()["exit_code"] == 127
+
+
+def test_nats_publish_retries_an_ack_timeout_with_the_same_message_id() -> None:
+    from nats import errors as nats_errors
+
+    from gateway_api.broker import NatsJetStreamBroker
+    from gateway_api.config import Settings
+
+    class FakeJetStream:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def publish(self, subject: str, payload: bytes, **kwargs):
+            self.calls.append(
+                {"subject": subject, "payload": payload, **kwargs}
+            )
+            if len(self.calls) == 1:
+                raise nats_errors.TimeoutError
+            return type(
+                "Ack",
+                (),
+                {"stream": "GATEWAY_EVENTS", "seq": 42, "duplicate": True},
+            )()
+
+    settings = Settings(
+        gateway_nats_publish_retry_attempts=2,
+        gateway_nats_publish_retry_delay_seconds=0,
+    )
+    broker = NatsJetStreamBroker(settings, replica_id="test")
+    jetstream = FakeJetStream()
+    broker._jetstream = jetstream
+
+    ack = asyncio.run(
+        broker.publish(
+            "gateway.events.test.v1",
+            b"{}",
+            message_id="event-1",
+            headers={"traceparent": "trace-1"},
+        )
+    )
+
+    assert ack.sequence == 42
+    assert ack.duplicate is True
+    assert len(jetstream.calls) == 2
+    assert jetstream.calls[0]["headers"]["Nats-Msg-Id"] == "event-1"
+    assert jetstream.calls[1]["headers"]["Nats-Msg-Id"] == "event-1"
+
+
 def test_mcp_background_tails_and_termination(client: TestClient) -> None:
     response = client.post(
         "/mcp",

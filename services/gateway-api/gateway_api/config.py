@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     gateway_nats_servers: str = "nats://nats:4222"
     gateway_nats_stream: str = "GATEWAY_EVENTS"
     gateway_nats_subject_prefix: str = "gateway.events"
+    gateway_nats_request_timeout_seconds: float = 15.0
+    gateway_nats_publish_retry_attempts: int = 3
+    gateway_nats_publish_retry_delay_seconds: float = 0.25
     gateway_outbox_enabled: bool = True
     gateway_outbox_poll_interval_seconds: float = 0.5
     gateway_outbox_batch_size: int = 100

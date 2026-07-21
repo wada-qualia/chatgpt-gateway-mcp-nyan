@@ -351,17 +351,34 @@ class MonitoringService:
             meta=meta,
         )
         done = threading.Event()
-        process = subprocess.Popen(
-            args,
-            cwd=cwd if origin == "server" else None,
-            shell=isinstance(args, str),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            start_new_session=True,
-        )
+        try:
+            process = subprocess.Popen(
+                args,
+                cwd=cwd if origin == "server" else None,
+                shell=isinstance(args, str),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                start_new_session=True,
+            )
+        except OSError as exc:
+            error = f"Unable to start command: {exc}"
+            self.append_output(session.id, stream="stderr", text=f"{error}\n")
+            self.finish_session(
+                session.id,
+                status_value="failed",
+                exit_code=127,
+                meta={"error": str(exc), "error_type": type(exc).__name__},
+            )
+            return CommandRunResult(
+                session_id=session.id,
+                status="failed",
+                backgrounded=False,
+                exit_code=127,
+                output=error[: settings.max_output_chars],
+            )
         session.pid = str(process.pid)
         db.commit()
         with self._lock:

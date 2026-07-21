@@ -188,7 +188,9 @@ class NatsJetStreamBroker:
             reconnect_time_wait=1,
             max_reconnect_attempts=-1,
         )
-        self._jetstream = self._connection.jetstream(timeout=5)
+        self._jetstream = self._connection.jetstream(
+            timeout=max(1.0, float(self.settings.gateway_nats_request_timeout_seconds))
+        )
         try:
             await self._jetstream.stream_info(self.settings.gateway_nats_stream)
         except Exception as exc:
@@ -232,12 +234,27 @@ class NatsJetStreamBroker:
             raise RuntimeError("NATS JetStream broker is not connected")
         publish_headers = dict(headers)
         publish_headers["Nats-Msg-Id"] = message_id
-        ack = await self._jetstream.publish(
-            subject,
-            payload,
-            headers=publish_headers,
-            stream=self.settings.gateway_nats_stream,
-        )
+        from nats import errors as nats_errors
+
+        attempts = max(1, int(self.settings.gateway_nats_publish_retry_attempts))
+        for attempt in range(attempts):
+            try:
+                ack = await self._jetstream.publish(
+                    subject,
+                    payload,
+                    headers=publish_headers,
+                    stream=self.settings.gateway_nats_stream,
+                )
+                break
+            except nats_errors.TimeoutError:
+                if attempt + 1 >= attempts:
+                    raise
+                delay = max(
+                    0.0,
+                    float(self.settings.gateway_nats_publish_retry_delay_seconds),
+                ) * (2**attempt)
+                if delay:
+                    await asyncio.sleep(delay)
         return BrokerPublishAck(
             stream=getattr(ack, "stream", self.settings.gateway_nats_stream),
             sequence=getattr(ack, "seq", None),

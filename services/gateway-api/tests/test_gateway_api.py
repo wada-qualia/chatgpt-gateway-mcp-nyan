@@ -5562,6 +5562,7 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "nats",
         "gateway-blue",
         "gateway-green",
+        "candidate-router",
         "router",
     }.issubset(deployment["services"])
     assert (
@@ -5587,19 +5588,59 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
 
     deployment_script = root / "deploy" / "deploy-blue-green.sh"
     smoke_script = root / "deploy" / "smoke.sh"
-    for script in (deployment_script, smoke_script):
+    submit_script = root / "scripts" / "submit-thin-client-compatibility.sh"
+    verifier = root / "deploy" / "verify-thin-client-compatibility.py"
+    evidence_generator = root / "scripts" / "generate-release-evidence.py"
+    for script in (deployment_script, smoke_script, submit_script, verifier, evidence_generator):
         assert script.stat().st_mode & 0o111
     script_text = deployment_script.read_text(encoding="utf-8")
     assert "RELEASE_VERSION" in script_text
-    assert "RELEASE_COMMIT" in script_text
     assert "chatgpt-gateway-nats" in script_text
     assert "active-slot" in script_text
+    assert "prepare <git-commit>" in script_text
+    assert "restart-candidate <git-commit>" in script_text
+    assert "verify-compatibility <git-commit>" in script_text
+    assert "promote <git-commit>" in script_text
+    assert "cleanup-candidate <git-commit>" in script_text
+    assert "deploy-blue-green.sh rollback" in script_text
+    assert "Signed thin-client compatibility report is missing" in script_text
+    assert "compatibility report predates the Jenkins candidate restart" in verifier.read_text(encoding="utf-8")
+    assert "Immutable image" in script_text
+    assert "Jenkins must transfer it before prepare" in script_text
+    assert "Candidate container image identity changed after prepare" in script_text
+    assert "Candidate image tag identity changed after prepare" in script_text
+    assert 'if [[ -n "${lock_dir:-}" ]]' in script_text
+
+    candidate_router = deployment["services"]["candidate-router"]
+    assert candidate_router["ports"] == [
+        "127.0.0.1:${GATEWAY_CANDIDATE_HTTP_PORT:-18036}:8080"
+    ]
+    assert candidate_router["volumes"] == [
+        "${DEPLOY_ROOT}/runtime/candidate-nginx:/etc/nginx/conf.d:ro"
+    ]
 
     jenkinsfile = (root / "Jenkinsfile").read_text(encoding="utf-8")
-    assert "Checkout exact GitHub prod" in jenkinsfile
-    assert "CD: MKS blue-green" in jenkinsfile
-    assert "RELEASE_VERSION" in jenkinsfile
-    assert "deploy/smoke.sh" in jenkinsfile
+    for stage in (
+        "Checkout exact GitHub prod",
+        "CI: tests and production image",
+        "Publish exact image and release to MKS",
+        "CD: prepare inactive slot",
+        "Candidate smoke",
+        "Thin-client reconnect exercise",
+        "Thin-client compatibility gate",
+        "CD: promote candidate",
+        "Post-deploy smoke",
+    ):
+        assert stage in jenkinsfile
+    assert "docker image save" in jenkinsfile
+    assert "gzip -1n" in jenkinsfile
+    assert "ssh-keygen -Y sign" in jenkinsfile
+    assert "Jenkins MKS credential does not match the pinned release signing key" in jenkinsfile
+    assert "restart-candidate" in jenkinsfile
+    assert "verify-compatibility" in jenkinsfile
+    assert "cleanup-candidate" in jenkinsfile
+    assert "deploy-blue-green.sh' rollback" in jenkinsfile
+    assert "bash deploy/smoke.sh https://gateway.example.com" in jenkinsfile
 
 
 def test_p0_registry_routes_are_published(client: TestClient) -> None:

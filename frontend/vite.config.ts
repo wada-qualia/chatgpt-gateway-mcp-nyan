@@ -16,6 +16,12 @@ export default defineConfig({
         './DockerWorkspaces': './src/features/docker/DockerWorkspacesRemote.tsx',
         './ThinClients': './src/features/thin-clients/ThinClientsRemote.tsx',
         './Monitoring': './src/features/monitoring/MonitoringRemote.tsx',
+        './ActivityRegistry': './src/features/activity/ActivityRegistryRemote.tsx',
+        './CollaborationRegistry': './src/features/collaboration/CollaborationRegistryRemote.tsx',
+        './CoordinationRegistry': './src/features/coordination/CoordinationRegistryRemote.tsx',
+        './AutonomyRegistry': './src/features/autonomy/AutonomyRegistryRemote.tsx',
+        './OperationsRegistry': './src/features/operations/OperationsRegistryRemote.tsx',
+        './AdministrationRegistry': './src/features/administration/AdministrationRegistryRemote.tsx',
         './ChatGPTAccess': './src/features/access/AccessRemote.tsx',
         './Audit': './src/features/audit/AuditRemote.tsx'
       },

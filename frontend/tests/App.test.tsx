@@ -421,6 +421,14 @@ test('dashboard sidebar navigation updates the route', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Docker Workspaces' }));
   expect(screen.getByTestId('location-probe')).toHaveTextContent('/workspaces');
   expect(await screen.findByRole('heading', { name: 'Docker Workspaces' })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Operations' }));
+  expect(screen.getByTestId('location-probe')).toHaveTextContent('/operations');
+  expect(await screen.findByRole('heading', { name: 'Operations & Reliability' })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'User Administration' }));
+  expect(screen.getByTestId('location-probe')).toHaveTextContent('/user-administration');
+  expect(await screen.findByRole('heading', { name: 'User Administration' })).toBeInTheDocument();
 });
 
 test('devices remote renders only the devices page surface', async () => {

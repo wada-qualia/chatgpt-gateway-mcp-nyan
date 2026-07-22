@@ -824,3 +824,417 @@ paths:
       operationId: getAutonomyMetrics
       responses:
         '200': {description: Tenant-scoped autonomy metrics}
+  /api/registry/activity/sessions:
+    get:
+      operationId: listRegistryActivitySessions
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated command-session history}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/activity/tool-calls:
+    get:
+      operationId: listRegistryActivityToolCalls
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated agent tool-call history}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/activity/deliveries:
+    get:
+      operationId: listRegistryActivityDeliveries
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated command-output delivery history}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/activity/file-changes:
+    get:
+      operationId: listRegistryActivityFileChanges
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated file-change history}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/activity/audit-events:
+    get:
+      operationId: listRegistryActivityAuditEvents
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated audit-event history}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/collaboration/rooms:
+    get:
+      operationId: listRegistryCollaborationRooms
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated collaboration-room registry}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/collaboration/agents:
+    get:
+      operationId: listRegistryCollaborationAgents
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated agent registry}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/collaboration/messages:
+    get:
+      operationId: listRegistryCollaborationMessages
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated message history with delivery evidence}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/collaboration/commands:
+    get:
+      operationId: listRegistryCollaborationCommands
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated durable agent-command history}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/collaboration/work-items:
+    get:
+      operationId: listRegistryCollaborationWorkItems
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated work-item registry}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/coordination/leases:
+    get:
+      operationId: listRegistryCoordinationLeases
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated resource-lease registry}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/coordination/handoffs:
+    get:
+      operationId: listRegistryCoordinationHandoffs
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated handoff-barrier registry}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/coordination/integrations:
+    get:
+      operationId: listRegistryCoordinationIntegrations
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated integration-decision registry}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/autonomy/policies:
+    get:
+      operationId: listRegistryAutonomyPolicies
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated autonomy-policy registry}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/autonomy/controls:
+    get:
+      operationId: listRegistryAutonomyControls
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated autonomy-control registry}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/autonomy/overrides:
+    get:
+      operationId: listRegistryAutonomyOverrides
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated immutable operator-override history}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/autonomy/assignments:
+    get:
+      operationId: listRegistryAutonomyAssignments
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated autonomy-assignment history}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/autonomy/approvals:
+    get:
+      operationId: listRegistryAutonomyApprovals
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated approval requests with batched votes}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/autonomy/permits:
+    get:
+      operationId: listRegistryAutonomyPermits
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated execution-permit registry}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/autonomy/receipts:
+    get:
+      operationId: listRegistryAutonomyReceipts
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated action-receipt history}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/autonomy/recoveries:
+    get:
+      operationId: listRegistryAutonomyRecoveries
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated recovery-loop history}
+        '400': {description: Invalid pagination cursor}
+  /api/registry/operations/outbox:
+    get:
+      operationId: listRegistryOperationsOutbox
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated outbox events with batched delivery attempts}
+        '400': {description: Invalid pagination cursor}
+        '403': {description: Policy denied}
+  /api/registry/operations/outbox-attempts:
+    get:
+      operationId: listRegistryOperationsOutboxAttempts
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated outbox delivery attempt history}
+        '400': {description: Invalid pagination cursor}
+        '403': {description: Policy denied}
+  /api/registry/operations/replicas:
+    get:
+      operationId: listRegistryOperationsReplicas
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated gateway replica membership and heartbeat state}
+        '400': {description: Invalid pagination cursor}
+        '403': {description: Policy denied}
+  /api/registry/operations/realtime-routes:
+    get:
+      operationId: listRegistryOperationsRealtimeRoutes
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated realtime route registry}
+        '400': {description: Invalid pagination cursor}
+        '403': {description: Policy denied}
+  /api/registry/operations/notifications:
+    get:
+      operationId: listRegistryOperationsNotifications
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Paginated realtime notification history}
+        '400': {description: Invalid pagination cursor}
+        '403': {description: Policy denied}
+  /api/registry/operations/broker-diagnostics:
+    get:
+      operationId: listRegistryOperationsBrokerDiagnostics
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Aggregate-only broker deduplication diagnostics}
+        '400': {description: Invalid pagination cursor}
+        '403': {description: Policy denied}
+  /api/registry/administration/users:
+    get:
+      operationId: listRegistryAdministrationUsers
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Administrator-only gateway user registry}
+        '400': {description: Invalid pagination cursor}
+        '403': {description: Policy denied}
+  /api/registry/administration/oauth-clients:
+    get:
+      operationId: listRegistryAdministrationOAuthClients
+      parameters:
+        - in: query
+          name: cursor
+          schema: {type: string, nullable: true}
+          description: Opaque keyset cursor returned by the previous page
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      responses:
+        '200': {description: Administrator-only safe OAuth client metadata}
+        '400': {description: Invalid pagination cursor}
+        '403': {description: Policy denied}

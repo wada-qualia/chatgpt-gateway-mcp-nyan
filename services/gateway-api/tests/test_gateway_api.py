@@ -7,7 +7,7 @@ import hashlib
 import subprocess
 import time
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -5542,14 +5542,14 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert health.json() == {
         "status": "ok",
         "service": "gateway-api",
-        "version": "0.3.5",
+        "version": "0.3.6",
         "revision": "",
         "slot": "local",
     }
     ready = client.get("/ready")
     assert ready.status_code == 200
     readiness = ready.json()
-    assert readiness["release_version"] == "0.3.5"
+    assert readiness["release_version"] == "0.3.6"
     assert readiness["release_revision"] == ""
     assert readiness["deployment_slot"] == "local"
 
@@ -5600,3 +5600,642 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert "CD: MKS blue-green" in jenkinsfile
     assert "RELEASE_VERSION" in jenkinsfile
     assert "deploy/smoke.sh" in jenkinsfile
+
+
+def test_p0_registry_routes_are_published(client: TestClient) -> None:
+    paths = client.get("/openapi.json").json()["paths"]
+    registry_paths = sorted(path for path in paths if path.startswith("/api/registry/"))
+    p0_prefixes = (
+        "/api/registry/activity/",
+        "/api/registry/collaboration/",
+        "/api/registry/coordination/",
+        "/api/registry/autonomy/",
+    )
+    p0_paths = {path for path in registry_paths if path.startswith(p0_prefixes)}
+    assert len(p0_paths) == 21
+    assert "/api/registry/activity/sessions" in p0_paths
+    assert "/api/registry/collaboration/messages" in p0_paths
+    assert "/api/registry/coordination/leases" in p0_paths
+    assert "/api/registry/autonomy/approvals" in p0_paths
+    import yaml
+
+    root = Path(__file__).resolve().parents[3]
+    static_paths = yaml.safe_load(
+        (root / "openapi" / "gateway.openapi.yaml").read_text(encoding="utf-8")
+    )["paths"]
+    assert p0_paths.issubset(static_paths)
+
+
+def test_p0_registry_command_session_cursor_is_stable_and_redacted(
+    client: TestClient, tmp_path: Path
+) -> None:
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import CommandSession
+
+    base = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        for index in range(5):
+            timestamp = base + timedelta(minutes=index)
+            db.add(
+                CommandSession(
+                    id=f"registry-session-{index}",
+                    owner_subject="dev:local",
+                    origin="thin_client",
+                    resource_id="registry-thin",
+                    name=f"registry command {index}",
+                    command=f"echo {index}",
+                    cwd="/workspace",
+                    status="completed",
+                    exit_code=0,
+                    output_path=str(tmp_path / f"registry-session-{index}.jsonl"),
+                    line_count=index + 1,
+                    truncated=False,
+                    meta={"password": "must-not-leak", "fencing_token": index + 1},
+                    created_at=timestamp,
+                    started_at=timestamp,
+                    completed_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
+        db.commit()
+
+    first = client.get("/api/registry/activity/sessions", params={"limit": 2})
+    assert first.status_code == 200
+    first_page = first.json()
+    assert [item["id"] for item in first_page["items"]] == [
+        "registry-session-4",
+        "registry-session-3",
+    ]
+    assert first_page["has_more"] is True
+    assert first_page["next_cursor"]
+    assert first_page["items"][0]["meta"]["password"] == "[REDACTED]"
+    assert first_page["items"][0]["meta"]["fencing_token"] == 5
+
+    second = client.get(
+        "/api/registry/activity/sessions",
+        params={"limit": 2, "cursor": first_page["next_cursor"]},
+    )
+    assert second.status_code == 200
+    second_page = second.json()
+    assert [item["id"] for item in second_page["items"]] == [
+        "registry-session-2",
+        "registry-session-1",
+    ]
+    assert not (
+        {item["id"] for item in first_page["items"]}
+        & {item["id"] for item in second_page["items"]}
+    )
+
+    third = client.get(
+        "/api/registry/activity/sessions",
+        params={"limit": 2, "cursor": second_page["next_cursor"]},
+    )
+    assert third.status_code == 200
+    assert [item["id"] for item in third.json()["items"]] == ["registry-session-0"]
+    assert third.json()["has_more"] is False
+    assert third.json()["next_cursor"] is None
+
+    invalid = client.get(
+        "/api/registry/activity/sessions", params={"cursor": "not-a-cursor"}
+    )
+    assert invalid.status_code == 400
+
+
+def test_p0_collaboration_registry_includes_delivery_history_and_is_tenant_scoped(
+    client: TestClient,
+) -> None:
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import (
+        AgentInstance,
+        AgentMessage,
+        AgentMessageDelivery,
+        CollaborationRoom,
+    )
+
+    now = datetime(2026, 7, 22, 13, 0, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        room = CollaborationRoom(
+            id="registry-room",
+            owner_subject="dev:local",
+            title="P0 Registry Room",
+            project_path="/workspace/project",
+            repository_identity="project.git",
+            status="active",
+            policy={},
+            created_at=now,
+            updated_at=now,
+        )
+        foreign_room = CollaborationRoom(
+            id="foreign-room",
+            owner_subject="other-tenant",
+            title="Foreign Room",
+            status="active",
+            policy={},
+            created_at=now,
+            updated_at=now,
+        )
+        db.add_all([room, foreign_room])
+        db.flush()
+        sender = AgentInstance(
+            id="registry-agent-sender",
+            owner_subject="dev:local",
+            logical_agent_id="sender",
+            instance_id="sender-1",
+            display_name="Sender",
+            status="active",
+            capabilities=[],
+            labels={},
+            current_room_id=room.id,
+            last_heartbeat_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        recipient = AgentInstance(
+            id="registry-agent-recipient",
+            owner_subject="dev:local",
+            logical_agent_id="recipient",
+            instance_id="recipient-1",
+            display_name="Recipient",
+            status="active",
+            capabilities=[],
+            labels={},
+            current_room_id=room.id,
+            last_heartbeat_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add_all([sender, recipient])
+        db.flush()
+        message = AgentMessage(
+            id="registry-message",
+            owner_subject="dev:local",
+            room_id=room.id,
+            sender_agent_id=sender.id,
+            recipient_agent_id=recipient.id,
+            kind="information",
+            body="Registry delivery evidence",
+            payload={"access_token": "must-not-leak", "result": "visible"},
+            priority=50,
+            sequence_number=1,
+            created_at=now,
+        )
+        db.add(message)
+        db.flush()
+        db.add(
+            AgentMessageDelivery(
+                id="registry-delivery",
+                owner_subject="dev:local",
+                message_id=message.id,
+                recipient_agent_id=recipient.id,
+                status="acknowledged",
+                attempt_count=2,
+                delivered_at=now,
+                acknowledged_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db.commit()
+
+    rooms = client.get("/api/registry/collaboration/rooms")
+    assert rooms.status_code == 200
+    room_ids = {item["id"] for item in rooms.json()["items"]}
+    assert "registry-room" in room_ids
+    assert "foreign-room" not in room_ids
+
+    messages = client.get(
+        "/api/registry/collaboration/messages", params={"room_id": "registry-room"}
+    )
+    assert messages.status_code == 200
+    record = messages.json()["items"][0]
+    assert record["id"] == "registry-message"
+    assert record["payload"] == {
+        "access_token": "[REDACTED]",
+        "result": "visible",
+    }
+    assert record["deliveries"] == [
+        {
+            "id": "registry-delivery",
+            "message_id": "registry-message",
+            "recipient_agent_id": "registry-agent-recipient",
+            "status": "acknowledged",
+            "attempt_count": 2,
+            "delivered_at": now.replace(tzinfo=None).isoformat(),
+            "acknowledged_at": now.replace(tzinfo=None).isoformat(),
+            "visibility_deadline": None,
+            "created_at": now.replace(tzinfo=None).isoformat(),
+            "updated_at": now.replace(tzinfo=None).isoformat(),
+        }
+    ]
+
+
+def test_p0_autonomy_registry_embeds_approval_votes(client: TestClient) -> None:
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import (
+        AgentInstance,
+        ApprovalRequest,
+        ApprovalVote,
+        AutonomyPolicy,
+        CollaborationRoom,
+    )
+
+    now = datetime(2026, 7, 22, 14, 0, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        room = CollaborationRoom(
+            id="approval-room",
+            owner_subject="dev:local",
+            title="Approval Room",
+            status="active",
+            policy={},
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(room)
+        db.flush()
+        executor = AgentInstance(
+            id="approval-executor",
+            owner_subject="dev:local",
+            logical_agent_id="executor",
+            instance_id="executor-1",
+            display_name="Executor",
+            status="active",
+            capabilities=["tool:execute"],
+            labels={},
+            current_room_id=room.id,
+            last_heartbeat_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(executor)
+        db.flush()
+        policy = AutonomyPolicy(
+            id="approval-policy",
+            owner_subject="dev:local",
+            room_id=room.id,
+            name="Production Gate",
+            status="active",
+            assignment_mode="manual",
+            allowed_action_classes=["production"],
+            allowed_tools=["deploy_release"],
+            allowed_command_profiles=[],
+            max_parallel_assignments=1,
+            approval_rules={},
+            recovery_policy={},
+            generation=1,
+            version=1,
+            created_by_subject="dev:local",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(policy)
+        db.flush()
+        request = ApprovalRequest(
+            id="approval-request",
+            owner_subject="dev:local",
+            room_id=room.id,
+            policy_id=policy.id,
+            executor_agent_id=executor.id,
+            action_kind="deploy",
+            action_class="production",
+            tool="deploy_release",
+            payload_hash="a" * 64,
+            payload_summary={"credential": "must-not-leak", "release": "0.3.0"},
+            quorum_required=2,
+            require_admin_approval=True,
+            disallow_proposer_vote=True,
+            status="pending",
+            policy_generation=1,
+            version=1,
+            created_by_subject="dev:local",
+            expires_at=now + timedelta(hours=1),
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(request)
+        db.flush()
+        db.add(
+            ApprovalVote(
+                id="approval-vote",
+                owner_subject="dev:local",
+                request_id=request.id,
+                voter_subject="auditor:one",
+                voter_roles=["gateway-auditor"],
+                decision="approve",
+                reason="Evidence verified",
+                created_at=now,
+            )
+        )
+        db.commit()
+
+    response = client.get(
+        "/api/registry/autonomy/approvals", params={"status": "pending"}
+    )
+    assert response.status_code == 200
+    approval = response.json()["items"][0]
+    assert approval["id"] == "approval-request"
+    assert approval["payload_summary"] == {
+        "credential": "[REDACTED]",
+        "release": "0.3.0",
+    }
+    assert approval["votes"] == [
+        {
+            "id": "approval-vote",
+            "request_id": "approval-request",
+            "voter_subject": "auditor:one",
+            "voter_roles": ["gateway-auditor"],
+            "decision": "approve",
+            "reason": "Evidence verified",
+            "created_at": now.replace(tzinfo=None).isoformat(),
+        }
+    ]
+
+
+def test_p1_registry_routes_are_published(client: TestClient) -> None:
+    import yaml
+
+    root = Path(__file__).resolve().parents[3]
+    dynamic_paths = client.get("/openapi.json").json()["paths"]
+    registry_paths = {
+        path for path in dynamic_paths if path.startswith("/api/registry/")
+    }
+    p1_paths = {
+        "/api/registry/operations/outbox",
+        "/api/registry/operations/outbox-attempts",
+        "/api/registry/operations/replicas",
+        "/api/registry/operations/realtime-routes",
+        "/api/registry/operations/notifications",
+        "/api/registry/operations/broker-diagnostics",
+        "/api/registry/administration/users",
+        "/api/registry/administration/oauth-clients",
+    }
+    assert len(registry_paths) == 29
+    assert p1_paths.issubset(registry_paths)
+    static_paths = yaml.safe_load(
+        (root / "openapi" / "gateway.openapi.yaml").read_text(encoding="utf-8")
+    )["paths"]
+    assert p1_paths.issubset(static_paths)
+
+
+def test_p1_operations_registry_redacts_batches_and_aggregates(
+    client: TestClient,
+) -> None:
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import (
+        AuditEvent,
+        GatewayReplica,
+        OutboxDeliveryAttempt,
+        OutboxEvent,
+        ProcessedBrokerMessage,
+        RealtimeNotification,
+        RealtimeRoute,
+    )
+
+    now = datetime(2026, 7, 22, 15, 0, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        audit = AuditEvent(
+            id="p1-audit",
+            event_type="gateway.p1.test.v1",
+            actor_subject="dev:local",
+            action="publish",
+            resource_type="registry",
+            resource_id="p1",
+            status="success",
+            payload={},
+            created_at=now,
+        )
+        db.add(audit)
+        db.flush()
+        outbox = OutboxEvent(
+            id="p1-outbox",
+            audit_event_id=audit.id,
+            owner_subject="dev:local",
+            event_type="gateway.p1.test.v1",
+            subject="gateway.registry.p1",
+            payload={"credential": "must-not-leak", "result": "visible"},
+            headers={"authorization": "Bearer must-not-leak", "trace": "visible"},
+            status="retry",
+            attempt_count=2,
+            max_attempts=10,
+            available_at=now,
+            last_error="temporary broker error",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(outbox)
+        db.flush()
+        db.add_all(
+            [
+                OutboxDeliveryAttempt(
+                    id="p1-attempt-1",
+                    outbox_event_id=outbox.id,
+                    attempt_number=1,
+                    replica_id="gateway-a",
+                    status="failed",
+                    error="broker unavailable",
+                    started_at=now,
+                    completed_at=now + timedelta(seconds=1),
+                ),
+                OutboxDeliveryAttempt(
+                    id="p1-attempt-2",
+                    outbox_event_id=outbox.id,
+                    attempt_number=2,
+                    replica_id="gateway-b",
+                    status="published",
+                    broker_stream="GATEWAY_EVENTS",
+                    broker_sequence=42,
+                    started_at=now + timedelta(seconds=2),
+                    completed_at=now + timedelta(seconds=3),
+                ),
+                GatewayReplica(
+                    id="gateway-a",
+                    hostname="gateway-a.local",
+                    process_id=101,
+                    status="online",
+                    meta={"slot": "blue"},
+                    started_at=now - timedelta(minutes=10),
+                    last_heartbeat_at=now,
+                    expires_at=now + timedelta(seconds=30),
+                ),
+                RealtimeRoute(
+                    id="p1-route",
+                    owner_subject="dev:local",
+                    target_kind="agent",
+                    target_id="agent-p1",
+                    connection_id="connection-p1",
+                    replica_id="gateway-a",
+                    status="online",
+                    meta={"transport": "websocket"},
+                    connected_at=now - timedelta(minutes=2),
+                    last_seen_at=now,
+                    expires_at=now + timedelta(seconds=90),
+                ),
+                RealtimeNotification(
+                    id="p1-notification",
+                    owner_subject="dev:local",
+                    target_kind="agent",
+                    target_id="agent-p1",
+                    event_type="gateway.agent.message.sent.v1",
+                    payload={"access_token": "must-not-leak", "message_id": "visible"},
+                    status="pending",
+                    replica_id="gateway-a",
+                    outbox_event_id=outbox.id,
+                    attempt_count=1,
+                    expires_at=now + timedelta(hours=1),
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ProcessedBrokerMessage(
+                    message_id="p1-message-1",
+                    stream="GATEWAY_EVENTS",
+                    consumer="gateway-realtime-gateway-a",
+                    subject="gateway.events.message",
+                    payload_sha256="a" * 64,
+                    processed_at=now,
+                ),
+                ProcessedBrokerMessage(
+                    message_id="p1-message-2",
+                    stream="GATEWAY_EVENTS",
+                    consumer="gateway-realtime-gateway-a",
+                    subject="gateway.events.command",
+                    payload_sha256="b" * 64,
+                    processed_at=now + timedelta(seconds=1),
+                ),
+            ]
+        )
+        db.commit()
+
+    response = client.get(
+        "/api/registry/operations/outbox",
+        params={"search": "p1.test", "status": "retry"},
+    )
+    assert response.status_code == 200
+    event = next(item for item in response.json()["items"] if item["id"] == "p1-outbox")
+    assert event["payload"] == {
+        "credential": "[REDACTED]",
+        "result": "visible",
+    }
+    assert event["headers"] == {
+        "authorization": "[REDACTED]",
+        "trace": "visible",
+    }
+    assert [attempt["id"] for attempt in event["attempts"]] == [
+        "p1-attempt-1",
+        "p1-attempt-2",
+    ]
+
+    attempts = client.get(
+        "/api/registry/operations/outbox-attempts",
+        params={"search": "gateway-b", "status": "published"},
+    )
+    assert attempts.status_code == 200
+    assert attempts.json()["items"][0]["broker_sequence"] == 42
+
+    replicas = client.get(
+        "/api/registry/operations/replicas", params={"search": "gateway-a.local"}
+    )
+    assert replicas.status_code == 200
+    assert any(item["id"] == "gateway-a" for item in replicas.json()["items"])
+
+    routes = client.get(
+        "/api/registry/operations/realtime-routes", params={"search": "agent-p1"}
+    )
+    assert routes.status_code == 200
+    assert routes.json()["items"][0]["connection_id"] == "connection-p1"
+
+    notifications = client.get(
+        "/api/registry/operations/notifications", params={"search": "agent-p1"}
+    )
+    assert notifications.status_code == 200
+    assert notifications.json()["items"][0]["payload"] == {
+        "access_token": "[REDACTED]",
+        "message_id": "visible",
+    }
+
+    diagnostics = client.get(
+        "/api/registry/operations/broker-diagnostics",
+        params={"search": "gateway-realtime-gateway-a"},
+    )
+    assert diagnostics.status_code == 200
+    diagnostic = diagnostics.json()["items"][0]
+    assert diagnostic["message_count"] == 2
+    assert diagnostic["mode"] == "aggregate-only"
+    assert "message_id" not in diagnostic
+    assert "payload_sha256" not in diagnostic
+
+
+def test_p1_administration_registry_is_safe_and_admin_only(
+    client: TestClient,
+) -> None:
+    from gateway_api.auth import create_jwt
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import OAuthClient, User
+
+    now = datetime(2026, 7, 22, 16, 0, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        db.add_all(
+            [
+                User(
+                    subject="keycloak:operator",
+                    username="operator",
+                    email="operator@example.test",
+                    roles=["gateway-user", "gateway-auditor"],
+                    provider="keycloak",
+                    created_at=now - timedelta(days=2),
+                    last_seen_at=now,
+                ),
+                OAuthClient(
+                    client_id="p1-safe-client",
+                    client_name="P1 Safe Connector",
+                    redirect_uris=["https://chat.openai.com/aip/callback"],
+                    scope="workspace:read audit:read",
+                    created_at=now,
+                ),
+            ]
+        )
+        db.commit()
+
+    users = client.get(
+        "/api/registry/administration/users",
+        params={"search": "operator", "provider": "keycloak"},
+    )
+    assert users.status_code == 200
+    operator = next(
+        item for item in users.json()["items"] if item["id"] == "keycloak:operator"
+    )
+    assert operator["roles"] == ["gateway-user", "gateway-auditor"]
+    assert operator["email"] == "operator@example.test"
+    assert "password" not in operator
+    assert "token" not in operator
+
+    clients = client.get(
+        "/api/registry/administration/oauth-clients",
+        params={"search": "P1 Safe"},
+    )
+    assert clients.status_code == 200
+    oauth_client = clients.json()["items"][0]
+    assert oauth_client == {
+        "id": "p1-safe-client",
+        "client_id": "p1-safe-client",
+        "client_name": "P1 Safe Connector",
+        "redirect_uris": ["https://chat.openai.com/aip/callback"],
+        "scopes": ["workspace:read", "audit:read"],
+        "created_at": now.replace(tzinfo=None).isoformat(),
+    }
+
+    user_token = create_jwt(
+        subject="keycloak:plain-user",
+        username="plain-user",
+        roles=["gateway-user"],
+        scopes=["workspace:read"],
+        token_type="access",
+        ttl_seconds=300,
+    )
+    headers = {"Authorization": f"Bearer {user_token}"}
+    assert (
+        client.get("/api/registry/operations/outbox", headers=headers).status_code
+        == 403
+    )
+    assert (
+        client.get("/api/registry/administration/users", headers=headers).status_code
+        == 403
+    )

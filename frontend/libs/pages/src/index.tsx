@@ -5,14 +5,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
+  Bot,
   Box,
   Download,
   FileText,
+  GitMerge,
   KeyRound,
+  Network,
   Plus,
   Server,
   Settings,
+  ShieldCheck,
   TerminalSquare,
+  Users,
 } from "lucide-react";
 import {
   AccessGrantsTable,
@@ -34,12 +39,26 @@ import {
   type UiLanguage,
 } from "@gateway/generated/client";
 import i18n from "@gateway/shared/i18n";
+import {
+  ActivityRegistryPage,
+  AdministrationRegistryPage,
+  AutonomyRegistryPage,
+  CollaborationRegistryPage,
+  CoordinationRegistryPage,
+  OperationsRegistryPage,
+} from "./registryPages";
 
 export type GatewayPageId =
   | "devices"
   | "workspaces"
   | "thin"
   | "monitoring"
+  | "activity"
+  | "collaboration"
+  | "coordination"
+  | "autonomy"
+  | "operations"
+  | "administration"
   | "access"
   | "audit"
   | "settings";
@@ -49,6 +68,12 @@ const pageRoutes: Record<GatewayPageId, string> = {
   workspaces: "/workspaces",
   thin: "/thin-clients",
   monitoring: "/monitoring",
+  activity: "/activity",
+  collaboration: "/collaboration",
+  coordination: "/coordination",
+  autonomy: "/safety-autonomy",
+  operations: "/operations",
+  administration: "/user-administration",
   access: "/chatgpt-access",
   audit: "/audit",
   settings: "/settings",
@@ -62,6 +87,16 @@ const pageByPath: Record<string, GatewayPageId> = {
   "/thin": "thin",
   "/monitoring": "monitoring",
   "/command-sessions": "monitoring",
+  "/activity": "activity",
+  "/execution-history": "activity",
+  "/collaboration": "collaboration",
+  "/coordination": "coordination",
+  "/safety-autonomy": "autonomy",
+  "/autonomy": "autonomy",
+  "/operations": "operations",
+  "/reliability": "operations",
+  "/user-administration": "administration",
+  "/users": "administration",
   "/chatgpt-access": "access",
   "/access": "access",
   "/audit": "audit",
@@ -73,6 +108,12 @@ const navDefinitions = [
   { id: "workspaces", labelKey: "nav.workspaces", icon: Box },
   { id: "thin", labelKey: "nav.thinClients", icon: TerminalSquare },
   { id: "monitoring", labelKey: "nav.monitoring", icon: Activity },
+  { id: "activity", labelKey: "nav.activity", icon: Activity },
+  { id: "collaboration", labelKey: "nav.collaboration", icon: Bot },
+  { id: "coordination", labelKey: "nav.coordination", icon: GitMerge },
+  { id: "autonomy", labelKey: "nav.autonomy", icon: ShieldCheck },
+  { id: "operations", labelKey: "nav.operations", icon: Network },
+  { id: "administration", labelKey: "nav.administration", icon: Users },
   { id: "access", labelKey: "nav.access", icon: KeyRound },
   { id: "audit", labelKey: "nav.audit", icon: FileText },
   { id: "settings", labelKey: "nav.settings", icon: Settings },
@@ -192,6 +233,54 @@ export function MonitoringRemote() {
   return (
     <RemotePageFrame>
       <MonitoringPage controller={controller} />
+    </RemotePageFrame>
+  );
+}
+
+export function ActivityRegistryRemote() {
+  return (
+    <RemotePageFrame>
+      <ActivityRegistryPage />
+    </RemotePageFrame>
+  );
+}
+
+export function CollaborationRegistryRemote() {
+  return (
+    <RemotePageFrame>
+      <CollaborationRegistryPage />
+    </RemotePageFrame>
+  );
+}
+
+export function CoordinationRegistryRemote() {
+  return (
+    <RemotePageFrame>
+      <CoordinationRegistryPage />
+    </RemotePageFrame>
+  );
+}
+
+export function AutonomyRegistryRemote() {
+  return (
+    <RemotePageFrame>
+      <AutonomyRegistryPage />
+    </RemotePageFrame>
+  );
+}
+
+export function OperationsRegistryRemote() {
+  return (
+    <RemotePageFrame>
+      <OperationsRegistryPage />
+    </RemotePageFrame>
+  );
+}
+
+export function AdministrationRegistryRemote() {
+  return (
+    <RemotePageFrame>
+      <AdministrationRegistryPage />
     </RemotePageFrame>
   );
 }
@@ -483,6 +572,15 @@ function ActiveGatewayPage({ controller }: { controller: GatewayController }) {
     return <ThinClientsPage controller={controller} />;
   if (controller.active === "monitoring")
     return <MonitoringPage controller={controller} />;
+  if (controller.active === "activity") return <ActivityRegistryPage />;
+  if (controller.active === "collaboration")
+    return <CollaborationRegistryPage />;
+  if (controller.active === "coordination")
+    return <CoordinationRegistryPage />;
+  if (controller.active === "autonomy") return <AutonomyRegistryPage />;
+  if (controller.active === "operations") return <OperationsRegistryPage />;
+  if (controller.active === "administration")
+    return <AdministrationRegistryPage />;
   if (controller.active === "access")
     return <ChatGPTAccessPage controller={controller} />;
   if (controller.active === "audit")

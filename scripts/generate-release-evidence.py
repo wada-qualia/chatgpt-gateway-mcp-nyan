@@ -91,7 +91,7 @@ def main() -> int:
             }
         },
         "deployment": {
-            "pipeline": "github/prod -> Jenkins -> MKS two-phase blue-green",
+            "pipeline": "origin/prod -> Jenkins -> MKS two-phase blue-green",
             "candidate_requires_signed_thin_client_compatibility": True,
             "candidate_restart_executed_by_jenkins": True,
             "production_router_switched": False,

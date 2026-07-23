@@ -26,6 +26,7 @@ from .routers import (
     realtime,
     registry,
     thin_clients,
+    usage_accounting,
 )
 from .runtime import GatewayRuntime
 from .spa import SPAStaticFiles
@@ -96,6 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(outbox.metrics_router)
     app.include_router(realtime.router)
     app.include_router(registry.router)
+    app.include_router(usage_accounting.router)
     app.include_router(mcp.router)
 
     dist = Path(__file__).resolve().parents[3] / "frontend" / "dist"

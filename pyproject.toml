@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "chatgpt-mcp-ssh-gateway"
 version = "0.3.6"
 description = "Perpetus Galaxy FastAPI gateway for ChatGPT MCP SSH and Docker workspaces."
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.15"
 dependencies = [
   "fastapi>=0.115,<1",
   "uvicorn[standard]>=0.30,<1",
@@ -36,3 +36,12 @@ gateway-cli = "gateway_cli.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["services/gateway-api", "cli"]
+
+[tool.klab.lup-sdk]
+package = "klab-llm-usage"
+version = "0.1.0a0"
+artifact = "vendor/llm-usage-sdk/klab_llm_usage-0.1.0a0-py3-none-any.whl"
+sha256 = "71c96edfc73974e8f733713d0e3d7972df86ba6c54493ee46e1536c72facd2a3"
+source-commit = "978a577c9c54f53c88fb2d94fd98f9f689126c58"
+publication-channel = "jenkins-internal-artifact"
+public-index-allowed = false

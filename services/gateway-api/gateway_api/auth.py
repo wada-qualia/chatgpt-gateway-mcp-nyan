@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import ssl
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -184,3 +185,63 @@ def require_role(user: User, *allowed: str) -> None:
         return
     if not roles.intersection(allowed):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Policy denied")
+
+
+@dataclass(frozen=True, slots=True)
+class LupPrincipal:
+    user: User
+    token: str = field(repr=False)
+
+
+async def get_lup_principal(
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> LupPrincipal:
+    """Authenticate the host bearer and retain it only for the current LUP call."""
+
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Bearer authentication is required for LUP task start",
+        )
+    token = auth_header.split(" ", 1)[1].strip()
+    if not token or len(token) > 131072:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid bearer token",
+        )
+
+    if settings.gateway_dev_auth:
+        try:
+            claims = decode_jwt(token)
+            user = _user_from_claims(db, claims, provider="token")
+        except Exception:
+            user = dev_user(db, settings)
+        return LupPrincipal(user=user, token=token)
+
+    userinfo_url = f"{settings.keycloak_issuer.rstrip('/')}/protocol/openid-connect/userinfo"
+    try:
+        async with httpx.AsyncClient(
+            timeout=15.0,
+            verify=keycloak_ssl_context(settings),
+        ) as client:
+            response = await client.get(
+                userinfo_url,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            response.raise_for_status()
+            claims = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid LUP principal bearer token",
+        ) from error
+    if not isinstance(claims, dict) or not claims.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid LUP principal claims",
+        )
+    user = _user_from_claims(db, claims, provider="keycloak")
+    return LupPrincipal(user=user, token=token)

@@ -820,3 +820,44 @@ class RealtimeNotification(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class LupTaskStart(Base):
+    __tablename__ = "lup_task_starts"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "source_message_id",
+            name="uq_lup_task_starts_owner_message",
+        ),
+    )
+
+    task_usage_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    source_message_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    correlation_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, unique=True, index=True
+    )
+    start_event_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, unique=True, index=True
+    )
+    receipt_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    receipt_id: Mapped[str | None] = mapped_column(String(36), nullable=True, unique=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    broker_provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    stream_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    receipt_correlation_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    project_attribution_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    project_attribution_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    project_atlas_project_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    project_atlas_entity_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    project_git_commit: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    project_git_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )

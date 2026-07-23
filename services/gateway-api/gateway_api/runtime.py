@@ -11,6 +11,7 @@ from .broker import EventBroker, create_broker
 from .config import Settings
 from .outbox import OutboxService, OutboxWorker, resolve_replica_id
 from .realtime import RealtimeService
+from .usage_accounting import LUP_SDK_VERSION, LupUsageAccountingService
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class GatewayRuntime:
         )
         self.worker = OutboxWorker(self.outbox)
         self.autonomy = AgentAutonomyService(settings)
+        self.usage_accounting = LupUsageAccountingService(settings)
         self.autonomy_worker = AutonomyWorker(
             service=self.autonomy,
             session_factory=session_factory,
@@ -128,4 +130,6 @@ class GatewayRuntime:
             "outbox_enabled": self.settings.gateway_outbox_enabled,
             "autonomy_enabled": self.settings.gateway_autonomy_enabled,
             "autonomy_emergency_stop": self.settings.gateway_autonomy_emergency_stop,
+            "lup_accounting_enabled": self.settings.gateway_lup_enabled,
+            "lup_sdk_version": LUP_SDK_VERSION,
         }

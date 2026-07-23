@@ -1238,3 +1238,42 @@ paths:
         '200': {description: Administrator-only safe OAuth client metadata}
         '400': {description: Invalid pagination cursor}
         '403': {description: Policy denied}
+
+  /api/host/usage/tasks/start:
+    post:
+      operationId: startHostUsageTask
+      summary: Durably start one LUP accounting task for one authenticated user message
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source_message_id, session_id]
+              properties:
+                source_message_id: {type: string, minLength: 1, maxLength: 512}
+                session_id: {type: string, minLength: 1, maxLength: 512}
+                trace_id:
+                  type: [string, 'null']
+                  minLength: 32
+                  maxLength: 32
+                  pattern: '^[0-9a-fA-F]{32}$'
+      responses:
+        '201': {description: New task start durably accepted and persisted}
+        '200': {description: Existing identical source-message task binding}
+        '401': {description: Missing or invalid principal bearer}
+        '403': {description: Policy denied}
+        '409': {description: Source message already bound to a different session or trace}
+        '422': {description: Invalid or forbidden request fields}
+        '502': {description: LUP rejected or returned an invalid durable receipt}
+        '503': {description: LUP accounting or durable acceptance unavailable}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

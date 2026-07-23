@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     keycloak_ca_cert_path: str | None = None
     oauth_audience: str = "chatgpt-mcp-ssh-gateway"
     oauth_supported_scopes: str = "workspace:read workspace:write workspace:exec devices:manage docker:manage audit:read"
+    gateway_lup_enabled: bool = False
+    gateway_lup_endpoint: str = "stage"
+    gateway_lup_timeout_seconds: float = 5.0
+    gateway_lup_max_attempts: int = 3
+    gateway_lup_application_token_url: str | None = None
+    gateway_lup_application_client_id: str = ""
+    gateway_lup_application_client_secret: SecretStr = SecretStr("")
+    gateway_lup_application_scope: str = ""
+    gateway_lup_project_atlas_project_key: str | None = (
+        "products/chatgpt-mcp-ssh-gateway"
+    )
+    gateway_lup_project_atlas_entity_id: str | None = None
+    gateway_lup_project_git_branch: str | None = None
     gateway_docker_enabled: bool = False
     gateway_docker_allowed_images: str = Field(default="ubuntu:24.04,ubuntu:22.04,ubuntu:20.04")
     gateway_ssh_enabled: bool = True

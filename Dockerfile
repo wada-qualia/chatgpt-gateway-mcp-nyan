@@ -34,10 +34,18 @@ RUN useradd -m -u 10001 appuser
 
 WORKDIR /app
 
-COPY requirements.txt pyproject.toml /app/
+COPY requirements.txt /app/
 RUN python3 -m venv /opt/venv \
   && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
   && /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
+
+COPY pyproject.toml /app/
+COPY vendor/llm-usage-sdk /app/vendor/llm-usage-sdk
+COPY scripts/verify_lup_sdk_artifact.py /app/scripts/verify_lup_sdk_artifact.py
+RUN /opt/venv/bin/python /app/scripts/verify_lup_sdk_artifact.py \
+  && /opt/venv/bin/pip install --no-cache-dir --no-deps \
+    /app/vendor/llm-usage-sdk/klab_llm_usage-0.1.0a0-py3-none-any.whl \
+  && /opt/venv/bin/python -c 'import klab_llm_usage as sdk; assert sdk.__version__ == "0.1.0a0"'
 
 COPY services /app/services
 COPY cli /app/cli

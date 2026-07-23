@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class OrmModel(BaseModel):
@@ -634,5 +634,50 @@ class RealtimeNotificationOut(OrmModel):
     delivered_at: datetime | None = None
     acknowledged_at: datetime | None = None
     expires_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class LupTaskStartCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_message_id: str = Field(min_length=1, max_length=512)
+    session_id: str = Field(min_length=1, max_length=512)
+    trace_id: str | None = Field(default=None, min_length=32, max_length=32)
+
+    @field_validator("trace_id")
+    @classmethod
+    def validate_trace_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.lower()
+        if len(normalized) != 32 or any(character not in "0123456789abcdef" for character in normalized):
+            raise ValueError("trace_id must be a 32-character lowercase hexadecimal W3C trace id")
+        if normalized == "0" * 32:
+            raise ValueError("trace_id must not be all zeros")
+        return normalized
+
+
+class LupTaskStartOut(BaseModel):
+    task_usage_id: str
+    correlation_id: str
+    start_event_id: str
+    source_message_id: str
+    session_id: str
+    trace_id: str | None = None
+    receipt_status: Literal["accepted", "duplicate"]
+    receipt_id: str | None = None
+    accepted_at: datetime | None = None
+    broker_provider: str | None = None
+    stream_sequence: int | None = None
+    receipt_correlation_id: str | None = None
+    project_attribution_status: str
+    project_attribution_source: str
+    project_atlas_project_key: str | None = None
+    project_atlas_entity_id: str | None = None
+    project_git_commit: str | None = None
+    project_git_branch: str | None = None
+    sdk_version: Literal["0.1.0a0"] = "0.1.0a0"
+    created: bool
     created_at: datetime
     updated_at: datetime

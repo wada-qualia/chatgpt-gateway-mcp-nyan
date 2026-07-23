@@ -5,7 +5,14 @@ from sqlalchemy.orm import Session
 
 from ..auth import LupPrincipal, get_lup_principal, require_role
 from ..database import get_db
-from ..dto import LupTaskStartCreate, LupTaskStartOut
+from ..dto import (
+    LupTaskStartCreate,
+    LupTaskStartOut,
+    LupToolCallCreate,
+    LupToolCallOut,
+    LupToolPhaseSealCreate,
+    LupToolPhaseSealOut,
+)
 from ..usage_accounting import LUP_SDK_VERSION
 
 router = APIRouter(prefix="/api/host/usage/tasks", tags=["usage-accounting"])
@@ -70,4 +77,100 @@ async def start_host_task(
         "created": result.created,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
+    }
+
+@router.post(
+    "/tool-calls",
+    response_model=LupToolCallOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_host_tool_call(
+    payload: LupToolCallCreate,
+    request: Request,
+    response: Response,
+    principal: LupPrincipal = Depends(get_lup_principal),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_role(principal.user, "gateway-user")
+    result = (
+        await request.app.state.gateway_runtime.usage_tool_lifecycle.record_tool_call(
+            db,
+            owner_subject=principal.user.subject,
+            principal_token=principal.token,
+            payload=payload,
+        )
+    )
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    call = result.call
+    return {
+        "callback_event_id": call.callback_event_id,
+        "task_usage_id": call.task_usage_id,
+        "correlation_id": result.task.correlation_id,
+        "source_message_id": call.source_message_id,
+        "session_id": call.session_id,
+        "callback_id": call.callback_id,
+        "tool_call_id": call.tool_call_id,
+        "command_session_id": call.command_session_id,
+        "request_id": call.request_id,
+        "observation_event_id": call.observation_event_id,
+        "observation_id": call.observation_id,
+        "observation_published": call.observation_id is not None,
+        "receipt_status": call.receipt_status,
+        "receipt_id": call.receipt_id,
+        "accepted_at": call.accepted_at,
+        "broker_provider": call.broker_provider,
+        "stream_sequence": call.stream_sequence,
+        "receipt_correlation_id": call.receipt_correlation_id,
+        "occurred_at": call.occurred_at,
+        "created": result.created,
+        "created_at": call.created_at,
+        "updated_at": call.updated_at,
+    }
+
+
+@router.post(
+    "/tool-phase/seal",
+    response_model=LupToolPhaseSealOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def seal_host_tool_phase(
+    payload: LupToolPhaseSealCreate,
+    request: Request,
+    response: Response,
+    principal: LupPrincipal = Depends(get_lup_principal),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_role(principal.user, "gateway-user")
+    result = (
+        await request.app.state.gateway_runtime.usage_tool_lifecycle.seal_tool_phase(
+            db,
+            owner_subject=principal.user.subject,
+            principal_token=principal.token,
+            source_message_id=payload.source_message_id,
+            session_id=payload.session_id,
+            sealed_at=payload.sealed_at,
+        )
+    )
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    seal = result.seal
+    return {
+        "seal_event_id": seal.seal_event_id,
+        "task_usage_id": seal.task_usage_id,
+        "correlation_id": result.task.correlation_id,
+        "source_message_id": seal.source_message_id,
+        "session_id": seal.session_id,
+        "last_observation_event_id": seal.last_observation_event_id,
+        "last_observation_id": seal.last_observation_id,
+        "receipt_status": seal.receipt_status,
+        "receipt_id": seal.receipt_id,
+        "accepted_at": seal.accepted_at,
+        "broker_provider": seal.broker_provider,
+        "stream_sequence": seal.stream_sequence,
+        "receipt_correlation_id": seal.receipt_correlation_id,
+        "sealed_at": seal.sealed_at,
+        "created": result.created,
+        "created_at": seal.created_at,
+        "updated_at": seal.updated_at,
     }

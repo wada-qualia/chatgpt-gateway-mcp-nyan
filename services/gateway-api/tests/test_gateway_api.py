@@ -5621,7 +5621,7 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
 
     jenkinsfile = (root / "Jenkinsfile").read_text(encoding="utf-8")
     for stage in (
-        "Checkout exact GitHub prod",
+        "Checkout exact GitLab prod",
         "CI: tests and production image",
         "Publish exact image and release to MKS",
         "CD: prepare inactive slot",

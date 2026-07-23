@@ -861,3 +861,99 @@ class LupTaskStart(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
+
+class LupToolCall(Base):
+    __tablename__ = "lup_tool_calls"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_usage_id",
+            "callback_id",
+            name="uq_lup_tool_calls_task_callback",
+        ),
+    )
+
+    callback_event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_usage_id: Mapped[str] = mapped_column(
+        ForeignKey("lup_task_starts.task_usage_id"), nullable=False, index=True
+    )
+    owner_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    source_message_id: Mapped[str] = mapped_column(
+        String(512), nullable=False, index=True
+    )
+    session_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    callback_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    tool_call_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    command_session_id: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, index=True
+    )
+    request_id: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, index=True
+    )
+    binding_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    usage_measurement: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    observation_event_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, unique=True
+    )
+    observation_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, unique=True
+    )
+    receipt_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    receipt_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, unique=True
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    broker_provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    stream_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    receipt_correlation_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class LupToolPhaseSeal(Base):
+    __tablename__ = "lup_tool_phase_seals"
+
+    task_usage_id: Mapped[str] = mapped_column(
+        ForeignKey("lup_task_starts.task_usage_id"), primary_key=True
+    )
+    seal_event_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, unique=True, index=True
+    )
+    owner_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    source_message_id: Mapped[str] = mapped_column(
+        String(512), nullable=False, index=True
+    )
+    session_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    last_observation_event_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
+    last_observation_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    receipt_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    receipt_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, unique=True
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    broker_provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    stream_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    receipt_correlation_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
+    sealed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class OrmModel(BaseModel):
@@ -678,6 +678,198 @@ class LupTaskStartOut(BaseModel):
     project_git_commit: str | None = None
     project_git_branch: str | None = None
     sdk_version: Literal["0.1.0a0"] = "0.1.0a0"
+    created: bool
+    created_at: datetime
+    updated_at: datetime
+
+class LupModelIdentityCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    provider: str = Field(min_length=1, max_length=128)
+    requested_model: str = Field(min_length=1, max_length=256)
+    resolved_model: str = Field(min_length=1, max_length=256)
+    model_revision: str | None = Field(default=None, min_length=1, max_length=2048)
+
+
+class LupTokenCountsCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    reasoning_tokens: int | None = Field(default=None, ge=0)
+    cache_read_tokens: int | None = Field(default=None, ge=0)
+    cache_write_tokens: int | None = Field(default=None, ge=0)
+    provider_total_tokens: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def require_measured_category(self) -> "LupTokenCountsCreate":
+        if all(value is None for value in self.model_dump().values()):
+            raise ValueError("tokens must contain at least one measured category")
+        return self
+
+
+class LupEstimationEvidenceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    estimator_profile_id: str = Field(min_length=1, max_length=128)
+    estimator_version: str = Field(min_length=1, max_length=64)
+    confidence: float = Field(ge=0, le=1)
+    lower_bound_tokens: int = Field(ge=0)
+    upper_bound_tokens: int = Field(ge=0)
+    covered_inputs: list[
+        Literal[
+            "user_text",
+            "visible_tool_arguments",
+            "visible_tool_results",
+            "final_response",
+            "reasoning_numeric_estimate",
+        ]
+    ] = Field(default_factory=list, max_length=5)
+    excluded_inputs: list[
+        Literal[
+            "system_context",
+            "hidden_reasoning",
+            "provider_transformations",
+            "cached_context",
+            "unknown_internal_calls",
+        ]
+    ] = Field(default_factory=list, max_length=5)
+    evidence_ref: str | None = Field(default=None, min_length=1, max_length=2048)
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "LupEstimationEvidenceCreate":
+        if self.lower_bound_tokens > self.upper_bound_tokens:
+            raise ValueError("estimation bounds are inverted")
+        if len(set(self.covered_inputs)) != len(self.covered_inputs):
+            raise ValueError("covered_inputs must not contain duplicates")
+        if len(set(self.excluded_inputs)) != len(self.excluded_inputs):
+            raise ValueError("excluded_inputs must not contain duplicates")
+        return self
+
+
+class LupToolUsageCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: LupModelIdentityCreate
+    tokens: LupTokenCountsCreate
+    measurement_kind: Literal[
+        "provider_exact",
+        "provider_partial",
+        "tokenizer_estimate",
+        "heuristic_estimate",
+    ]
+    covered_categories: list[
+        Literal[
+            "input",
+            "output",
+            "reasoning",
+            "cache_read",
+            "cache_write",
+            "provider_total",
+        ]
+    ] = Field(min_length=1, max_length=6)
+    estimation: LupEstimationEvidenceCreate | None = None
+
+    @model_validator(mode="after")
+    def validate_measurement(self) -> "LupToolUsageCreate":
+        if len(set(self.covered_categories)) != len(self.covered_categories):
+            raise ValueError("covered_categories must not contain duplicates")
+        if (
+            self.measurement_kind in {"tokenizer_estimate", "heuristic_estimate"}
+            and self.estimation is None
+        ):
+            raise ValueError("estimated measurements require estimation evidence")
+        if self.measurement_kind == "provider_exact" and self.estimation is not None:
+            raise ValueError(
+                "provider_exact measurements cannot contain estimation evidence"
+            )
+        provided = {
+            name.removesuffix("_tokens")
+            for name, value in self.tokens.model_dump().items()
+            if value is not None
+        }
+        if any(category not in provided for category in self.covered_categories):
+            raise ValueError(
+                "covered_categories must correspond to provided token counts"
+            )
+        return self
+
+
+class LupToolCallCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_message_id: str = Field(min_length=1, max_length=512)
+    session_id: str = Field(min_length=1, max_length=512)
+    callback_id: str = Field(min_length=1, max_length=512)
+    tool_call_id: str = Field(min_length=1, max_length=512)
+    command_session_id: str | None = Field(default=None, min_length=1, max_length=512)
+    request_id: str | None = Field(default=None, min_length=1, max_length=512)
+    occurred_at: datetime | None = None
+    usage: LupToolUsageCreate | None = None
+
+    @field_validator("occurred_at")
+    @classmethod
+    def validate_occurred_at(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("occurred_at must include a timezone")
+        return value
+
+
+class LupToolCallOut(BaseModel):
+    callback_event_id: str
+    task_usage_id: str
+    correlation_id: str
+    source_message_id: str
+    session_id: str
+    callback_id: str
+    tool_call_id: str
+    command_session_id: str | None = None
+    request_id: str | None = None
+    observation_event_id: str | None = None
+    observation_id: str | None = None
+    observation_published: bool
+    receipt_status: Literal["accepted", "duplicate"] | None = None
+    receipt_id: str | None = None
+    accepted_at: datetime | None = None
+    broker_provider: str | None = None
+    stream_sequence: int | None = None
+    receipt_correlation_id: str | None = None
+    occurred_at: datetime
+    created: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class LupToolPhaseSealCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_message_id: str = Field(min_length=1, max_length=512)
+    session_id: str = Field(min_length=1, max_length=512)
+    sealed_at: datetime | None = None
+
+    @field_validator("sealed_at")
+    @classmethod
+    def validate_sealed_at(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("sealed_at must include a timezone")
+        return value
+
+
+class LupToolPhaseSealOut(BaseModel):
+    seal_event_id: str
+    task_usage_id: str
+    correlation_id: str
+    source_message_id: str
+    session_id: str
+    last_observation_event_id: str | None = None
+    last_observation_id: str | None = None
+    receipt_status: Literal["accepted", "duplicate"]
+    receipt_id: str | None = None
+    accepted_at: datetime | None = None
+    broker_provider: str | None = None
+    stream_sequence: int | None = None
+    receipt_correlation_id: str | None = None
+    sealed_at: datetime
     created: bool
     created_at: datetime
     updated_at: datetime

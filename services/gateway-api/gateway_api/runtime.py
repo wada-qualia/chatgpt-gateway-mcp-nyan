@@ -12,6 +12,7 @@ from .config import Settings
 from .outbox import OutboxService, OutboxWorker, resolve_replica_id
 from .realtime import RealtimeService
 from .usage_accounting import LUP_SDK_VERSION, LupUsageAccountingService
+from .usage_tool_lifecycle import LupToolLifecycleService
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class GatewayRuntime:
         self.worker = OutboxWorker(self.outbox)
         self.autonomy = AgentAutonomyService(settings)
         self.usage_accounting = LupUsageAccountingService(settings)
+        self.usage_tool_lifecycle = LupToolLifecycleService(settings)
         self.autonomy_worker = AutonomyWorker(
             service=self.autonomy,
             session_factory=session_factory,

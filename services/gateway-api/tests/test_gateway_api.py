@@ -5632,6 +5632,11 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "Post-deploy smoke",
     ):
         assert stage in jenkinsfile
+    assert "docker build --platform linux/amd64 --target production" in jenkinsfile
+    assert (
+        '''test "$(docker image inspect "chatgpt-mcp-gateway:${GIT_COMMIT}" --format '{{.Architecture}}')" = "amd64"'''
+        in jenkinsfile
+    )
     assert "docker image save" in jenkinsfile
     assert "gzip -1n" in jenkinsfile
     assert "ssh-keygen -Y sign" in jenkinsfile

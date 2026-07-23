@@ -379,7 +379,6 @@ function renderWithQuery(ui: ReactElement, route = '/devices') {
   });
   render(
     <MemoryRouter
-      future={{ v7_relativeSplatPath: true, v7_startTransition: true }}
       initialEntries={[route]}
     >
       <QueryClientProvider client={queryClient}>

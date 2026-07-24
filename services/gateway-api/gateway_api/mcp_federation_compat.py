@@ -1,0 +1,12 @@
+from __future__ import annotations
+
+MCP_SDK_REQUIREMENT = "mcp>=1.28.1,<2"
+PREFERRED_MCP_PROTOCOL_VERSION = "2025-11-25"
+SUPPORTED_MCP_PROTOCOL_VERSIONS = (
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+)
+MCP_TIMEOUT_STRATEGY = "protocol_cancellation"
+USE_MCP_SDK_READ_TIMEOUTS = False

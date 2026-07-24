@@ -208,8 +208,136 @@ channels:
     publish:
       message:
         $ref: '#/components/messages/AutonomyOverrideApplied'
+  gateway.mcp.credential_binding.created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpCredential_bindingCreated'
+  gateway.mcp.server.created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpServerCreated'
+  gateway.mcp.server.updated.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpServerUpdated'
+  gateway.mcp.server.status_changed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpServerStatus_changed'
+  gateway.mcp.policy.created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpPolicyCreated'
+  gateway.mcp.policy.updated.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpPolicyUpdated'
+  gateway.mcp.catalog.refreshed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpCatalogRefreshed'
+  gateway.mcp.tool.revision_created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpToolRevision_created'
+  gateway.mcp.tool.classification_changed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpToolClassification_changed'
+  gateway.mcp.tool.exposure_changed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpToolExposure_changed'
+  gateway.mcp.invocation.started.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpInvocationStarted'
+  gateway.mcp.invocation.completed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpInvocationCompleted'
+  gateway.mcp.invocation.failed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpInvocationFailed'
+  gateway.mcp.projection.published.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpProjectionPublished'
+  gateway.mcp.runtime.connected.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpRuntimeConnected'
+  gateway.mcp.runtime.disconnected.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpRuntimeDisconnected'
 components:
   messages:
+    McpCredential_bindingCreated:
+      name: gateway.mcp.credential_binding.created.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.credential_binding.created.v1.schema.json
+    McpServerCreated:
+      name: gateway.mcp.server.created.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.server.created.v1.schema.json
+    McpServerUpdated:
+      name: gateway.mcp.server.updated.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.server.updated.v1.schema.json
+    McpServerStatus_changed:
+      name: gateway.mcp.server.status_changed.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.server.status_changed.v1.schema.json
+    McpPolicyCreated:
+      name: gateway.mcp.policy.created.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.policy.created.v1.schema.json
+    McpPolicyUpdated:
+      name: gateway.mcp.policy.updated.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.policy.updated.v1.schema.json
+    McpCatalogRefreshed:
+      name: gateway.mcp.catalog.refreshed.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.catalog.refreshed.v1.schema.json
+    McpToolRevision_created:
+      name: gateway.mcp.tool.revision_created.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.tool.revision_created.v1.schema.json
+    McpToolClassification_changed:
+      name: gateway.mcp.tool.classification_changed.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.tool.classification_changed.v1.schema.json
+    McpToolExposure_changed:
+      name: gateway.mcp.tool.exposure_changed.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.tool.exposure_changed.v1.schema.json
+    McpInvocationStarted:
+      name: gateway.mcp.invocation.started.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.invocation.started.v1.schema.json
+    McpInvocationCompleted:
+      name: gateway.mcp.invocation.completed.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.invocation.completed.v1.schema.json
+    McpInvocationFailed:
+      name: gateway.mcp.invocation.failed.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.invocation.failed.v1.schema.json
+    McpProjectionPublished:
+      name: gateway.mcp.projection.published.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.projection.published.v1.schema.json
+    McpRuntimeConnected:
+      name: gateway.mcp.runtime.connected.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.runtime.connected.v1.schema.json
+    McpRuntimeDisconnected:
+      name: gateway.mcp.runtime.disconnected.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.runtime.disconnected.v1.schema.json
     AutonomyPolicyCreated:
       name: gateway.autonomy.policy.created.v1
       payload:

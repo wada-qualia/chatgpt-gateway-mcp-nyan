@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.server.status_changed.v1",
+  "title": "McpServerStatus_changed",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "server_id",
+    "previous_status",
+    "status",
+    "version"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "server_id": {
+      "type": "string"
+    },
+    "previous_status": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer"
+    }
+  },
+  "additionalProperties": false
+}

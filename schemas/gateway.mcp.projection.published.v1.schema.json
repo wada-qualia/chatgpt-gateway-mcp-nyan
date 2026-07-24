@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.projection.published.v1",
+  "title": "McpProjectionPublished",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "projection_generation",
+    "tool_count",
+    "schema_set_hash"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "projection_generation": {
+      "type": "integer"
+    },
+    "tool_count": {
+      "type": "integer"
+    },
+    "schema_set_hash": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

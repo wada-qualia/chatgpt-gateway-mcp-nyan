@@ -20,6 +20,7 @@ from .routers import (
     docker,
     file_changes,
     mcp,
+    mcp_federation,
     monitoring,
     oauth,
     outbox,
@@ -98,6 +99,7 @@ def create_app() -> FastAPI:
     app.include_router(realtime.router)
     app.include_router(registry.router)
     app.include_router(usage_accounting.router)
+    app.include_router(mcp_federation.router)
     app.include_router(mcp.router)
 
     dist = Path(__file__).resolve().parents[3] / "frontend" / "dist"

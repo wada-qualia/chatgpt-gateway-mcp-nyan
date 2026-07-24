@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.invocation.completed.v1",
+  "title": "McpInvocationCompleted",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "invocation_id",
+    "server_id",
+    "tool_id",
+    "revision_id",
+    "schema_hash",
+    "outcome",
+    "response_sha256"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "invocation_id": {
+      "type": "string"
+    },
+    "server_id": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string"
+    },
+    "revision_id": {
+      "type": "string"
+    },
+    "schema_hash": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "response_sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

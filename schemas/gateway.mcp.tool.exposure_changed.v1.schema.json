@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.tool.exposure_changed.v1",
+  "title": "McpToolExposure_changed",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "server_id",
+    "tool_id",
+    "revision_id",
+    "schema_hash",
+    "mode",
+    "enabled",
+    "approval_class",
+    "policy_generation",
+    "projection_generation"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "server_id": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string"
+    },
+    "revision_id": {
+      "type": "string"
+    },
+    "schema_hash": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "approval_class": {
+      "type": "string"
+    },
+    "policy_generation": {
+      "type": "integer"
+    },
+    "projection_generation": {
+      "type": "integer"
+    }
+  },
+  "additionalProperties": false
+}

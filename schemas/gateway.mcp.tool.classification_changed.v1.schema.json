@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.tool.classification_changed.v1",
+  "title": "McpToolClassification_changed",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "server_id",
+    "tool_id",
+    "revision_id",
+    "schema_hash",
+    "action_class",
+    "read_only_status"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "server_id": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string"
+    },
+    "revision_id": {
+      "type": "string"
+    },
+    "schema_hash": {
+      "type": "string"
+    },
+    "action_class": {
+      "type": "string"
+    },
+    "read_only_status": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

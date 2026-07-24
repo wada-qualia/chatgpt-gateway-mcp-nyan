@@ -12,3 +12,20 @@ spec:
     - schemas/gateway.thin_client.enrolled.v1.schema.json
     - schemas/gateway.access_grant.changed.v1.schema.json
     - schemas/gateway.audit.recorded.v1.schema.json
+    - schemas/gateway.mcp.broker_tools.v1.schema.json
+    - schemas/gateway.mcp.credential_binding.created.v1.schema.json
+    - schemas/gateway.mcp.server.created.v1.schema.json
+    - schemas/gateway.mcp.server.updated.v1.schema.json
+    - schemas/gateway.mcp.server.status_changed.v1.schema.json
+    - schemas/gateway.mcp.policy.created.v1.schema.json
+    - schemas/gateway.mcp.policy.updated.v1.schema.json
+    - schemas/gateway.mcp.catalog.refreshed.v1.schema.json
+    - schemas/gateway.mcp.tool.revision_created.v1.schema.json
+    - schemas/gateway.mcp.tool.classification_changed.v1.schema.json
+    - schemas/gateway.mcp.tool.exposure_changed.v1.schema.json
+    - schemas/gateway.mcp.invocation.started.v1.schema.json
+    - schemas/gateway.mcp.invocation.completed.v1.schema.json
+    - schemas/gateway.mcp.invocation.failed.v1.schema.json
+    - schemas/gateway.mcp.projection.published.v1.schema.json
+    - schemas/gateway.mcp.runtime.connected.v1.schema.json
+    - schemas/gateway.mcp.runtime.disconnected.v1.schema.json

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.invocation.failed.v1",
+  "title": "McpInvocationFailed",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "invocation_id",
+    "server_id",
+    "tool_id",
+    "revision_id",
+    "schema_hash",
+    "outcome",
+    "unknown_outcome",
+    "normalized_error_code"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "invocation_id": {
+      "type": "string"
+    },
+    "server_id": {
+      "type": "string"
+    },
+    "tool_id": {
+      "type": "string"
+    },
+    "revision_id": {
+      "type": "string"
+    },
+    "schema_hash": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "unknown_outcome": {
+      "type": "boolean"
+    },
+    "normalized_error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

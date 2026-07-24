@@ -1047,6 +1047,7 @@ class McpServerOut(OrmModel):
     origin: str
     thin_client_id: str | None = None
     runtime_id: str | None = None
+    local_server_id: str | None = None
     display_name: str
     normalized_slug: str
     transport: str

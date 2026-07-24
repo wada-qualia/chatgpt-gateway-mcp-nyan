@@ -1,0 +1,609 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.thin_client_protocol.v1",
+  "title": "Gateway MCP Thin-Client Protocol v1",
+  "description": "Capability-negotiated WebSocket messages for client-owned local and private MCP runtimes. Gateway call messages intentionally cannot override executable paths, process arguments, working directories, environment bindings, endpoint URLs, headers, or credential values.",
+  "oneOf": [
+    { "$ref": "#/$defs/gatewayHello" },
+    { "$ref": "#/$defs/runtimeRegistered" },
+    { "$ref": "#/$defs/runtimeRegisteredAck" },
+    { "$ref": "#/$defs/catalogControl" },
+    { "$ref": "#/$defs/catalogSnapshot" },
+    { "$ref": "#/$defs/catalogDelta" },
+    { "$ref": "#/$defs/catalogAck" },
+    { "$ref": "#/$defs/serverStatus" },
+    { "$ref": "#/$defs/serverStatusAck" },
+    { "$ref": "#/$defs/call" },
+    { "$ref": "#/$defs/cancel" },
+    { "$ref": "#/$defs/callProgress" },
+    { "$ref": "#/$defs/callResult" },
+    { "$ref": "#/$defs/callFailed" },
+    { "$ref": "#/$defs/notification" },
+    { "$ref": "#/$defs/protocolError" }
+  ],
+  "$defs": {
+    "protocolVersion": {
+      "const": "1.0"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+    },
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "connectionIdentity": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "connection_instance_id",
+        "runtime_id"
+      ],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/protocolVersion" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "serverIdentity": {
+      "type": "object",
+      "required": ["local_server_id"],
+      "properties": {
+        "local_server_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upstream_name",
+        "input_schema",
+        "description",
+        "annotations"
+      ],
+      "properties": {
+        "upstream_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "input_schema": {
+          "type": "object"
+        },
+        "output_schema": {
+          "type": ["object", "null"]
+        },
+        "title": {
+          "type": ["string", "null"],
+          "maxLength": 240
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "annotations": {
+          "type": "object",
+          "maxProperties": 100
+        }
+      }
+    },
+    "serverDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local_server_id", "display_name", "transport"],
+      "properties": {
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "transport": {
+          "enum": ["stdio", "streamable_http", "private_http"]
+        }
+      }
+    },
+    "gatewayHello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "protocol_version",
+        "connection_instance_id",
+        "capabilities"
+      ],
+      "properties": {
+        "type": { "const": "mcp_gateway_hello" },
+        "protocol_version": { "$ref": "#/$defs/protocolVersion" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    },
+    "runtimeRegistered": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "protocol_version",
+        "connection_instance_id",
+        "runtime_id",
+        "capabilities",
+        "servers",
+        "unresolved_calls"
+      ],
+      "properties": {
+        "type": { "const": "mcp_runtime_registered" },
+        "protocol_version": { "$ref": "#/$defs/protocolVersion" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "servers": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/serverDescriptor" }
+        },
+        "unresolved_calls": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "request_id",
+              "local_server_id",
+              "action_class",
+              "status"
+            ],
+            "properties": {
+              "request_id": { "$ref": "#/$defs/identifier" },
+              "local_server_id": { "$ref": "#/$defs/identifier" },
+              "action_class": {
+                "enum": ["write", "destructive", "production"]
+              },
+              "status": { "const": "unknown" }
+            }
+          }
+        }
+      }
+    },
+    "runtimeRegisteredAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "protocol_version",
+        "connection_instance_id",
+        "runtime_id",
+        "servers"
+      ],
+      "properties": {
+        "type": { "const": "mcp_runtime_registered_ack" },
+        "protocol_version": { "$ref": "#/$defs/protocolVersion" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "servers": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "local_server_id",
+              "server_id",
+              "gateway_catalog_generation"
+            ],
+            "properties": {
+              "local_server_id": { "$ref": "#/$defs/identifier" },
+              "server_id": { "$ref": "#/$defs/uuid" },
+              "gateway_catalog_generation": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "catalogControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "protocol_version",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id",
+        "reason"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "mcp_discover",
+            "mcp_refresh_catalog",
+            "mcp_restart_server",
+            "mcp_shutdown_server"
+          ]
+        },
+        "protocol_version": { "$ref": "#/$defs/protocolVersion" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "expected_catalog_generation": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "catalogSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "protocol_version",
+        "mcp_protocol_version",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id",
+        "catalog_generation",
+        "tools"
+      ],
+      "properties": {
+        "type": { "const": "mcp_catalog_snapshot" },
+        "protocol_version": { "$ref": "#/$defs/protocolVersion" },
+        "mcp_protocol_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "catalog_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tools_list_changed_seen": { "type": "boolean" },
+        "tools": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/$defs/tool" }
+        }
+      }
+    },
+    "catalogDelta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "protocol_version",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id",
+        "base_catalog_generation",
+        "catalog_generation",
+        "tools",
+        "removed_tools"
+      ],
+      "properties": {
+        "type": { "const": "mcp_catalog_delta" },
+        "protocol_version": { "$ref": "#/$defs/protocolVersion" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "base_catalog_generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "catalog_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tools": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/$defs/tool" }
+        },
+        "removed_tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 500,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
+        }
+      }
+    },
+    "catalogAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id",
+        "client_catalog_generation",
+        "gateway_catalog_generation",
+        "unchanged"
+      ],
+      "properties": {
+        "type": { "const": "mcp_catalog_ack" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "client_catalog_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gateway_catalog_generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unchanged": { "type": "boolean" },
+        "tool_count": { "type": "integer", "minimum": 0 },
+        "created_revision_count": { "type": "integer", "minimum": 0 },
+        "missing_tool_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "serverStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id",
+        "status"
+      ],
+      "properties": {
+        "type": { "const": "mcp_server_status" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "status": {
+          "enum": ["online", "degraded", "offline", "failed", "restarting"]
+        },
+        "error_code": {
+          "type": "string",
+          "maxLength": 120
+        }
+      }
+    },
+    "serverStatusAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id"
+      ],
+      "properties": {
+        "type": { "const": "mcp_server_status_ack" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "call": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "protocol_version",
+        "request_id",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id",
+        "server_id",
+        "revision_id",
+        "tool_name",
+        "schema_hash",
+        "catalog_generation",
+        "arguments",
+        "action_class"
+      ],
+      "properties": {
+        "type": { "const": "mcp_call" },
+        "protocol_version": { "$ref": "#/$defs/protocolVersion" },
+        "request_id": { "$ref": "#/$defs/identifier" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "server_id": { "$ref": "#/$defs/uuid" },
+        "revision_id": { "$ref": "#/$defs/uuid" },
+        "tool_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "schema_hash": { "$ref": "#/$defs/sha256" },
+        "catalog_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "arguments": {
+          "type": "object"
+        },
+        "action_class": {
+          "enum": ["unknown", "read", "write", "destructive", "production"]
+        },
+        "idempotency_key": {
+          "type": ["string", "null"],
+          "maxLength": 160
+        }
+      }
+    },
+    "cancel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "protocol_version",
+        "request_id",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id",
+        "reason"
+      ],
+      "properties": {
+        "type": { "const": "mcp_cancel" },
+        "protocol_version": { "$ref": "#/$defs/protocolVersion" },
+        "request_id": { "$ref": "#/$defs/identifier" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "reason": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "callProgress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id",
+        "progress"
+      ],
+      "properties": {
+        "type": { "const": "mcp_call_progress" },
+        "request_id": { "$ref": "#/$defs/identifier" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "progress": { "type": "number" },
+        "total": { "type": ["number", "null"] },
+        "message": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "callResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id",
+        "schema_hash",
+        "catalog_generation",
+        "result"
+      ],
+      "properties": {
+        "type": { "const": "mcp_call_result" },
+        "protocol_version": { "$ref": "#/$defs/protocolVersion" },
+        "request_id": { "$ref": "#/$defs/identifier" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "schema_hash": { "$ref": "#/$defs/sha256" },
+        "catalog_generation": { "type": "integer", "minimum": 1 },
+        "result": {
+          "type": "object"
+        }
+      }
+    },
+    "callFailed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id",
+        "code",
+        "message",
+        "unknown_outcome",
+        "retryable"
+      ],
+      "properties": {
+        "type": { "const": "mcp_call_failed" },
+        "request_id": { "$ref": "#/$defs/identifier" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "schema_hash": { "$ref": "#/$defs/sha256" },
+        "catalog_generation": { "type": "integer", "minimum": 1 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "message": { "type": "string", "maxLength": 500 },
+        "unknown_outcome": { "type": "boolean" },
+        "retryable": { "type": "boolean" },
+        "http_status": {
+          "type": "integer",
+          "minimum": 400,
+          "maximum": 599
+        }
+      }
+    },
+    "notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "connection_instance_id",
+        "runtime_id",
+        "local_server_id",
+        "method"
+      ],
+      "properties": {
+        "type": { "const": "mcp_notification" },
+        "connection_instance_id": { "$ref": "#/$defs/uuid" },
+        "runtime_id": { "$ref": "#/$defs/identifier" },
+        "local_server_id": { "$ref": "#/$defs/identifier" },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "params": {
+          "type": "object"
+        }
+      }
+    },
+    "protocolError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "code",
+        "message",
+        "unknown_outcome",
+        "retryable"
+      ],
+      "properties": {
+        "type": { "const": "mcp_protocol_error" },
+        "code": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "message": { "type": "string", "maxLength": 500 },
+        "unknown_outcome": { "type": "boolean" },
+        "retryable": { "type": "boolean" }
+      }
+    }
+  }
+}

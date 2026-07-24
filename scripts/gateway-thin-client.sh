@@ -37,7 +37,9 @@ install_client() {
   "$PYTHON_BIN" -m pip install --quiet --upgrade --target "$VENDOR_DIR" \
     'websockets>=12,<16' \
     'playwright>=1.55,<2' \
-    'rich>=13,<15'
+    'rich>=13,<15' \
+    'httpx>=0.27,<1' \
+    'mcp>=1.28.1,<2'
 
   PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" \
   PYTHONPATH="$VENDOR_DIR:$INSTALL_ROOT" \

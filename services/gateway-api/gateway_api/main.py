@@ -52,6 +52,7 @@ def create_app() -> FastAPI:
         max_text_bytes=settings.gateway_mcp_upstream_max_text_bytes,
         max_content_items=settings.gateway_mcp_upstream_max_content_items,
         max_catalog_tools=settings.gateway_mcp_catalog_max_tools,
+        thin_client_transport=thin_clients.thin_client_manager,
     )
 
     @asynccontextmanager

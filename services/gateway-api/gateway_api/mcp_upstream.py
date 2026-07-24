@@ -33,8 +33,14 @@ from .models import (
     McpInvocation,
     McpRuntimeConnection,
     McpServer,
+    McpTool,
     SecretBlob,
     utcnow,
+)
+from .thin_client_control import (
+    ThinClientConnectionManager,
+    ThinClientMcpError,
+    thin_client_manager,
 )
 
 _FORBIDDEN_FORWARD_HEADERS = {
@@ -366,6 +372,7 @@ class UpstreamMcpManager:
         max_text_bytes: int = 512_000,
         max_content_items: int = 16,
         max_catalog_tools: int = 500,
+        thin_client_transport: ThinClientConnectionManager | None = None,
     ) -> None:
         self.public_base_url = public_base_url.rstrip("/")
         self.allow_private_networks = allow_private_networks
@@ -380,6 +387,7 @@ class UpstreamMcpManager:
         self.max_text_bytes = max_text_bytes
         self.max_content_items = max_content_items
         self.max_catalog_tools = max(1, int(max_catalog_tools))
+        self.thin_client_transport = thin_client_transport or thin_client_manager
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._circuits: dict[str, CircuitState] = {}
         self._active_calls: set[asyncio.Task[Any]] = set()
@@ -484,6 +492,85 @@ class UpstreamMcpManager:
     ) -> dict[str, Any]:
         server = get_server(db, owner_subject=owner_subject, server_id=server_id)
         started = time.monotonic()
+        if server.origin == "thin_client":
+            if (
+                not server.thin_client_id
+                or not server.runtime_id
+                or not server.local_server_id
+            ):
+                raise UpstreamMcpError(
+                    "MCP_PROTOCOL_MISMATCH",
+                    "Thin-client MCP server identity is incomplete",
+                    http_status=409,
+                )
+            try:
+                connection = self.thin_client_transport.active_mcp_connection(
+                    server.thin_client_id,
+                    runtime_id=server.runtime_id,
+                    local_server_id=server.local_server_id,
+                )
+            except ThinClientMcpError as exc:
+                self._mark_failure(
+                    db,
+                    server,
+                    UpstreamMcpError(
+                        exc.code,
+                        exc.message,
+                        retryable=exc.retryable,
+                        http_status=exc.http_status,
+                    ),
+                )
+                raise UpstreamMcpError(
+                    exc.code,
+                    exc.message,
+                    retryable=exc.retryable,
+                    http_status=exc.http_status,
+                ) from exc
+            runtime = (
+                db.query(McpRuntimeConnection)
+                .filter(
+                    McpRuntimeConnection.owner_subject == owner_subject,
+                    McpRuntimeConnection.server_id == server.id,
+                    McpRuntimeConnection.connection_instance_id
+                    == connection.connection_instance_id,
+                    McpRuntimeConnection.state == "online",
+                )
+                .one_or_none()
+            )
+            if runtime is None:
+                raise UpstreamMcpError(
+                    "MCP_STALE_CONNECTION",
+                    "Thin-client MCP runtime evidence is stale",
+                    retryable=True,
+                    http_status=409,
+                )
+            tool_count = (
+                db.query(McpTool)
+                .filter(
+                    McpTool.owner_subject == owner_subject,
+                    McpTool.server_id == server.id,
+                    McpTool.lifecycle_state == "active",
+                )
+                .count()
+            )
+            server.status = "online"
+            server.last_connected_at = utcnow()
+            server.updated_at = utcnow()
+            db.commit()
+            return {
+                "server_id": server.id,
+                "status": server.status,
+                "trust_level": server.trust_level,
+                "catalog_generation": server.catalog_generation,
+                "negotiated_protocol_version": server.negotiated_protocol_version,
+                "last_connected_at": server.last_connected_at,
+                "last_catalog_refreshed_at": server.last_catalog_refreshed_at,
+                "latency_ms": int((time.monotonic() - started) * 1000),
+                "tool_count": tool_count,
+                "session_id_present": True,
+                "circuit_state": self.circuit_state(server.id),
+                "normalized_error_code": None,
+            }
         try:
             async with self._bounded(server):
                 async with self._session(db, server) as (
@@ -523,6 +610,46 @@ class UpstreamMcpManager:
         server_id: str,
     ) -> McpServer:
         server = get_server(db, owner_subject=owner_subject, server_id=server_id)
+        if server.origin == "thin_client":
+            if (
+                not server.thin_client_id
+                or not server.runtime_id
+                or not server.local_server_id
+            ):
+                raise UpstreamMcpError(
+                    "MCP_PROTOCOL_MISMATCH",
+                    "Thin-client MCP server identity is incomplete",
+                    http_status=409,
+                )
+            try:
+                connection = self.thin_client_transport.active_mcp_connection(
+                    server.thin_client_id,
+                    runtime_id=server.runtime_id,
+                    local_server_id=server.local_server_id,
+                )
+                await self.thin_client_transport.send_mcp_control(
+                    server.thin_client_id,
+                    runtime_id=server.runtime_id,
+                    local_server_id=server.local_server_id,
+                    connection_instance_id=connection.connection_instance_id,
+                    message={
+                        "type": "mcp_refresh_catalog",
+                        "reason": "operator_refresh",
+                        "expected_catalog_generation": server.catalog_generation,
+                    },
+                )
+            except ThinClientMcpError as exc:
+                raise UpstreamMcpError(
+                    exc.code,
+                    exc.message,
+                    retryable=exc.retryable,
+                    http_status=exc.http_status,
+                ) from exc
+            server.status = "discovering"
+            server.updated_at = utcnow()
+            server.version += 1
+            db.commit()
+            return server
         generation = server.catalog_generation + 1
         tools_changed = asyncio.Event()
 
@@ -650,30 +777,45 @@ class UpstreamMcpManager:
         db.commit()
         try:
             async with self._bounded(server):
-                async with self._session(db, server) as (session, _, _):
-                    current = await self._find_upstream_tool(
-                        session, tool.upstream_name
+                if server.origin == "thin_client":
+                    raw = await self._call_thin_client(
+                        db,
+                        server=server,
+                        tool_name=tool.upstream_name,
+                        revision_id=revision.id,
+                        schema_hash=revision.schema_hash,
+                        catalog_generation=revision.catalog_generation,
+                        arguments=arguments,
+                        action_class=revision.action_class,
+                        timeout_seconds=timeout_seconds or self.call_timeout_seconds,
+                        idempotency_key=idempotency_key,
+                        invocation=invocation,
                     )
-                    current_hash = sha256_json(
-                        {
-                            "input": dict(current.inputSchema or {}),
-                            "output": dict(current.outputSchema)
-                            if current.outputSchema
-                            else None,
-                        }
-                    )
-                    if current_hash != revision.schema_hash:
-                        raise UpstreamMcpError(
-                            "MCP_TOOL_SCHEMA_CHANGED",
-                            "The upstream tool schema changed after selection",
-                            http_status=409,
+                else:
+                    async with self._session(db, server) as (session, _, _):
+                        current = await self._find_upstream_tool(
+                            session, tool.upstream_name
                         )
-                    raw = await self._call_with_protocol_timeout(
-                        session,
-                        tool.upstream_name,
-                        arguments,
-                        timeout_seconds or self.call_timeout_seconds,
-                    )
+                        current_hash = sha256_json(
+                            {
+                                "input": dict(current.inputSchema or {}),
+                                "output": dict(current.outputSchema)
+                                if current.outputSchema
+                                else None,
+                            }
+                        )
+                        if current_hash != revision.schema_hash:
+                            raise UpstreamMcpError(
+                                "MCP_TOOL_SCHEMA_CHANGED",
+                                "The upstream tool schema changed after selection",
+                                http_status=409,
+                            )
+                        raw = await self._call_with_protocol_timeout(
+                            session,
+                            tool.upstream_name,
+                            arguments,
+                            timeout_seconds or self.call_timeout_seconds,
+                        )
             limited = self._limit_result(raw)
             if revision.output_schema and raw.structuredContent is not None:
                 try:
@@ -708,6 +850,127 @@ class UpstreamMcpManager:
             self._record_failure(server.id, exc)
             self._mark_failure(db, server, exc)
             raise
+
+    async def _call_thin_client(
+        self,
+        db: Session,
+        *,
+        server: McpServer,
+        tool_name: str,
+        revision_id: str,
+        schema_hash: str,
+        catalog_generation: int,
+        arguments: dict[str, Any],
+        action_class: str,
+        timeout_seconds: float,
+        idempotency_key: str | None,
+        invocation: McpInvocation,
+    ) -> types.CallToolResult:
+        if (
+            not server.thin_client_id
+            or not server.runtime_id
+            or not server.local_server_id
+        ):
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Thin-client MCP server identity is incomplete",
+                http_status=409,
+            )
+        try:
+            connection = self.thin_client_transport.active_mcp_connection(
+                server.thin_client_id,
+                runtime_id=server.runtime_id,
+                local_server_id=server.local_server_id,
+            )
+        except ThinClientMcpError as exc:
+            raise UpstreamMcpError(
+                exc.code,
+                exc.message,
+                retryable=exc.retryable,
+                http_status=exc.http_status,
+                unknown_outcome=exc.unknown_outcome,
+            ) from exc
+        runtime = (
+            db.query(McpRuntimeConnection)
+            .filter(
+                McpRuntimeConnection.owner_subject == server.owner_subject,
+                McpRuntimeConnection.server_id == server.id,
+                McpRuntimeConnection.thin_client_id == server.thin_client_id,
+                McpRuntimeConnection.runtime_id == server.runtime_id,
+                McpRuntimeConnection.connection_instance_id
+                == connection.connection_instance_id,
+                McpRuntimeConnection.state == "online",
+            )
+            .one_or_none()
+        )
+        if runtime is None:
+            raise UpstreamMcpError(
+                "MCP_STALE_CONNECTION",
+                "Thin-client MCP runtime evidence is stale",
+                retryable=True,
+                http_status=409,
+            )
+        request_id = str(uuid.uuid4())
+        invocation.runtime_connection_id = runtime.id
+        invocation.connection_instance_id = connection.connection_instance_id
+        invocation.thin_client_request_id = request_id
+        db.commit()
+        try:
+            response = await self.thin_client_transport.request_mcp(
+                server.thin_client_id,
+                runtime_id=server.runtime_id,
+                local_server_id=server.local_server_id,
+                connection_instance_id=connection.connection_instance_id,
+                request_id=request_id,
+                server_id=server.id,
+                revision_id=revision_id,
+                tool_name=tool_name,
+                schema_hash=schema_hash,
+                catalog_generation=catalog_generation,
+                arguments=arguments,
+                action_class=action_class,
+                timeout_seconds=timeout_seconds,
+                idempotency_key=idempotency_key,
+            )
+        except ThinClientMcpError as exc:
+            raise UpstreamMcpError(
+                exc.code,
+                exc.message,
+                retryable=exc.retryable,
+                http_status=exc.http_status,
+                unknown_outcome=exc.unknown_outcome,
+            ) from exc
+        if (
+            str(response.get("schema_hash", "")) != schema_hash
+            or int(response.get("catalog_generation", -1)) != catalog_generation
+        ):
+            raise UpstreamMcpError(
+                "MCP_TOOL_SCHEMA_CHANGED",
+                "Local MCP result does not match the selected catalog revision",
+                http_status=409,
+                unknown_outcome=action_class in {"write", "destructive", "production"},
+            )
+        if response.get("type") == "mcp_call_failed":
+            raise UpstreamMcpError(
+                str(response.get("code") or "MCP_PROTOCOL_MISMATCH")[:120],
+                str(response.get("message") or "Local MCP call failed")[:500],
+                retryable=bool(response.get("retryable", False)),
+                unknown_outcome=bool(response.get("unknown_outcome", False)),
+                http_status=int(response.get("http_status", 502)),
+            )
+        result = response.get("result")
+        if response.get("type") != "mcp_call_result" or not isinstance(result, dict):
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Local MCP runtime returned an invalid call result",
+            )
+        try:
+            return types.CallToolResult.model_validate(result)
+        except Exception as exc:
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Local MCP result does not match the MCP CallToolResult contract",
+            ) from exc
 
     async def _find_upstream_tool(self, session: ClientSession, name: str) -> Any:
         cursor: str | None = None

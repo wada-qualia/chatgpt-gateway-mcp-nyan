@@ -2015,6 +2015,11 @@ def test_thin_client_websocket_scopes_all_session_events(client: TestClient) -> 
                 ],
             }
         )
+        hello = websocket.receive_json()
+        assert hello["type"] == "mcp_gateway_hello"
+        assert hello["protocol_version"] == "1.0"
+        assert hello["connection_instance_id"]
+        assert "mcp_runtime_v1" in hello["capabilities"]
         websocket.send_json({"type": "heartbeat", "version": "phase-zero"})
         assert websocket.receive_json()["type"] == "heartbeat_ack"
 

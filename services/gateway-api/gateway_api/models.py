@@ -899,6 +899,9 @@ class McpServer(Base):
     runtime_id: Mapped[str | None] = mapped_column(
         String(160), nullable=True, index=True
     )
+    local_server_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True, index=True
+    )
     display_name: Mapped[str] = mapped_column(String(180))
     normalized_slug: Mapped[str] = mapped_column(String(120))
     transport: Mapped[str] = mapped_column(String(40), index=True)
@@ -1352,6 +1355,15 @@ class McpInvocation(Base):
     )
     execution_permit_id: Mapped[str | None] = mapped_column(
         String(36), nullable=True, index=True
+    )
+    runtime_connection_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    connection_instance_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True, index=True
+    )
+    thin_client_request_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True, index=True
     )
     outcome: Mapped[str] = mapped_column(String(40), default="running", index=True)
     unknown_outcome: Mapped[bool] = mapped_column(Boolean, default=False)

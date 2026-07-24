@@ -35,3 +35,4 @@ spec:
     - schemas/gateway.mcp.projection.published.v1.schema.json
     - schemas/gateway.mcp.runtime.connected.v1.schema.json
     - schemas/gateway.mcp.runtime.disconnected.v1.schema.json
+    - schemas/gateway.mcp.thin_client_protocol.v1.schema.json

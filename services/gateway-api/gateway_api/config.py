@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     gateway_mcp_upstream_max_result_bytes: int = 1000000
     gateway_mcp_upstream_max_text_bytes: int = 512000
     gateway_mcp_upstream_max_content_items: int = 16
+    gateway_mcp_catalog_max_tools: int = 500
+    gateway_mcp_action_preparation_ttl_seconds: int = 900
     gateway_lup_enabled: bool = False
     gateway_lup_endpoint: str = "stage"
     gateway_lup_timeout_seconds: float = 5.0

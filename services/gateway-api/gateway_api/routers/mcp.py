@@ -30,6 +30,12 @@ from ..agent_collaboration_tools import (
     agent_collaboration_tools,
     call_agent_collaboration_tool,
 )
+from ..mcp_federation_broker import (
+    call_mcp_federation_broker_tool,
+    mcp_federation_broker_tool_names,
+    mcp_federation_broker_tools,
+)
+from ..mcp_upstream import UpstreamMcpManager
 from ..agent_coordination import WriteLeaseContext, agent_coordination_service
 from ..agent_coordination_tools import (
     agent_coordination_tool_names,
@@ -1183,6 +1189,7 @@ def _tools(
         *agent_collaboration_tools(),
         *agent_coordination_tools(),
         *agent_autonomy_tools(),
+        *mcp_federation_broker_tools(),
         _tool(
             "file_changes_list",
             "List recent server-side file change records produced by write/edit tool calls.",
@@ -1537,7 +1544,15 @@ async def mcp(
             )
             tool_call = monitoring_service.create_tool_call(db, owner_subject=user.subject, tool_name=name, arguments=arguments)
             try:
-                result = await _call_tool(name, arguments, user, db, settings, tool_call_id=tool_call.id)
+                result = await _call_tool(
+                    name,
+                    arguments,
+                    user,
+                    db,
+                    settings,
+                    upstream=request.app.state.upstream_mcp_manager,
+                    tool_call_id=tool_call.id,
+                )
                 structured = result.get("structuredContent") or {}
                 session_id = structured.get("session_id")
                 monitoring_service.finish_tool_call(
@@ -1567,7 +1582,15 @@ async def mcp(
         }
 
 
-async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, settings: Settings, tool_call_id: str | None = None,
+async def _call_tool(
+    name: str,
+    args: dict[str, Any],
+    user: User,
+    db: Session,
+    settings: Settings,
+    *,
+    upstream: UpstreamMcpManager,
+    tool_call_id: str | None = None,
 ) -> dict[str, Any]:
     if name in agent_collaboration_tool_names():
         return _result(await call_agent_collaboration_tool(name, args, user, db))
@@ -1575,6 +1598,18 @@ async def _call_tool(name: str, args: dict[str, Any], user: User, db: Session, s
         return _result(await call_agent_coordination_tool(name, args, user, db))
     if name in agent_autonomy_tool_names():
         return _result(await call_agent_autonomy_tool(name, args, user, db))
+    if name in mcp_federation_broker_tool_names():
+        return _result(
+            await call_mcp_federation_broker_tool(
+                name,
+                args,
+                user=user,
+                db=db,
+                upstream=upstream,
+                preparation_ttl_seconds=settings.gateway_mcp_action_preparation_ttl_seconds,
+                gateway_tool_call_id=tool_call_id,
+            )
+        )
     if name == "workspace_info":
         path = _workspace(user, settings)
         return _result({"workspace": str(path), "user": user.username})

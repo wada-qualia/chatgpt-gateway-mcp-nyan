@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import re
+import unicodedata
 import uuid
 from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, status
+from jsonschema import Draft202012Validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,6 +21,7 @@ from .mcp_federation_policy import (
     McpPolicyViolation,
     McpReadOnlyStatus,
     McpTrustLevel,
+    canonical_json,
     derive_risk_evidence,
     normalize_slug,
     reject_secret_shaped_payload,
@@ -54,6 +58,62 @@ _SERVER_STATUSES = {
     "disabled",
 }
 _TOOL_NAME_NORMALIZER = re.compile(r"[^a-z0-9_]+")
+
+
+def _sanitize_catalog_text(value: str | None, *, maximum: int) -> str:
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    text = "".join(
+        "" if unicodedata.category(char).startswith("C") else char for char in text
+    )
+    return " ".join(text.split())[:maximum]
+
+
+def _schema_argument_names(schema: dict[str, Any]) -> list[str]:
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return []
+    return sorted(
+        _sanitize_catalog_text(str(name), maximum=120) for name in properties
+    )[:200]
+
+
+def _canonical_schema(
+    value: dict[str, Any] | None, *, required: bool
+) -> dict[str, Any] | None:
+    if value is None:
+        if required:
+            value = {"type": "object", "properties": {}, "additionalProperties": False}
+        else:
+            return None
+    canonical = json.loads(canonical_json(value))
+    Draft202012Validator.check_schema(canonical)
+    return canonical
+
+
+def _revision_search_text(
+    *,
+    server: McpServer,
+    upstream_name: str,
+    normalized_name: str,
+    title: str | None,
+    description: str,
+    input_schema: dict[str, Any],
+    action_class: str,
+    read_only_status: str,
+) -> str:
+    parts = [
+        server.display_name,
+        server.normalized_slug,
+        upstream_name,
+        normalized_name,
+        title or "",
+        description,
+        " ".join(_schema_argument_names(input_schema)),
+        server.trust_level,
+        action_class,
+        read_only_status,
+    ]
+    return _sanitize_catalog_text(" ".join(parts), maximum=20000)
 
 
 def _policy_error(exc: McpPolicyViolation) -> HTTPException:
@@ -776,9 +836,26 @@ def record_tool_revision(
     annotations: dict[str, Any],
     protocol_version: str | None,
     catalog_generation: int,
+    commit: bool = True,
+    emit_revision_event: bool = True,
+    update_server_catalog: bool = True,
 ) -> tuple[McpTool, McpToolRevision, bool]:
     server = get_server(db, owner_subject=owner_subject, server_id=server_id)
+    input_schema = _canonical_schema(input_schema, required=True) or {}
+    output_schema = _canonical_schema(output_schema, required=False)
     reject_secret_shaped_payload(input_schema)
+    upstream_name = _sanitize_catalog_text(upstream_name, maximum=255)
+    if not upstream_name:
+        raise _policy_error(
+            McpPolicyViolation("MCP tool name is empty after sanitation")
+        )
+    title = _sanitize_catalog_text(title, maximum=240) or None
+    description = _sanitize_catalog_text(description, maximum=4000)
+    annotations = json.loads(canonical_json(annotations or {}))
+    if len(canonical_json(annotations).encode("utf-8")) > 65536:
+        raise _policy_error(
+            McpPolicyViolation("MCP tool annotations exceed the metadata limit")
+        )
     schema_document = {"input": input_schema, "output": output_schema}
     schema_hash = sha256_json(schema_document)
     tool = (
@@ -818,8 +895,12 @@ def record_tool_revision(
     )
     if existing is not None:
         tool.current_revision_id = existing.id
-        db.commit()
-        db.refresh(tool)
+        tool.lifecycle_state = "active"
+        if commit:
+            db.commit()
+            db.refresh(tool)
+        else:
+            db.flush()
         return tool, existing, False
     revision_number = (
         db.query(McpToolRevision).filter(McpToolRevision.tool_id == tool.id).count() + 1
@@ -837,8 +918,18 @@ def record_tool_revision(
         revision_number=revision_number,
         input_schema=input_schema,
         output_schema=output_schema,
-        sanitized_title=(title or "")[:240] or None,
-        sanitized_description=description[:4000],
+        sanitized_title=title,
+        sanitized_description=description,
+        search_text=_revision_search_text(
+            server=server,
+            upstream_name=upstream_name,
+            normalized_name=tool.normalized_name,
+            title=title,
+            description=description,
+            input_schema=input_schema,
+            action_class="unknown",
+            read_only_status="unverified",
+        ),
         annotations=annotations,
         schema_hash=schema_hash,
         protocol_version=protocol_version,
@@ -856,30 +947,165 @@ def record_tool_revision(
             previous.superseded_by_revision_id = revision.id
     tool.current_revision_id = revision.id
     tool.version += 1
-    server.catalog_generation = max(server.catalog_generation, catalog_generation)
-    server.last_catalog_refreshed_at = now
-    server.updated_at = now
-    emit_event(
-        db,
-        event_type="gateway.mcp.tool.revision_created.v1",
-        actor_subject=actor_subject,
-        action="revision_created",
-        resource_type="mcp_tool_revision",
-        resource_id=revision.id,
-        payload={
-            "server_id": server_id,
-            "tool_id": tool.id,
-            "revision_id": revision.id,
-            "schema_hash": schema_hash,
-            "catalog_generation": catalog_generation,
-            "action_class": revision.action_class,
-        },
-        commit=False,
-    )
-    db.commit()
-    db.refresh(tool)
-    db.refresh(revision)
+    if update_server_catalog:
+        server.catalog_generation = max(server.catalog_generation, catalog_generation)
+        server.last_catalog_refreshed_at = now
+        server.updated_at = now
+    if emit_revision_event:
+        emit_event(
+            db,
+            event_type="gateway.mcp.tool.revision_created.v1",
+            actor_subject=actor_subject,
+            action="revision_created",
+            resource_type="mcp_tool_revision",
+            resource_id=revision.id,
+            payload={
+                "server_id": server_id,
+                "tool_id": tool.id,
+                "revision_id": revision.id,
+                "schema_hash": schema_hash,
+                "catalog_generation": catalog_generation,
+                "action_class": revision.action_class,
+            },
+            commit=False,
+        )
+    if commit:
+        db.commit()
+        db.refresh(tool)
+        db.refresh(revision)
+    else:
+        db.flush()
     return tool, revision, True
+
+
+def reconcile_catalog_snapshot(
+    db: Session,
+    *,
+    owner_subject: str,
+    actor_subject: str,
+    server_id: str,
+    catalog_generation: int,
+    protocol_version: str | None,
+    tools: list[dict[str, Any]],
+    max_tools: int = 500,
+    tools_list_changed_seen: bool = False,
+) -> dict[str, Any]:
+    server = get_server(db, owner_subject=owner_subject, server_id=server_id)
+    if not 0 <= len(tools) <= max_tools:
+        raise _policy_error(
+            McpPolicyViolation("MCP catalog exceeds the configured tool limit")
+        )
+    names: set[str] = set()
+    prepared: list[dict[str, Any]] = []
+    for raw in tools:
+        name = _sanitize_catalog_text(str(raw.get("upstream_name") or ""), maximum=255)
+        if not name:
+            raise _policy_error(
+                McpPolicyViolation("MCP catalog contains an empty tool name")
+            )
+        if name in names:
+            raise _policy_error(
+                McpPolicyViolation(f"MCP catalog contains duplicate tool name: {name}")
+            )
+        names.add(name)
+        input_schema = (
+            _canonical_schema(dict(raw.get("input_schema") or {}), required=True) or {}
+        )
+        output_value = raw.get("output_schema")
+        output_schema = _canonical_schema(
+            dict(output_value) if output_value else None, required=False
+        )
+        reject_secret_shaped_payload(input_schema)
+        prepared.append(
+            {
+                "upstream_name": name,
+                "input_schema": input_schema,
+                "output_schema": output_schema,
+                "title": _sanitize_catalog_text(raw.get("title"), maximum=240) or None,
+                "description": _sanitize_catalog_text(
+                    raw.get("description"), maximum=4000
+                ),
+                "annotations": json.loads(
+                    canonical_json(dict(raw.get("annotations") or {}))
+                ),
+            }
+        )
+    created_revisions = 0
+    observed_tool_ids: set[str] = set()
+    try:
+        for item in prepared:
+            tool, _, created = record_tool_revision(
+                db,
+                owner_subject=owner_subject,
+                actor_subject=actor_subject,
+                server_id=server.id,
+                upstream_name=item["upstream_name"],
+                input_schema=item["input_schema"],
+                output_schema=item["output_schema"],
+                title=item["title"],
+                description=item["description"],
+                annotations=item["annotations"],
+                protocol_version=protocol_version,
+                catalog_generation=catalog_generation,
+                commit=False,
+                emit_revision_event=False,
+                update_server_catalog=False,
+            )
+            observed_tool_ids.add(tool.id)
+            created_revisions += int(created)
+        missing = (
+            db.query(McpTool)
+            .filter(
+                McpTool.owner_subject == owner_subject,
+                McpTool.server_id == server.id,
+                McpTool.lifecycle_state == "active",
+            )
+            .all()
+        )
+        missing_count = 0
+        now = utcnow()
+        for tool in missing:
+            if tool.id in observed_tool_ids:
+                continue
+            tool.lifecycle_state = "missing"
+            tool.version += 1
+            tool.updated_at = now
+            missing_count += 1
+        server.catalog_generation = catalog_generation
+        server.last_catalog_refreshed_at = now
+        server.status = "online"
+        server.negotiated_protocol_version = protocol_version
+        server.last_connected_at = now
+        server.updated_at = now
+        emit_event(
+            db,
+            event_type="gateway.mcp.catalog.refreshed.v1",
+            actor_subject=actor_subject,
+            action="reconciled",
+            resource_type="mcp_server",
+            resource_id=server.id,
+            payload={
+                "server_id": server.id,
+                "catalog_generation": catalog_generation,
+                "tool_count": len(prepared),
+                "protocol_version": protocol_version,
+                "created_revision_count": created_revisions,
+                "missing_tool_count": missing_count,
+                "tools_list_changed_seen": tools_list_changed_seen,
+            },
+            commit=False,
+        )
+        db.commit()
+        db.refresh(server)
+        return {
+            "server": server,
+            "tool_count": len(prepared),
+            "created_revision_count": created_revisions,
+            "missing_tool_count": missing_count,
+        }
+    except Exception:
+        db.rollback()
+        raise
 
 
 def classify_revision(
@@ -922,6 +1148,18 @@ def classify_revision(
         raise _policy_error(exc) from exc
     revision.action_class = action_class
     revision.read_only_status = read_only_status
+    tool = get_tool(db, owner_subject=owner_subject, tool_id=revision.tool_id)
+    server = get_server(db, owner_subject=owner_subject, server_id=revision.server_id)
+    revision.search_text = _revision_search_text(
+        server=server,
+        upstream_name=tool.upstream_name,
+        normalized_name=tool.normalized_name,
+        title=revision.sanitized_title,
+        description=revision.sanitized_description,
+        input_schema=revision.input_schema,
+        action_class=action_class,
+        read_only_status=read_only_status,
+    )
     revision.version += 1
     revision.classified_by_subject = actor_subject
     revision.classified_at = utcnow()
@@ -982,7 +1220,6 @@ def list_revisions(
     )
 
 
-
 def get_current_exposure(
     db: Session, *, owner_subject: str, tool_id: str
 ) -> McpToolExposure | None:
@@ -999,6 +1236,7 @@ def get_current_exposure(
         )
         .first()
     )
+
 
 def upsert_exposure(
     db: Session,

@@ -24,6 +24,8 @@ spec:
     - schemas/gateway.mcp.policy.created.v1.schema.json
     - schemas/gateway.mcp.policy.updated.v1.schema.json
     - schemas/gateway.mcp.catalog.refreshed.v1.schema.json
+    - schemas/gateway.mcp.action.prepared.v1.schema.json
+    - schemas/gateway.mcp.action.executed.v1.schema.json
     - schemas/gateway.mcp.tool.revision_created.v1.schema.json
     - schemas/gateway.mcp.tool.classification_changed.v1.schema.json
     - schemas/gateway.mcp.tool.exposure_changed.v1.schema.json

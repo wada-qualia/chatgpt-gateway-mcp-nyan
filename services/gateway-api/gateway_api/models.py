@@ -1003,6 +1003,7 @@ class McpToolRevision(Base):
     output_schema: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     sanitized_title: Mapped[str | None] = mapped_column(String(240), nullable=True)
     sanitized_description: Mapped[str] = mapped_column(Text, default="")
+    search_text: Mapped[str] = mapped_column(Text, default="")
     annotations: Mapped[dict] = mapped_column(JSON, default=dict)
     schema_hash: Mapped[str] = mapped_column(String(64), index=True)
     protocol_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -1235,6 +1236,75 @@ class McpMutationReceipt(Base):
     response_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True
+    )
+
+
+class McpActionPreparation(Base):
+    __tablename__ = "mcp_action_preparations"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "idempotency_key",
+            name="uq_mcp_action_preparation_owner_key",
+        ),
+        CheckConstraint(
+            "action_class in ('write', 'destructive', 'production')",
+            name="ck_mcp_action_preparation_action_class",
+        ),
+        CheckConstraint(
+            "status in ('pending_approval', 'approved', 'executing', 'succeeded', 'failed', 'expired', 'revoked')",
+            name="ck_mcp_action_preparation_status",
+        ),
+        Index("ix_mcp_action_preparation_owner_status", "owner_subject", "status"),
+        Index("ix_mcp_action_preparation_server_created", "server_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    actor_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    tool_id: Mapped[str] = mapped_column(ForeignKey("mcp_tools.id"), index=True)
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_tool_revisions.id"), index=True
+    )
+    schema_hash: Mapped[str] = mapped_column(String(64), index=True)
+    action_class: Mapped[str] = mapped_column(String(40), index=True)
+    arguments_secret_id: Mapped[str] = mapped_column(
+        ForeignKey("secret_blobs.id"), index=True
+    )
+    arguments_redacted: Mapped[dict] = mapped_column(JSON, default=dict)
+    arguments_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    justification: Mapped[str] = mapped_column(Text)
+    preview: Mapped[dict] = mapped_column(JSON, default=dict)
+    approval_class: Mapped[str] = mapped_column(String(40))
+    exposure_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_tool_exposures.id"), index=True
+    )
+    exposure_version: Mapped[int] = mapped_column(Integer)
+    federation_policy_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_federation_policies.id"), index=True
+    )
+    federation_policy_generation: Mapped[int] = mapped_column(Integer)
+    autonomy_policy_id: Mapped[str] = mapped_column(String(36), index=True)
+    autonomy_policy_generation: Mapped[int] = mapped_column(Integer)
+    command_id: Mapped[str] = mapped_column(String(36), index=True)
+    executor_agent_id: Mapped[str] = mapped_column(String(36), index=True)
+    approval_request_id: Mapped[str] = mapped_column(
+        String(36), unique=True, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(40), default="pending_approval", index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    executed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
     )
 
 

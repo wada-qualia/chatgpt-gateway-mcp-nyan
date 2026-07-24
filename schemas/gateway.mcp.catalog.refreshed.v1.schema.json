@@ -9,7 +9,10 @@
     "server_id",
     "catalog_generation",
     "tool_count",
-    "protocol_version"
+    "protocol_version",
+    "created_revision_count",
+    "missing_tool_count",
+    "tools_list_changed_seen"
   ],
   "properties": {
     "event_id": {
@@ -33,6 +36,17 @@
         "string",
         "null"
       ]
+    },
+    "created_revision_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "missing_tool_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tools_list_changed_seen": {
+      "type": "boolean"
     }
   },
   "additionalProperties": false

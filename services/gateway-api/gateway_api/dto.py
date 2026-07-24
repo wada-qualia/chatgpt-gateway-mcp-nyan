@@ -1162,7 +1162,7 @@ class McpToolDescribeInput(McpStrictModel):
 class McpCallReadInput(McpStrictModel):
     tool_ref: str = Field(min_length=1, max_length=512)
     schema_hash: str = Field(min_length=64, max_length=64)
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments: dict[str, Any]
 
     @field_validator("arguments")
     @classmethod
@@ -1187,6 +1187,7 @@ class McpCallReadInput(McpStrictModel):
 
 class McpActionPrepareInput(McpCallReadInput):
     justification: str = Field(min_length=1, max_length=2000)
+    idempotency_key: str = Field(min_length=1, max_length=160)
 
 
 class McpActionExecuteInput(McpStrictModel):

@@ -21,8 +21,12 @@ from mcp.shared.exceptions import McpError
 from sqlalchemy.orm import Session
 
 from .crypto import decrypt_text, encrypt_text
-from .events import emit_event
-from .mcp_federation import get_revision, get_server, get_tool, record_tool_revision
+from .mcp_federation import (
+    get_revision,
+    get_server,
+    get_tool,
+    reconcile_catalog_snapshot,
+)
 from .mcp_federation_policy import sha256_json
 from .models import (
     McpCredentialBinding,
@@ -68,6 +72,8 @@ class UpstreamCallResult:
     payload: dict[str, Any]
     truncated: bool
     serialized_bytes: int
+    invocation_id: str | None = None
+    is_error: bool = False
 
 
 class UpstreamMcpError(RuntimeError):
@@ -359,6 +365,7 @@ class UpstreamMcpManager:
         max_result_bytes: int = 1_000_000,
         max_text_bytes: int = 512_000,
         max_content_items: int = 16,
+        max_catalog_tools: int = 500,
     ) -> None:
         self.public_base_url = public_base_url.rstrip("/")
         self.allow_private_networks = allow_private_networks
@@ -372,6 +379,7 @@ class UpstreamMcpManager:
         self.max_result_bytes = max_result_bytes
         self.max_text_bytes = max_text_bytes
         self.max_content_items = max_content_items
+        self.max_catalog_tools = max(1, int(max_catalog_tools))
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._circuits: dict[str, CircuitState] = {}
         self._active_calls: set[asyncio.Task[Any]] = set()
@@ -391,7 +399,8 @@ class UpstreamMcpManager:
         parsed = urlparse(endpoint)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise UpstreamMcpError(
-                "MCP_PROTOCOL_MISMATCH", "Upstream endpoint must be an absolute HTTP URL"
+                "MCP_PROTOCOL_MISMATCH",
+                "Upstream endpoint must be an absolute HTTP URL",
             )
         if parsed.username or parsed.password or parsed.fragment:
             raise UpstreamMcpError(
@@ -404,11 +413,9 @@ class UpstreamMcpManager:
                 f"Insecure HTTP is not allowed for {purpose} endpoints",
             )
         own = urlparse(self.public_base_url)
-        if (
-            parsed.hostname.lower() == (own.hostname or "").lower()
-            and (parsed.port or _default_port(parsed.scheme))
-            == (own.port or _default_port(own.scheme))
-        ):
+        if parsed.hostname.lower() == (own.hostname or "").lower() and (
+            parsed.port or _default_port(parsed.scheme)
+        ) == (own.port or _default_port(own.scheme)):
             raise UpstreamMcpError(
                 "MCP_RECURSION_DETECTED",
                 "The Gateway cannot federate its own public endpoint",
@@ -479,7 +486,11 @@ class UpstreamMcpManager:
         started = time.monotonic()
         try:
             async with self._bounded(server):
-                async with self._session(db, server) as (session, initialized, session_id):
+                async with self._session(db, server) as (
+                    session,
+                    initialized,
+                    session_id,
+                ):
                     listed = await session.list_tools()
                     tool_count = len(listed.tools)
             self._record_success(server.id)
@@ -523,9 +534,11 @@ class UpstreamMcpManager:
 
         try:
             async with self._bounded(server):
-                async with self._session(
-                    db, server, message_handler=handler
-                ) as (session, initialized, _):
+                async with self._session(db, server, message_handler=handler) as (
+                    session,
+                    initialized,
+                    _,
+                ):
                     discovered: list[Any] = []
                     cursor: str | None = None
                     while True:
@@ -534,43 +547,40 @@ class UpstreamMcpManager:
                         cursor = page.nextCursor
                         if not cursor:
                             break
-            for tool in discovered:
-                annotations = _model_json(tool.annotations) if tool.annotations else {}
-                record_tool_revision(
+            snapshot = [
+                {
+                    "upstream_name": tool.name,
+                    "input_schema": dict(tool.inputSchema or {}),
+                    "output_schema": dict(tool.outputSchema)
+                    if tool.outputSchema
+                    else None,
+                    "title": tool.title,
+                    "description": tool.description or "",
+                    "annotations": _model_json(tool.annotations)
+                    if tool.annotations
+                    else {},
+                }
+                for tool in discovered
+            ]
+            try:
+                reconciliation = reconcile_catalog_snapshot(
                     db,
                     owner_subject=owner_subject,
                     actor_subject=actor_subject,
                     server_id=server.id,
-                    upstream_name=tool.name,
-                    input_schema=dict(tool.inputSchema or {}),
-                    output_schema=dict(tool.outputSchema) if tool.outputSchema else None,
-                    title=tool.title,
-                    description=tool.description or "",
-                    annotations=annotations,
-                    protocol_version=initialized.protocolVersion,
                     catalog_generation=generation,
+                    protocol_version=initialized.protocolVersion,
+                    tools=snapshot,
+                    max_tools=self.max_catalog_tools,
+                    tools_list_changed_seen=tools_changed.is_set(),
                 )
-            server = get_server(db, owner_subject=owner_subject, server_id=server_id)
-            server.catalog_generation = generation
-            server.last_catalog_refreshed_at = utcnow()
-            self._mark_online(db, server, initialized, commit=False)
-            emit_event(
-                db,
-                event_type="gateway.mcp.catalog.refreshed.v1",
-                actor_subject=actor_subject,
-                action="refreshed",
-                resource_type="mcp_server",
-                resource_id=server.id,
-                payload={
-                    "server_id": server.id,
-                    "catalog_generation": generation,
-                    "tool_count": len(discovered),
-                    "tools_list_changed_seen": tools_changed.is_set(),
-                },
-                commit=False,
-            )
-            db.commit()
-            db.refresh(server)
+            except Exception as exc:
+                raise UpstreamMcpError(
+                    "MCP_PROTOCOL_MISMATCH",
+                    "Upstream MCP catalog snapshot failed validation",
+                    http_status=422,
+                ) from exc
+            server = reconciliation["server"]
             self._record_success(server.id)
             return server
         except UpstreamMcpError as exc:
@@ -588,12 +598,19 @@ class UpstreamMcpManager:
         arguments: dict[str, Any],
         timeout_seconds: float | None = None,
         idempotency_key: str | None = None,
+        gateway_tool_call_id: str | None = None,
+        correlation_id: str | None = None,
+        preparation_id: str | None = None,
+        approval_request_id: str | None = None,
+        execution_permit_id: str | None = None,
     ) -> UpstreamCallResult:
         revision = get_revision(
             db, owner_subject=owner_subject, revision_id=revision_id
         )
         tool = get_tool(db, owner_subject=owner_subject, tool_id=revision.tool_id)
-        server = get_server(db, owner_subject=owner_subject, server_id=revision.server_id)
+        server = get_server(
+            db, owner_subject=owner_subject, server_id=revision.server_id
+        )
         try:
             Draft202012Validator.check_schema(revision.input_schema)
             Draft202012Validator(revision.input_schema).validate(arguments)
@@ -613,6 +630,8 @@ class UpstreamMcpManager:
             id=str(uuid.uuid4()),
             owner_subject=owner_subject,
             actor_subject=actor_subject,
+            gateway_tool_call_id=gateway_tool_call_id,
+            correlation_id=correlation_id,
             server_id=server.id,
             tool_id=tool.id,
             revision_id=revision.id,
@@ -620,6 +639,9 @@ class UpstreamMcpManager:
             action_class=revision.action_class,
             arguments_redacted=_redact_structure(arguments),
             arguments_sha256=sha256_json(arguments),
+            preparation_id=preparation_id,
+            approval_request_id=approval_request_id,
+            execution_permit_id=execution_permit_id,
             idempotency_key=idempotency_key,
             started_at=utcnow(),
             created_at=utcnow(),
@@ -629,7 +651,9 @@ class UpstreamMcpManager:
         try:
             async with self._bounded(server):
                 async with self._session(db, server) as (session, _, _):
-                    current = await self._find_upstream_tool(session, tool.upstream_name)
+                    current = await self._find_upstream_tool(
+                        session, tool.upstream_name
+                    )
                     current_hash = sha256_json(
                         {
                             "input": dict(current.inputSchema or {}),
@@ -671,6 +695,8 @@ class UpstreamMcpManager:
             invocation.completed_at = utcnow()
             db.commit()
             self._record_success(server.id)
+            limited.invocation_id = invocation.id
+            limited.is_error = bool(raw.isError)
             return limited
         except UpstreamMcpError as exc:
             invocation.outcome = "unknown" if exc.unknown_outcome else "failed"
@@ -693,7 +719,9 @@ class UpstreamMcpManager:
             cursor = page.nextCursor
             if not cursor:
                 raise UpstreamMcpError(
-                    "MCP_TOOL_NOT_FOUND", "The upstream tool no longer exists", http_status=404
+                    "MCP_TOOL_NOT_FOUND",
+                    "The upstream tool no longer exists",
+                    http_status=404,
                 )
 
     async def _call_with_protocol_timeout(
@@ -956,9 +984,7 @@ class UpstreamMcpManager:
             db.refresh(server)
 
     @staticmethod
-    def _mark_failure(
-        db: Session, server: McpServer, error: UpstreamMcpError
-    ) -> None:
+    def _mark_failure(db: Session, server: McpServer, error: UpstreamMcpError) -> None:
         if error.code == "MCP_SERVER_DISABLED":
             status = "disabled"
         elif error.code == "MCP_AUTH_REQUIRED":
@@ -992,13 +1018,15 @@ class UpstreamMcpManager:
             if len(encoded) <= text_budget:
                 text_budget -= len(encoded)
                 continue
-            item["text"] = encoded[: max(text_budget, 0)].decode("utf-8", errors="ignore")
+            item["text"] = encoded[: max(text_budget, 0)].decode(
+                "utf-8", errors="ignore"
+            )
             item["_gateway_truncated"] = True
             text_budget = 0
             truncated = True
-        serialized = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode(
-            "utf-8"
-        )
+        serialized = json.dumps(
+            payload, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
         if len(serialized) > self.max_result_bytes:
             raise UpstreamMcpError(
                 "MCP_RESULT_TOO_LARGE",
@@ -1065,7 +1093,11 @@ def _redact_structure(value: Any) -> Any:
     if isinstance(value, dict):
         redacted: dict[str, Any] = {}
         for key, item in value.items():
-            redacted[key] = "[REDACTED]" if _SECRET_KEY_PATTERN.search(key) else _redact_structure(item)
+            redacted[key] = (
+                "[REDACTED]"
+                if _SECRET_KEY_PATTERN.search(key)
+                else _redact_structure(item)
+            )
         return redacted
     if isinstance(value, list):
         return [_redact_structure(item) for item in value[:100]]
@@ -1096,6 +1128,7 @@ def _secret_value(value: Any) -> str | None:
 
 def _default_port(scheme: str) -> int:
     return 443 if scheme == "https" else 80
+
 
 def _find_upstream_error(error: BaseExceptionGroup) -> UpstreamMcpError | None:
     for nested in error.exceptions:

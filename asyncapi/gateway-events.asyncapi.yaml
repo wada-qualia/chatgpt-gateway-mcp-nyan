@@ -288,6 +288,14 @@ channels:
     publish:
       message:
         $ref: '#/components/messages/McpRuntimeDisconnected'
+  gateway.mcp.action.prepared.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpActionPrepared'
+  gateway.mcp.action.executed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpActionExecuted'
 components:
   messages:
     McpCredential_bindingCreated:
@@ -370,6 +378,14 @@ components:
       name: gateway.mcp.runtime.disconnected.v1
       payload:
         $ref: ../schemas/gateway.mcp.runtime.disconnected.v1.schema.json
+    McpActionPrepared:
+      name: gateway.mcp.action.prepared.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.action.prepared.v1.schema.json
+    McpActionExecuted:
+      name: gateway.mcp.action.executed.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.action.executed.v1.schema.json
     AutonomyPolicyCreated:
       name: gateway.autonomy.policy.created.v1
       payload:

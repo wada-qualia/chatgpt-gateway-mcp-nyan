@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.action.prepared.v1",
+  "title": "McpActionPrepared",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "preparation_id",
+    "server_id",
+    "tool_id",
+    "revision_id",
+    "schema_hash",
+    "arguments_sha256",
+    "approval_request_id",
+    "approval_class",
+    "action_class"
+  ],
+  "properties": {
+    "event_id": { "type": "string" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "preparation_id": { "type": "string" },
+    "server_id": { "type": "string" },
+    "tool_id": { "type": "string" },
+    "revision_id": { "type": "string" },
+    "schema_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "arguments_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "approval_request_id": { "type": "string" },
+    "approval_class": { "enum": ["operator", "quorum", "production"] },
+    "action_class": { "enum": ["write", "destructive", "production"] }
+  },
+  "additionalProperties": false
+}

@@ -103,7 +103,8 @@
         "tool_ref",
         "schema_hash",
         "arguments",
-        "justification"
+        "justification",
+        "idempotency_key"
       ],
       "properties": {
         "tool_ref": {
@@ -119,6 +120,11 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 2000
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
         }
       },
       "additionalProperties": false

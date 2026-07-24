@@ -6379,3 +6379,45 @@ def test_p1_administration_registry_is_safe_and_admin_only(
         client.get("/api/registry/administration/users", headers=headers).status_code
         == 403
     )
+def test_mcp_federation_phase_three_broker_tools_are_stable_and_dispatch(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 7300, "method": "tools/list"},
+    )
+    assert response.status_code == 200
+    tools = {tool["name"]: tool for tool in response.json()["result"]["tools"]}
+    expected = {
+        "mcp_catalog_search",
+        "mcp_tool_describe",
+        "mcp_call_read",
+        "mcp_action_prepare",
+        "mcp_action_execute",
+    }
+    assert expected.issubset(tools)
+    assert tools["mcp_catalog_search"]["annotations"]["readOnlyHint"] is True
+    assert tools["mcp_call_read"]["annotations"]["readOnlyHint"] is True
+    assert tools["mcp_action_prepare"]["annotations"]["readOnlyHint"] is False
+    assert tools["mcp_action_execute"]["annotations"]["idempotentHint"] is True
+    assert tools["mcp_action_execute"]["annotations"]["destructiveHint"] is True
+    assert "idempotency_key" in tools["mcp_action_prepare"]["inputSchema"]["required"]
+    assert not any(name in tools for name in {"mcp_call", "mcp_invoke", "mcp_execute"})
+
+    search = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 7301,
+            "method": "tools/call",
+            "params": {
+                "name": "mcp_catalog_search",
+                "arguments": {"query": "no-reviewed-tool-exists", "limit": 5},
+            },
+        },
+    )
+    assert search.status_code == 200
+    result = search.json()["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"]["count"] == 0
+    assert result["structuredContent"]["results"] == []

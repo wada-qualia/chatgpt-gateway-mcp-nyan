@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.action.executed.v1",
+  "title": "McpActionExecuted",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "preparation_id",
+    "server_id",
+    "tool_id",
+    "revision_id",
+    "schema_hash",
+    "arguments_sha256",
+    "approval_request_id",
+    "execution_permit_id",
+    "action_receipt_id",
+    "status",
+    "invocation_id"
+  ],
+  "properties": {
+    "event_id": { "type": "string" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "preparation_id": { "type": "string" },
+    "server_id": { "type": "string" },
+    "tool_id": { "type": "string" },
+    "revision_id": { "type": "string" },
+    "schema_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "arguments_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "approval_request_id": { "type": "string" },
+    "execution_permit_id": { "type": "string" },
+    "action_receipt_id": { "type": "string" },
+    "status": { "enum": ["succeeded", "failed", "unknown"] },
+    "invocation_id": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

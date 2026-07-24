@@ -55,6 +55,7 @@ COPY configs /app/configs
 COPY openapi /app/openapi
 COPY asyncapi /app/asyncapi
 COPY schemas /app/schemas
+COPY database /app/database
 COPY galaxy.project.yaml /app/galaxy.project.yaml
 COPY deploy/gateway_known_hosts /etc/gateway/ssh_known_hosts
 COPY --from=frontend-build /frontend/dist /app/frontend/dist

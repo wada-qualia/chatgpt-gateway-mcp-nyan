@@ -1,3 +1,4 @@
+# ruff: noqa: UP037
 from __future__ import annotations
 
 from datetime import datetime
@@ -873,6 +874,104 @@ class LupToolPhaseSealOut(BaseModel):
     created: bool
     created_at: datetime
     updated_at: datetime
+
+class LupFinalResponseCompleteCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_message_id: str = Field(min_length=1, max_length=512)
+    session_id: str = Field(min_length=1, max_length=512)
+    callback_id: str = Field(min_length=1, max_length=512)
+    delivery_state: Literal["accepted", "delivered"]
+    completion_mode: Literal["provider_exact", "host_observed", "recovered"]
+    completed_at: datetime | None = None
+    request_id: str | None = Field(default=None, min_length=1, max_length=512)
+    recovery_id: str | None = Field(default=None, min_length=1, max_length=512)
+    usage: LupToolUsageCreate | None = None
+
+    @field_validator("completed_at")
+    @classmethod
+    def validate_completed_at(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("completed_at must include a timezone")
+        return value
+
+    @model_validator(mode="after")
+    def validate_completion_mode(self) -> LupFinalResponseCompleteCreate:
+        if self.completion_mode == "provider_exact":
+            if self.usage is None or self.usage.measurement_kind != "provider_exact":
+                raise ValueError(
+                    "provider_exact completion requires provider_exact usage"
+                )
+        elif self.usage is not None:
+            raise ValueError("only provider_exact completion may include usage")
+        if self.completion_mode == "recovered":
+            if self.recovery_id is None:
+                raise ValueError("recovered completion requires recovery_id")
+        elif self.recovery_id is not None:
+            raise ValueError("recovery_id is only valid for recovered completion")
+        return self
+
+
+class LupFinalResponseAbandonCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_message_id: str = Field(min_length=1, max_length=512)
+    session_id: str = Field(min_length=1, max_length=512)
+    callback_id: str = Field(min_length=1, max_length=512)
+    reason_code: Literal[
+        "caller_cancelled",
+        "host_disconnected",
+        "timeout",
+        "process_crash",
+        "recovery_expired",
+        "policy_rejected",
+    ]
+    abandoned_at: datetime | None = None
+
+    @field_validator("abandoned_at")
+    @classmethod
+    def validate_abandoned_at(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("abandoned_at must include a timezone")
+        return value
+
+
+class LupTaskTerminalOut(BaseModel):
+    terminal_event_id: str
+    task_usage_id: str
+    correlation_id: str
+    source_message_id: str
+    session_id: str
+    callback_id: str
+    terminal_kind: Literal["completed", "abandoned"]
+    completion_mode: Literal["provider_exact", "host_observed", "recovered"] | None = (
+        None
+    )
+    delivery_state: Literal["accepted", "delivered"] | None = None
+    recovery_id: str | None = None
+    reason_code: (
+        Literal[
+            "caller_cancelled",
+            "host_disconnected",
+            "timeout",
+            "process_crash",
+            "recovery_expired",
+            "policy_rejected",
+        ]
+        | None
+    ) = None
+    request_id: str | None = None
+    final_observation_event_id: str | None = None
+    final_observation_id: str | None = None
+    observation_receipt_status: Literal["accepted", "duplicate"] | None = None
+    observation_receipt_id: str | None = None
+    terminal_receipt_status: Literal["accepted", "duplicate"]
+    terminal_receipt_id: str | None = None
+    terminal_at: datetime
+    created: bool
+    created_at: datetime
+    updated_at: datetime
+
 
 class McpStrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)

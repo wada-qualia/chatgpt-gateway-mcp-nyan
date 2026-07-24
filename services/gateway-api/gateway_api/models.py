@@ -1,3 +1,4 @@
+# ruff: noqa: I001, UP017
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -1501,6 +1502,80 @@ class LupToolPhaseSeal(Base):
         String(36), nullable=True
     )
     sealed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class LupTaskTerminal(Base):
+    __tablename__ = "lup_task_terminals"
+
+    task_usage_id: Mapped[str] = mapped_column(
+        ForeignKey("lup_task_starts.task_usage_id"), primary_key=True
+    )
+    terminal_event_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, unique=True, index=True
+    )
+    owner_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    source_message_id: Mapped[str] = mapped_column(
+        String(512), nullable=False, index=True
+    )
+    session_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    callback_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    binding_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    terminal_kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    completion_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    delivery_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    recovery_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, index=True
+    )
+    final_usage_measurement: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    final_observation_event_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, unique=True
+    )
+    final_observation_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, unique=True
+    )
+    observation_receipt_status: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    observation_receipt_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, unique=True
+    )
+    observation_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    observation_broker_provider: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    observation_stream_sequence: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    observation_receipt_correlation_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
+    terminal_receipt_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    terminal_receipt_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, unique=True
+    )
+    terminal_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    terminal_broker_provider: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    terminal_stream_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    terminal_receipt_correlation_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )
+    terminal_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False, index=True
     )

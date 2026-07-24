@@ -1271,6 +1271,126 @@ paths:
         '502': {description: LUP rejected or returned an invalid durable receipt}
         '503': {description: LUP accounting or durable acceptance unavailable}
 
+  /api/host/usage/tasks/tool-calls:
+    post:
+      operationId: recordHostUsageToolCall
+      summary: Record one authenticated host-confirmed tool callback inside an existing task
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source_message_id, session_id, callback_id, tool_call_id]
+              properties:
+                source_message_id: {type: string, minLength: 1, maxLength: 512}
+                session_id: {type: string, minLength: 1, maxLength: 512}
+                callback_id: {type: string, minLength: 1, maxLength: 512}
+                tool_call_id: {type: string, minLength: 1, maxLength: 512}
+                command_session_id: {type: [string, 'null'], minLength: 1, maxLength: 512}
+                request_id: {type: [string, 'null'], minLength: 1, maxLength: 512}
+                occurred_at: {type: [string, 'null'], format: date-time}
+                usage: {type: [object, 'null']}
+      responses:
+        '201': {description: New tool callback accepted}
+        '200': {description: Existing identical callback}
+        '401': {description: Missing or invalid principal bearer}
+        '409': {description: Callback conflict, sealed phase or terminal task}
+        '422': {description: Invalid or forbidden request fields}
+        '503': {description: LUP accounting unavailable}
+
+  /api/host/usage/tasks/tool-phase/seal:
+    post:
+      operationId: sealHostUsageToolPhase
+      summary: Seal the host-declared last tool boundary without completing the task
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source_message_id, session_id]
+              properties:
+                source_message_id: {type: string, minLength: 1, maxLength: 512}
+                session_id: {type: string, minLength: 1, maxLength: 512}
+                sealed_at: {type: [string, 'null'], format: date-time}
+      responses:
+        '201': {description: New tool-phase seal accepted}
+        '200': {description: Existing identical seal}
+        '401': {description: Missing or invalid principal bearer}
+        '409': {description: Seal conflict or terminal task}
+        '422': {description: Invalid or forbidden request fields}
+        '503': {description: LUP accounting unavailable}
+
+  /api/host/usage/tasks/final-response/complete:
+    post:
+      operationId: completeHostFinalResponse
+      summary: Complete an existing task after explicit host acceptance or delivery of the final answer
+      description: Does not accept final-response content and is never inferred from an MCP tools/call response.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source_message_id, session_id, callback_id, delivery_state, completion_mode]
+              properties:
+                source_message_id: {type: string, minLength: 1, maxLength: 512}
+                session_id: {type: string, minLength: 1, maxLength: 512}
+                callback_id: {type: string, minLength: 1, maxLength: 512}
+                delivery_state: {type: string, enum: [accepted, delivered]}
+                completion_mode: {type: string, enum: [provider_exact, host_observed, recovered]}
+                completed_at: {type: [string, 'null'], format: date-time}
+                request_id: {type: [string, 'null'], minLength: 1, maxLength: 512}
+                recovery_id: {type: [string, 'null'], minLength: 1, maxLength: 512}
+                usage: {type: [object, 'null'], description: Provider-exact numeric model/token measurement only}
+      responses:
+        '201': {description: New terminal completion durably accepted}
+        '200': {description: Existing identical terminal callback}
+        '401': {description: Missing or invalid principal bearer}
+        '409': {description: Conflicting terminal outcome or unsealed tool phase}
+        '422': {description: Invalid, content-bearing or unsupported completion data}
+        '503': {description: LUP accounting unavailable}
+
+  /api/host/usage/tasks/final-response/abandon:
+    post:
+      operationId: abandonHostFinalResponse
+      summary: Abandon an existing task after an explicit host cancellation or failure signal
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source_message_id, session_id, callback_id, reason_code]
+              properties:
+                source_message_id: {type: string, minLength: 1, maxLength: 512}
+                session_id: {type: string, minLength: 1, maxLength: 512}
+                callback_id: {type: string, minLength: 1, maxLength: 512}
+                reason_code:
+                  type: string
+                  enum: [caller_cancelled, host_disconnected, timeout, process_crash, recovery_expired, policy_rejected]
+                abandoned_at: {type: [string, 'null'], format: date-time}
+      responses:
+        '201': {description: New terminal abandonment durably accepted}
+        '200': {description: Existing identical abandonment callback}
+        '401': {description: Missing or invalid principal bearer}
+        '409': {description: Conflicting terminal outcome}
+        '422': {description: Invalid or forbidden request fields}
+        '503': {description: LUP accounting unavailable}
+
 components:
   securitySchemes:
     bearerAuth:

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from .config import Settings
 from .dto import LupToolCallCreate
-from .models import LupTaskStart, LupToolCall, LupToolPhaseSeal
+from .models import LupTaskStart, LupTaskTerminal, LupToolCall, LupToolPhaseSeal
 from .usage_accounting import LUP_TASK_NAMESPACE, KeycloakClientCredentialsProvider
 
 _DURABLE_RECEIPT_STATUSES = frozenset({"accepted", "duplicate"})
@@ -389,6 +389,11 @@ class LupToolLifecycleService:
                     detail="The callback id is already bound to different lifecycle data",
                 )
             return ToolCallResult(task=task, call=existing, created=False)
+        if db.get(LupTaskTerminal, task.task_usage_id) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The task lifecycle is already terminal",
+            )
         if db.get(LupToolPhaseSeal, task.task_usage_id) is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -522,6 +527,11 @@ class LupToolLifecycleService:
                         detail="The tool phase was already sealed with different data",
                     )
             return ToolPhaseSealResult(task=task, seal=existing, created=False)
+        if db.get(LupTaskTerminal, task.task_usage_id) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The task lifecycle is already terminal",
+            )
         effective_at = sealed_at or datetime.now(UTC)
         last_call = (
             db.query(LupToolCall)

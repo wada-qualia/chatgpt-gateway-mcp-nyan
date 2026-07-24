@@ -1,3 +1,4 @@
+# ruff: noqa: B008
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, Response, status
@@ -6,8 +7,11 @@ from sqlalchemy.orm import Session
 from ..auth import LupPrincipal, get_lup_principal, require_role
 from ..database import get_db
 from ..dto import (
+    LupFinalResponseAbandonCreate,
+    LupFinalResponseCompleteCreate,
     LupTaskStartCreate,
     LupTaskStartOut,
+    LupTaskTerminalOut,
     LupToolCallCreate,
     LupToolCallOut,
     LupToolPhaseSealCreate,
@@ -78,6 +82,7 @@ async def start_host_task(
         "created_at": task.created_at,
         "updated_at": task.updated_at,
     }
+
 
 @router.post(
     "/tool-calls",
@@ -173,4 +178,97 @@ async def seal_host_tool_phase(
         "created": result.created,
         "created_at": seal.created_at,
         "updated_at": seal.updated_at,
+    }
+
+
+@router.post(
+    "/final-response/complete",
+    response_model=LupTaskTerminalOut,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_200_OK: {
+            "description": "The same authenticated terminal callback was already accepted."
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "The task is already terminal, the tool phase is unsealed, or callback data conflicts."
+        },
+    },
+)
+async def complete_host_final_response(
+    payload: LupFinalResponseCompleteCreate,
+    request: Request,
+    response: Response,
+    principal: LupPrincipal = Depends(get_lup_principal),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_role(principal.user, "gateway-user")
+    result = await request.app.state.gateway_runtime.usage_final_lifecycle.complete(
+        db,
+        owner_subject=principal.user.subject,
+        principal_token=principal.token,
+        payload=payload,
+    )
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    terminal = result.terminal
+    return _terminal_response(result.task.correlation_id, terminal, result.created)
+
+
+@router.post(
+    "/final-response/abandon",
+    response_model=LupTaskTerminalOut,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_200_OK: {
+            "description": "The same authenticated abandonment callback was already accepted."
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "The task already has a different terminal lifecycle outcome."
+        },
+    },
+)
+async def abandon_host_final_response(
+    payload: LupFinalResponseAbandonCreate,
+    request: Request,
+    response: Response,
+    principal: LupPrincipal = Depends(get_lup_principal),
+    db: Session = Depends(get_db),
+) -> dict:
+    require_role(principal.user, "gateway-user")
+    result = await request.app.state.gateway_runtime.usage_final_lifecycle.abandon(
+        db,
+        owner_subject=principal.user.subject,
+        principal_token=principal.token,
+        payload=payload,
+    )
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    terminal = result.terminal
+    return _terminal_response(result.task.correlation_id, terminal, result.created)
+
+
+def _terminal_response(correlation_id: str, terminal, created: bool) -> dict:
+    return {
+        "terminal_event_id": terminal.terminal_event_id,
+        "task_usage_id": terminal.task_usage_id,
+        "correlation_id": correlation_id,
+        "source_message_id": terminal.source_message_id,
+        "session_id": terminal.session_id,
+        "callback_id": terminal.callback_id,
+        "terminal_kind": terminal.terminal_kind,
+        "completion_mode": terminal.completion_mode,
+        "delivery_state": terminal.delivery_state,
+        "recovery_id": terminal.recovery_id,
+        "reason_code": terminal.reason_code,
+        "request_id": terminal.request_id,
+        "final_observation_event_id": terminal.final_observation_event_id,
+        "final_observation_id": terminal.final_observation_id,
+        "observation_receipt_status": terminal.observation_receipt_status,
+        "observation_receipt_id": terminal.observation_receipt_id,
+        "terminal_receipt_status": terminal.terminal_receipt_status,
+        "terminal_receipt_id": terminal.terminal_receipt_id,
+        "terminal_at": terminal.terminal_at,
+        "created": created,
+        "created_at": terminal.created_at,
+        "updated_at": terminal.updated_at,
     }

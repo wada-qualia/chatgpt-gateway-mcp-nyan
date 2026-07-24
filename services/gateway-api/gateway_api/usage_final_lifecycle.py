@@ -16,6 +16,7 @@ from .config import Settings
 from .dto import LupFinalResponseAbandonCreate, LupFinalResponseCompleteCreate
 from .models import LupTaskStart, LupTaskTerminal, LupToolCall, LupToolPhaseSeal
 from .usage_accounting import LUP_TASK_NAMESPACE
+from .usage_estimation import FinalResponseCountMetrics, estimate_visible_final_response
 from .usage_tool_lifecycle import PublishedLifecycleEvent, SdkToolLifecyclePublisher
 
 
@@ -50,6 +51,9 @@ class SdkFinalLifecyclePublisher(SdkToolLifecyclePublisher):
         causation_id: UUID,
     ):
         from klab_llm_usage import (
+            CoveredInput,
+            EstimationEvidence,
+            ExcludedInput,
             MeasurementKind,
             ModelIdentity,
             TokenCategory,
@@ -57,6 +61,25 @@ class SdkFinalLifecyclePublisher(SdkToolLifecyclePublisher):
             UsageMeasurement,
         )
 
+        estimation_data = usage.get("estimation")
+        estimation = None
+        if estimation_data is not None:
+            estimation = EstimationEvidence(
+                estimator_profile_id=estimation_data["estimator_profile_id"],
+                estimator_version=estimation_data["estimator_version"],
+                confidence=estimation_data["confidence"],
+                lower_bound_tokens=estimation_data["lower_bound_tokens"],
+                upper_bound_tokens=estimation_data["upper_bound_tokens"],
+                covered_inputs=tuple(
+                    CoveredInput(value)
+                    for value in estimation_data.get("covered_inputs", [])
+                ),
+                excluded_inputs=tuple(
+                    ExcludedInput(value)
+                    for value in estimation_data.get("excluded_inputs", [])
+                ),
+                evidence_ref=estimation_data.get("evidence_ref"),
+            )
         model = usage["model"]
         return UsageMeasurement(
             model=ModelIdentity(
@@ -66,10 +89,11 @@ class SdkFinalLifecyclePublisher(SdkToolLifecyclePublisher):
                 model_revision=model.get("model_revision"),
             ),
             tokens=TokenCounts(**usage["tokens"]),
-            measurement_kind=MeasurementKind.PROVIDER_EXACT,
+            measurement_kind=MeasurementKind(usage["measurement_kind"]),
             covered_categories=tuple(
                 TokenCategory(value) for value in usage["covered_categories"]
             ),
+            estimation=estimation,
             request_id=request_id,
             occurred_at=occurred_at,
             event_id=event_id,
@@ -257,11 +281,12 @@ class LupFinalLifecycleService:
 
     @staticmethod
     def _fingerprint(payload: object) -> str:
-        canonical = json.dumps(
-            payload.model_dump(mode="json", exclude_none=True),
-            sort_keys=True,
-            separators=(",", ":"),
+        value = (
+            payload.model_dump(mode="json", exclude_none=True)
+            if hasattr(payload, "model_dump")
+            else payload
         )
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
     @staticmethod
@@ -378,7 +403,23 @@ class LupFinalLifecycleService:
             source_message_id=payload.source_message_id,
         )
         self._assert_session(task, payload.session_id)
-        fingerprint = self._fingerprint(payload)
+        usage = None
+        if payload.usage is not None:
+            usage = payload.usage.model_dump(mode="json", exclude_none=True)
+        elif payload.final_response_estimate is not None:
+            estimate = payload.final_response_estimate
+            usage = estimate_visible_final_response(
+                model=estimate.model.model_dump(mode="json", exclude_none=True),
+                metrics=FinalResponseCountMetrics(
+                    visible_character_count=estimate.visible_character_count,
+                    visible_utf8_byte_count=estimate.visible_utf8_byte_count,
+                    visible_word_count=estimate.visible_word_count,
+                ),
+            )
+        fingerprint_payload = payload.model_dump(mode="json", exclude_none=True)
+        if usage is not None:
+            fingerprint_payload["resolved_usage"] = usage
+        fingerprint = self._fingerprint(fingerprint_payload)
         existing = self._existing(db, task.task_usage_id, fingerprint)
         if existing is not None:
             return TaskTerminalResult(task=task, terminal=existing, created=False)
@@ -391,11 +432,6 @@ class LupFinalLifecycleService:
         completed_at = payload.completed_at or datetime.now(UTC)
         terminal_event_id = self.terminal_identifier(
             owner_subject, payload.source_message_id
-        )
-        usage = (
-            payload.usage.model_dump(mode="json", exclude_none=True)
-            if payload.usage is not None
-            else None
         )
         final_observation_event_id = None
         final_observation_id = None

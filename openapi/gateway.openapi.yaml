@@ -1348,11 +1348,29 @@ paths:
                 session_id: {type: string, minLength: 1, maxLength: 512}
                 callback_id: {type: string, minLength: 1, maxLength: 512}
                 delivery_state: {type: string, enum: [accepted, delivered]}
-                completion_mode: {type: string, enum: [provider_exact, host_observed, recovered]}
+                completion_mode: {type: string, enum: [provider_exact, host_observed, estimated_final_response, recovered]}
                 completed_at: {type: [string, 'null'], format: date-time}
                 request_id: {type: [string, 'null'], minLength: 1, maxLength: 512}
                 recovery_id: {type: [string, 'null'], minLength: 1, maxLength: 512}
                 usage: {type: [object, 'null'], description: Provider-exact numeric model/token measurement only}
+                final_response_estimate:
+                  type: [object, 'null']
+                  additionalProperties: false
+                  description: Numeric-only visible final-response metrics; raw response content is forbidden.
+                  required: [model, visible_character_count, visible_utf8_byte_count, visible_word_count]
+                  properties:
+                    model:
+                      type: object
+                      additionalProperties: false
+                      required: [provider, requested_model, resolved_model]
+                      properties:
+                        provider: {type: string, minLength: 1, maxLength: 128}
+                        requested_model: {type: string, minLength: 1, maxLength: 256}
+                        resolved_model: {type: string, minLength: 1, maxLength: 256}
+                        model_revision: {type: [string, 'null'], minLength: 1, maxLength: 256}
+                    visible_character_count: {type: integer, minimum: 0, maximum: 20000000}
+                    visible_utf8_byte_count: {type: integer, minimum: 0, maximum: 80000000}
+                    visible_word_count: {type: integer, minimum: 0, maximum: 20000000}
       responses:
         '201': {description: New terminal completion durably accepted}
         '200': {description: Existing identical terminal callback}

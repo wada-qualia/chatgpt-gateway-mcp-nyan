@@ -1,0 +1,14 @@
+[
+  {"visible_character_count": 0, "visible_utf8_byte_count": 0, "visible_word_count": 0, "exact_output_tokens": 0},
+  {"visible_character_count": 24, "visible_utf8_byte_count": 24, "visible_word_count": 5, "exact_output_tokens": 7},
+  {"visible_character_count": 80, "visible_utf8_byte_count": 80, "visible_word_count": 16, "exact_output_tokens": 21},
+  {"visible_character_count": 180, "visible_utf8_byte_count": 180, "visible_word_count": 34, "exact_output_tokens": 47},
+  {"visible_character_count": 420, "visible_utf8_byte_count": 420, "visible_word_count": 78, "exact_output_tokens": 111},
+  {"visible_character_count": 960, "visible_utf8_byte_count": 960, "visible_word_count": 177, "exact_output_tokens": 249},
+  {"visible_character_count": 120, "visible_utf8_byte_count": 212, "visible_word_count": 19, "exact_output_tokens": 48},
+  {"visible_character_count": 360, "visible_utf8_byte_count": 632, "visible_word_count": 57, "exact_output_tokens": 139},
+  {"visible_character_count": 840, "visible_utf8_byte_count": 1488, "visible_word_count": 128, "exact_output_tokens": 321},
+  {"visible_character_count": 64, "visible_utf8_byte_count": 192, "visible_word_count": 1, "exact_output_tokens": 55},
+  {"visible_character_count": 240, "visible_utf8_byte_count": 720, "visible_word_count": 1, "exact_output_tokens": 188},
+  {"visible_character_count": 900, "visible_utf8_byte_count": 1120, "visible_word_count": 105, "exact_output_tokens": 248}
+]

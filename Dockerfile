@@ -79,6 +79,9 @@ COPY --chown=appuser:appuser Dockerfile /app/Dockerfile
 COPY --chown=appuser:appuser Jenkinsfile /app/Jenkinsfile
 RUN /opt/venv/bin/pip install --no-cache-dir -r /app/requirements-dev.txt
 USER appuser
+RUN PYTHONPATH=/app/services/gateway-api /opt/venv/bin/python \
+      /app/scripts/calibrate_lup_final_response_estimator.py \
+      /app/configs/lup/final-response-calibration-v1.json
 RUN pytest /app/services/gateway-api/tests /app/cli/tests
 
 FROM runtime-base AS production

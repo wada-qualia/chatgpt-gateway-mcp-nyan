@@ -25,7 +25,7 @@ export default defineConfig({
         './ChatGPTAccess': './src/features/access/AccessRemote.tsx',
         './Audit': './src/features/audit/AuditRemote.tsx'
       },
-      shared: ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query']
+      shared: ['react', 'react-dom', 'react-router', '@tanstack/react-query']
     })
   ],
   server: {

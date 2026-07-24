@@ -258,23 +258,32 @@ export function DeviceTable({
   devices,
   emptyMessage = tr("devices.empty"),
   errorMessage,
+  isDeleting = false,
   isLoading = false,
+  isTesting = false,
+  onDelete,
   onSearch,
   onSelect,
+  onTestConnection,
   search,
   selectedId,
   total,
 }: {
   devices: GatewayDevice[];
 } & GatewayDataStateProps & {
+    isDeleting?: boolean;
+    isTesting?: boolean;
+    onDelete: (id: string) => void;
     onSearch: (value: string) => void;
     onSelect: (id: string) => void;
+    onTestConnection: (id: string) => void;
     search: string;
     selectedId?: string;
     total: number;
   }) {
   const rowsPerPage = 10;
   const [currentPage, setCurrentPage] = useState(1);
+  const [openMenuId, setOpenMenuId] = useState("");
   const pageCount = Math.max(1, Math.ceil(devices.length / rowsPerPage));
   const safeCurrentPage = Math.min(currentPage, pageCount);
   const pageStartIndex = devices.length === 0 ? 0 : (safeCurrentPage - 1) * rowsPerPage;
@@ -286,6 +295,24 @@ export function DeviceTable({
   useEffect(() => {
     setCurrentPage((page) => Math.min(Math.max(page, 1), pageCount));
   }, [pageCount]);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    const closeMenu = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(`[data-device-actions="${openMenuId}"]`)) return;
+      setOpenMenuId("");
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenMenuId("");
+    };
+    document.addEventListener("pointerdown", closeMenu);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeMenu);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [openMenuId]);
 
   return (
     <>
@@ -305,7 +332,7 @@ export function DeviceTable({
           <RefreshCw size={18} />
         </IconButton>
       </div>
-      <TableFrame>
+      <TableFrame className="device-table-frame">
         <table>
           <thead>
             <tr>
@@ -375,7 +402,64 @@ export function DeviceTable({
                     <span className="linked">{tr("common.linked")}</span>
                   </td>
                   <td className="menu-cell">
-                    <MoreVertical size={18} />
+                    <div className="device-actions" data-device-actions={device.id}>
+                      <IconButton
+                        aria-expanded={openMenuId === device.id}
+                        aria-haspopup="menu"
+                        aria-label={tr("devices.actions.openMenu", { name: device.name })}
+                        className="device-actions-trigger"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setOpenMenuId((current) => current === device.id ? "" : device.id);
+                        }}
+                        type="button"
+                      >
+                        <MoreVertical size={18} />
+                      </IconButton>
+                      {openMenuId === device.id ? (
+                        <div className="device-actions-menu" role="menu">
+                          <Button
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onSelect(device.id);
+                              setOpenMenuId("");
+                            }}
+                            role="menuitem"
+                            type="button"
+                          >
+                            <Server size={16} /> {tr("devices.actions.details")}
+                          </Button>
+                          <Button
+                            disabled={isTesting}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onSelect(device.id);
+                              onTestConnection(device.id);
+                              setOpenMenuId("");
+                            }}
+                            role="menuitem"
+                            type="button"
+                          >
+                            <RefreshCw size={16} /> {tr("devices.detail.testConnection")}
+                          </Button>
+                          <Button
+                            className="device-actions-delete"
+                            disabled={isDeleting}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (window.confirm(tr("devices.detail.deleteDescription", { name: device.name }))) {
+                                onDelete(device.id);
+                                setOpenMenuId("");
+                              }
+                            }}
+                            role="menuitem"
+                            type="button"
+                          >
+                            <Trash2 size={16} /> {tr("common.actions.delete")}
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))

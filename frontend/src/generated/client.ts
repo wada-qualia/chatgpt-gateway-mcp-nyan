@@ -336,7 +336,7 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   devices: () => request<Device[]>('/api/devices'),
-  createDevice: (payload: { name: string; target: string; auth_type: string; password?: string; private_key?: string }) =>
+  createDevice: (payload: { name: string; target: string; auth_type: string; password?: string; private_key?: string; verify_connection?: boolean }) =>
     request<Device>('/api/devices', { method: 'POST', body: JSON.stringify(payload) }),
   updateDevice: (deviceId: string, payload: { name?: string; target?: string; auth_type?: string; password?: string; private_key?: string }) =>
     request<Device>(`/api/devices/${deviceId}`, { method: 'PATCH', body: JSON.stringify(payload) }),

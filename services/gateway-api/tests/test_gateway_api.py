@@ -254,6 +254,100 @@ def test_device_registration_stores_json_secret_payload(client: TestClient) -> N
         assert credentials.secret == "json-secret-value"
 
 
+
+def test_ssh_host_key_policy_accepts_new_keys_into_managed_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from gateway_api import config
+    from gateway_api.adapters.ssh import _configure_host_key_verification
+
+    known_hosts = tmp_path / "ssh" / "known_hosts"
+    monkeypatch.setenv("GATEWAY_SSH_KNOWN_HOSTS_PATH", str(known_hosts))
+    monkeypatch.setenv("GATEWAY_SSH_KNOWN_HOSTS_POLICY", "accept-new")
+    config.get_settings.cache_clear()
+
+    class AutoAddPolicy:
+        pass
+
+    class RejectPolicy:
+        pass
+
+    fake_paramiko = SimpleNamespace(
+        AutoAddPolicy=AutoAddPolicy,
+        RejectPolicy=RejectPolicy,
+    )
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.loaded_system_keys = False
+            self.loaded_host_keys: str | None = None
+            self.policy = None
+
+        def load_system_host_keys(self) -> None:
+            self.loaded_system_keys = True
+
+        def load_host_keys(self, filename: str) -> None:
+            self.loaded_host_keys = filename
+
+        def set_missing_host_key_policy(self, policy) -> None:
+            self.policy = policy
+
+    client = FakeClient()
+    _configure_host_key_verification(client, fake_paramiko)
+
+    assert client.loaded_system_keys is True
+    assert client.loaded_host_keys == str(known_hosts)
+    assert isinstance(client.policy, AutoAddPolicy)
+    assert known_hosts.is_file()
+    assert known_hosts.stat().st_mode & 0o777 == 0o600
+    config.get_settings.cache_clear()
+
+
+def test_device_registration_verifies_password_and_trusts_new_host_key(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gateway_api.routers.devices as devices_router
+
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        devices_router, "check_ssh_tcp_connection", lambda target: "reachable"
+    )
+
+    def verify(device, credentials):
+        observed.update(
+            host=device.host,
+            port=device.port,
+            username=device.username,
+            auth_type=credentials.auth_type,
+            secret=credentials.secret,
+        )
+        return "verified"
+
+    monkeypatch.setattr(devices_router, "verify_ssh_connection", verify)
+    response = client.post(
+        "/api/devices",
+        json={
+            "name": "auto-trusted-box",
+            "target": "robot@192.0.2.81:22",
+            "auth_type": "password",
+            "password": "valid-password",
+            "verify_connection": True,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "verified"
+    assert observed == {
+        "host": "192.0.2.81",
+        "port": 22,
+        "username": "robot",
+        "auth_type": "password",
+        "secret": "valid-password",
+    }
+
+
 def test_ssh_adapter_uses_backend_credentials_with_mock_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 

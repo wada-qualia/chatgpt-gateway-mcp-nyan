@@ -62,7 +62,8 @@ class Settings(BaseSettings):
     gateway_docker_enabled: bool = False
     gateway_docker_allowed_images: str = Field(default="ubuntu:24.04,ubuntu:22.04,ubuntu:20.04")
     gateway_ssh_enabled: bool = True
-    gateway_ssh_known_hosts_path: str | None = None
+    gateway_ssh_known_hosts_path: str = "./data/ssh/known_hosts"
+    gateway_ssh_known_hosts_policy: Literal["reject", "accept-new"] = "accept-new"
     gateway_ssh_allowed_actions: str = Field(default="uptime,disk_usage,memory_usage,whoami,pwd,home_list")
     gateway_ssh_command_profile_default: Literal["restricted", "filtered", "unrestricted"] | None = None
     gateway_ssh_allow_raw_command: bool | None = None

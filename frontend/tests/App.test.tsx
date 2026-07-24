@@ -468,6 +468,51 @@ test('devices pagination renders only available pages', async () => {
   expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
 });
 
+test('device row action menu opens and invokes connection test and delete', async () => {
+  const fetchMock = mockGatewayApiWithDevices([
+    {
+      id: 'device-1',
+      owner_subject: 'dev:local',
+      name: '10.0.1.65',
+      kind: 'ssh',
+      host: '10.0.1.65',
+      port: 22,
+      username: 'robot',
+      auth_type: 'password',
+      status: 'registered',
+      created_at: '2026-07-09T00:00:00Z',
+      updated_at: '2026-07-09T00:00:00Z'
+    }
+  ]);
+  vi.stubGlobal('confirm', vi.fn(() => true));
+  renderWithQuery(<App />, '/devices');
+
+  const actionsButton = await screen.findByRole('button', { name: 'Actions for 10.0.1.65' });
+  fireEvent.click(actionsButton);
+  let menu = screen.getByRole('menu');
+  expect(within(menu).getByRole('menuitem', { name: 'View details' })).toBeInTheDocument();
+  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Test Connection' }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/devices/device-1/test',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for 10.0.1.65' }));
+  menu = screen.getByRole('menu');
+  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete' }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/devices/device-1',
+      expect.objectContaining({ method: 'DELETE' })
+    );
+  });
+});
+
+
 test('device detail tabs and actions are interactive', async () => {
   const fetchMock = mockGatewayApiWithDevices([
     {

@@ -11,7 +11,6 @@ from ..adapters.ssh import (
     parse_ssh_target,
     serialize_ssh_secret,
     verify_ssh_connection,
-    verify_ssh_key_connection,
 )
 from ..auth import get_current_user
 from ..crypto import encrypt_text
@@ -30,7 +29,9 @@ def _query_visible_device(device_id: str, user: User, db: Session) -> Device:
         query = query.filter(Device.owner_subject == user.subject)
     device = query.first()
     if not device:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Device not found"
+        )
     return device
 
 
@@ -56,22 +57,37 @@ def _store_device_secret(
 
 
 @router.get("", response_model=list[DeviceOut])
-async def list_devices(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Device]:
+async def list_devices(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[Device]:
     enforce(user, action="read")
     if "gateway-admin" in set(user.roles or []):
         return db.query(Device).order_by(Device.created_at.desc()).all()
-    return db.query(Device).filter(Device.owner_subject == user.subject).order_by(Device.created_at.desc()).all()
+    return (
+        db.query(Device)
+        .filter(Device.owner_subject == user.subject)
+        .order_by(Device.created_at.desc())
+        .all()
+    )
 
 
 @router.post("", response_model=DeviceOut, status_code=201)
-async def create_device(payload: DeviceCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Device:
+async def create_device(
+    payload: DeviceCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Device:
     enforce(user, action="create", owner_subject=user.subject)
     target = parse_ssh_target(payload.target)
-    secret_value = payload.private_key if payload.auth_type == "private_key" else payload.password
+    secret_value = (
+        payload.private_key if payload.auth_type == "private_key" else payload.password
+    )
     secret_id: str | None = None
     if payload.auth_type != "agent":
         if not secret_value:
-            raise HTTPException(status_code=422, detail="Credential is required for selected auth_type")
+            raise HTTPException(
+                status_code=422, detail="Credential is required for selected auth_type"
+            )
         secret_id = _store_device_secret(
             db=db,
             owner_subject=user.subject,
@@ -80,8 +96,6 @@ async def create_device(payload: DeviceCreate, user: User = Depends(get_current_
             passphrase=payload.passphrase,
         )
     status_value = "registered"
-    if payload.verify_connection and payload.auth_type == "private_key":
-        status_value = verify_ssh_key_connection(target)
     device = Device(
         id=str(uuid.uuid4()),
         owner_subject=user.subject,
@@ -97,6 +111,18 @@ async def create_device(payload: DeviceCreate, user: User = Depends(get_current_
     )
     db.add(device)
     db.flush()
+    if payload.verify_connection:
+        tcp_status = check_ssh_tcp_connection(target)
+        if tcp_status != "reachable":
+            device.status = "unreachable"
+        else:
+            try:
+                credentials = load_device_credentials(device, db)
+                device.status = verify_ssh_connection(device, credentials)
+            except HTTPException as exc:
+                device.status = _device_test_status_from_exception(exc)
+        device.updated_at = utcnow()
+        db.flush()
     db.refresh(device)
     emit_event(
         db,
@@ -105,7 +131,12 @@ async def create_device(payload: DeviceCreate, user: User = Depends(get_current_
         action="registered",
         resource_type="device",
         resource_id=device.id,
-        payload={"device_id": device.id, "kind": device.kind, "host": device.host, "port": device.port},
+        payload={
+            "device_id": device.id,
+            "kind": device.kind,
+            "host": device.host,
+            "port": device.port,
+        },
         commit=False,
     )
     db.commit()
@@ -124,7 +155,9 @@ async def update_device(
     old_auth_type = device.auth_type
     old_secret_id = device.credential_secret_id
     new_auth_type = payload.auth_type or device.auth_type
-    new_secret_value = payload.private_key if new_auth_type == "private_key" else payload.password
+    new_secret_value = (
+        payload.private_key if new_auth_type == "private_key" else payload.password
+    )
 
     if payload.name is not None:
         trimmed_name = payload.name.strip()
@@ -152,7 +185,9 @@ async def update_device(
             passphrase=payload.passphrase,
         )
     elif payload.auth_type is not None and payload.auth_type != old_auth_type:
-        raise HTTPException(status_code=422, detail="Credential is required when changing auth_type")
+        raise HTTPException(
+            status_code=422, detail="Credential is required when changing auth_type"
+        )
 
     device.status = "registered"
     device.updated_at = utcnow()
@@ -178,13 +213,20 @@ def _device_test_status_from_exception(exc: HTTPException) -> str:
         return "host_key_untrusted"
     if exc.status_code in {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN}:
         return "auth_failed"
-    if exc.status_code in {status.HTTP_502_BAD_GATEWAY, status.HTTP_504_GATEWAY_TIMEOUT}:
+    if exc.status_code in {
+        status.HTTP_502_BAD_GATEWAY,
+        status.HTTP_504_GATEWAY_TIMEOUT,
+    }:
         return "unreachable"
     return "auth_failed"
 
 
 @router.post("/{device_id}/test", response_model=DeviceOut)
-async def test_device_connection(device_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Device:
+async def test_device_connection(
+    device_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Device:
     device = _query_visible_device(device_id, user, db)
     enforce(user, action="update", owner_subject=device.owner_subject)
     target = parse_ssh_target(f"{device.username}@{device.host}:{device.port}")
@@ -207,7 +249,12 @@ async def test_device_connection(device_id: str, user: User = Depends(get_curren
         action="tested",
         resource_type="device",
         resource_id=device.id,
-        payload={"device_id": device.id, "status": device.status, "host": device.host, "port": device.port},
+        payload={
+            "device_id": device.id,
+            "status": device.status,
+            "host": device.host,
+            "port": device.port,
+        },
         status="success" if device.status == "verified" else "warning",
         commit=False,
     )
@@ -216,7 +263,11 @@ async def test_device_connection(device_id: str, user: User = Depends(get_curren
 
 
 @router.delete("/{device_id}")
-async def delete_device(device_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, bool]:
+async def delete_device(
+    device_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
     device = _query_visible_device(device_id, user, db)
     enforce(user, action="delete", owner_subject=device.owner_subject)
     secret_id = device.credential_secret_id

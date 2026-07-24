@@ -315,8 +315,12 @@ export function DevicesPage({ controller }: { controller: GatewayController }) {
         }
         errorMessage={controller.devicesState.errorMessage}
         isLoading={controller.devicesState.isLoading}
+        isDeleting={controller.deleteDevice.isPending}
+        isTesting={controller.testDeviceConnection.isPending}
+        onDelete={(deviceId) => controller.deleteDevice.mutate(deviceId)}
         onSearch={controller.setSearch}
         onSelect={controller.setSelectedId}
+        onTestConnection={(deviceId) => controller.testDeviceConnection.mutate(deviceId)}
         search={controller.search}
         selectedId={controller.selected?.id}
         total={controller.filteredDevices.length}
@@ -742,6 +746,7 @@ function useGatewayController(
         auth_type: authType,
         password: authType === "password" ? trimmedSecret : undefined,
         private_key: authType === "private_key" ? trimmedSecret : undefined,
+        verify_connection: true,
       });
     },
     onSuccess: (device) => {

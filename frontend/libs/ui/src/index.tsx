@@ -72,8 +72,8 @@ export function SegmentedControl<TValue extends string>({
   );
 }
 
-export function TableFrame({ children, compact = false }: { children: ReactNode; compact?: boolean }) {
-  return <div className={cx('table-frame', compact && 'compact')}>{children}</div>;
+export function TableFrame({ children, className, compact = false }: { children: ReactNode; className?: string; compact?: boolean }) {
+  return <div className={cx('table-frame', compact && 'compact', className)}>{children}</div>;
 }
 
 export function ResourceCard({ children }: { children: ReactNode }) {

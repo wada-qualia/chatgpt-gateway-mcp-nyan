@@ -94,6 +94,10 @@ const resources = {
         unavailable: 'Devices unavailable',
         selectAll: 'Select all devices',
         select: 'Select {{name}}',
+        actions: {
+          openMenu: 'Actions for {{name}}',
+          details: 'View details'
+        },
         table: {
           sshReady: 'SSH Ready',
           lastSeen: 'Last Seen',
@@ -424,6 +428,10 @@ const resources = {
         unavailable: 'Устройства недоступны',
         selectAll: 'Выбрать все устройства',
         select: 'Выбрать {{name}}',
+        actions: {
+          openMenu: 'Действия для {{name}}',
+          details: 'Открыть сведения'
+        },
         table: {
           sshReady: 'Готовность SSH',
           lastSeen: 'Последняя активность',

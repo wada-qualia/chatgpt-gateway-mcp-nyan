@@ -3447,29 +3447,58 @@ def test_phase_two_additive_file_change_schema_upgrade(
 ) -> None:
     from sqlalchemy import create_engine, inspect, text
 
-    from gateway_api import database
+    from gateway_api import database, models
+    from gateway_api.schema_migrations import run_schema_migrations
 
     upgrade_engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}")
+    models.Base.metadata.create_all(upgrade_engine)
+    additive_columns = (
+        "room_id",
+        "agent_id",
+        "lease_id",
+        "fencing_token",
+        "before_sha256",
+        "after_sha256",
+        "base_commit",
+        "branch_name",
+        "worktree_path",
+        "session_id",
+    )
+    legacy_inspector = inspect(upgrade_engine)
+    additive_indexes = [
+        index["name"]
+        for index in legacy_inspector.get_indexes("file_change_sets")
+        if set(index["column_names"]) & set(additive_columns)
+    ]
     with upgrade_engine.begin() as connection:
-        connection.execute(
-            text(
-                "CREATE TABLE file_change_sets ("
-                "id VARCHAR(36) PRIMARY KEY, "
-                "owner_subject VARCHAR(255) NOT NULL, "
-                "origin VARCHAR(40) NOT NULL, "
-                "path TEXT NOT NULL, "
-                "operation VARCHAR(60) NOT NULL"
-                ")"
+        for index_name in additive_indexes:
+            connection.execute(text(f'DROP INDEX IF EXISTS "{index_name}"'))
+        for column_name in additive_columns:
+            connection.execute(
+                text(f'ALTER TABLE file_change_sets DROP COLUMN "{column_name}"')
             )
-        )
     monkeypatch.setattr(database, "engine", upgrade_engine)
-    database._apply_additive_schema_upgrades()
+    run_schema_migrations()
     inspector = inspect(upgrade_engine)
     columns = {column["name"] for column in inspector.get_columns("file_change_sets")}
     indexes = {index["name"] for index in inspector.get_indexes("file_change_sets")}
-    assert set(database.FILE_CHANGE_ADDITIVE_COLUMNS).issubset(columns)
     assert {
-        f"ix_file_change_sets_{name}" for name in database.FILE_CHANGE_ADDITIVE_INDEX_COLUMNS
+        "room_id",
+        "agent_id",
+        "lease_id",
+        "fencing_token",
+        "before_sha256",
+        "after_sha256",
+        "base_commit",
+        "branch_name",
+        "worktree_path",
+        "session_id",
+    }.issubset(columns)
+    assert {
+        "ix_file_change_sets_room_id",
+        "ix_file_change_sets_agent_id",
+        "ix_file_change_sets_lease_id",
+        "ix_file_change_sets_fencing_token",
     }.issubset(indexes)
 
 
@@ -5644,6 +5673,10 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "version": "0.3.6",
         "revision": "",
         "slot": "local",
+        "initialization_status": "ready",
+        "database_at_head": True,
+        "database_revision": "20260725_0003",
+        "database_head": "20260725_0003",
     }
     ready = client.get("/ready")
     assert ready.status_code == 200

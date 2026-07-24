@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     gateway_deployment_slot: str = "local"
     public_base_url: str = "http://localhost:8000"
     database_url: str = "sqlite:///./data/gateway.db"
+    gateway_db_migration_lock_timeout_seconds: int = 15
+    gateway_db_migration_statement_timeout_seconds: int = 300
+    gateway_db_migration_advisory_lock_key: int = 1129138007
     gateway_secret_key: str | None = None
     gateway_secret_key_file: str = "./data/gateway-secret.key"
     gateway_jwt_secret: str = "change-me-local-jwt-secret"

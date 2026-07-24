@@ -39,7 +39,7 @@ RUN python3 -m venv /opt/venv \
   && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
   && /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
-COPY pyproject.toml /app/
+COPY pyproject.toml alembic.ini /app/
 COPY vendor/llm-usage-sdk /app/vendor/llm-usage-sdk
 COPY scripts/verify_lup_sdk_artifact.py /app/scripts/verify_lup_sdk_artifact.py
 RUN /opt/venv/bin/python /app/scripts/verify_lup_sdk_artifact.py \

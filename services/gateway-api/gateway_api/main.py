@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import get_settings
-from .database import SessionLocal, init_db
+from .database import SessionLocal
 from .mcp_federation_runtime import (
     FederationBoundaryError,
     new_traceparent,
@@ -38,7 +39,10 @@ from .routers import (
     usage_accounting,
 )
 from .runtime import GatewayRuntime
+from .schema_migrations import get_migration_status, run_schema_migrations
+from .secret_store import validate_secret_store
 from .spa import SPAStaticFiles
+from .ssh_sessions import ssh_remote_session_manager
 
 
 def create_app() -> FastAPI:
@@ -79,14 +83,32 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        init_db()
-        app.state.gateway_runtime = runtime
-        await runtime.start()
+        runtime_started = False
+        app.state.initialization_status = "migrating"
+        app.state.database_at_head = False
         try:
+            migration_status = await asyncio.to_thread(run_schema_migrations)
+            app.state.database_revision = migration_status.current_revision
+            app.state.database_head = migration_status.head_revision
+            app.state.database_at_head = migration_status.at_head
+            app.state.initialization_status = "starting_runtime"
+            validate_secret_store()
+            ssh_remote_session_manager.reconcile()
+            app.state.gateway_runtime = runtime
+            await runtime.start()
+            runtime_started = True
+            app.state.initialization_status = "ready"
             yield
+        except BaseException:
+            app.state.initialization_status = "failed"
+            app.state.database_at_head = False
+            raise
         finally:
             await upstream_mcp_manager.stop()
-            await runtime.stop()
+            if runtime_started:
+                await runtime.stop()
+            if app.state.initialization_status != "failed":
+                app.state.initialization_status = "stopped"
 
     app = FastAPI(
         title=settings.app_name,
@@ -96,6 +118,10 @@ def create_app() -> FastAPI:
     )
     app.state.gateway_runtime = runtime
     app.state.upstream_mcp_manager = upstream_mcp_manager
+    app.state.initialization_status = "created"
+    app.state.database_revision = None
+    app.state.database_head = None
+    app.state.database_at_head = False
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", settings.public_base_url.rstrip("/")],
@@ -103,6 +129,23 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def initialization_gate(request: Request, call_next):
+        initialization_status = request.app.state.initialization_status
+        database_at_head = request.app.state.database_at_head
+        if initialization_status != "ready" or not database_at_head:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "not_ready",
+                    "initialization_status": initialization_status,
+                    "database_at_head": database_at_head,
+                    "database_revision": request.app.state.database_revision,
+                    "database_head": request.app.state.database_head,
+                },
+            )
+        return await call_next(request)
 
     @app.middleware("http")
     async def federation_boundary(request: Request, call_next):
@@ -134,22 +177,34 @@ def create_app() -> FastAPI:
         return response
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
+    async def health(request: Request) -> dict[str, object]:
         return {
             "status": "ok",
             "service": "gateway-api",
             "version": settings.gateway_release_version,
             "revision": settings.gateway_release_revision,
             "slot": settings.gateway_deployment_slot,
+            "initialization_status": request.app.state.initialization_status,
+            "database_at_head": request.app.state.database_at_head,
+            "database_revision": request.app.state.database_revision,
+            "database_head": request.app.state.database_head,
         }
 
     @app.get("/ready")
     async def ready(request: Request) -> dict:
-        init_db()
+        migration_status = await asyncio.to_thread(get_migration_status)
         state = request.app.state.gateway_runtime.readiness()
+        state["initialization_status"] = request.app.state.initialization_status
+        state["database_revision"] = migration_status.current_revision
+        state["database_head"] = migration_status.head_revision
+        state["database_at_head"] = migration_status.at_head
         with SessionLocal() as db:
             state["federation"] = upstream_mcp_manager.readiness_snapshot(db)
-        if state["status"] != "ready":
+        if (
+            state["status"] != "ready"
+            or state["initialization_status"] != "ready"
+            or not state["database_at_head"]
+        ):
             raise HTTPException(status_code=503, detail=state)
         return state
 

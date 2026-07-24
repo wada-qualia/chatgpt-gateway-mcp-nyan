@@ -5,8 +5,10 @@ import argparse
 import hashlib
 import json
 import subprocess
+import tarfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 
 def sha256(path: Path) -> str:
@@ -23,6 +25,44 @@ def inspect_image(reference: str) -> dict:
     if not isinstance(payload, list) or len(payload) != 1:
         raise ValueError("expected exactly one Docker image")
     return payload[0]
+
+
+def docker_archive_config_digest(path: Path, expected_reference: str) -> str:
+    with tarfile.open(path, mode="r:gz") as archive:
+        manifest_member = archive.getmember("manifest.json")
+        if not manifest_member.isfile() or manifest_member.size > 1024 * 1024:
+            raise ValueError("invalid Docker archive manifest")
+        manifest_handle = archive.extractfile(manifest_member)
+        if manifest_handle is None:
+            raise ValueError("missing Docker archive manifest")
+        manifest = json.loads(manifest_handle.read().decode("utf-8"))
+        if not isinstance(manifest, list):
+            raise ValueError("invalid Docker archive manifest payload")
+        matches = [
+            entry
+            for entry in manifest
+            if isinstance(entry, dict)
+            and expected_reference in (entry.get("RepoTags") or [])
+        ]
+        if len(matches) != 1:
+            raise ValueError("expected exactly one matching image in Docker archive")
+        config_name = matches[0].get("Config")
+        if not isinstance(config_name, str):
+            raise ValueError("Docker archive config path is missing")
+        config_path = PurePosixPath(config_name)
+        if config_path.is_absolute() or ".." in config_path.parts:
+            raise ValueError("unsafe Docker archive config path")
+        config_member = archive.getmember(config_name)
+        if not config_member.isfile() or config_member.size > 16 * 1024 * 1024:
+            raise ValueError("invalid Docker archive image config")
+        config_handle = archive.extractfile(config_member)
+        if config_handle is None:
+            raise ValueError("missing Docker archive image config")
+        config_bytes = config_handle.read()
+    config: Any = json.loads(config_bytes.decode("utf-8"))
+    if not isinstance(config, dict):
+        raise ValueError("invalid Docker archive image config payload")
+    return f"sha256:{hashlib.sha256(config_bytes).hexdigest()}"
 
 
 def main() -> int:
@@ -48,6 +88,8 @@ def main() -> int:
     if not isinstance(vulnerabilities, dict) or vulnerabilities.get("total") != 0:
         raise ValueError("production dependency audit is not clean")
 
+    saved_config_digest = docker_archive_config_digest(args.archive, args.image)
+
     public_key_fingerprint = subprocess.check_output(
         ["ssh-keygen", "-lf", str(args.public_key), "-E", "sha256"],
         text=True,
@@ -64,6 +106,7 @@ def main() -> int:
         "image": {
             "reference": args.image,
             "image_id": image["Id"],
+            "saved_config_digest": saved_config_digest,
             "os": image["Os"],
             "architecture": image["Architecture"],
             "size_bytes": image["Size"],
@@ -110,7 +153,12 @@ def main() -> int:
     )
     print(
         json.dumps(
-            {"manifest": str(args.output), "image_id": image["Id"]}, sort_keys=True
+            {
+                "manifest": str(args.output),
+                "image_id": image["Id"],
+                "saved_config_digest": saved_config_digest,
+            },
+            sort_keys=True,
         )
     )
     return 0

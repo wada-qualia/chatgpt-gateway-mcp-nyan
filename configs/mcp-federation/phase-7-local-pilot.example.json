@@ -1,0 +1,18 @@
+{
+  "runtime_id": "phase7-pilot-runtime",
+  "state_file": "/absolute/private/path/phase7-local-pilot.state.json",
+  "servers": [
+    {
+      "id": "phase7-local-readonly",
+      "display_name": "Phase 7 Local Read-only MCP",
+      "transport": "stdio",
+      "command": "/absolute/path/to/python",
+      "args": [
+        "/absolute/path/to/chatgpt-mcp-ssh-gateway/scripts/pilot/local_readonly_mcp.py"
+      ],
+      "cwd": "/absolute/path/to/chatgpt-mcp-ssh-gateway",
+      "environment_bindings": {},
+      "call_timeout_seconds": 10
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import socket
 import time
 
 import httpx
+from mcp import types
 import pytest
 from jsonschema import Draft202012Validator
 from sqlalchemy import create_engine, select
@@ -531,3 +532,65 @@ def test_federation_realtime_fanout_is_tenant_isolated(
         db.close()
         engine.dispose()
         get_settings.cache_clear()
+
+
+def test_oversized_results_are_truncated_then_rejected_at_hard_limit() -> None:
+    truncating = _manager(
+        max_result_bytes=4096,
+        max_text_bytes=5,
+        max_content_items=1,
+    )
+    bounded = truncating._limit_result(
+        types.CallToolResult(
+            content=[
+                types.TextContent(type="text", text="abcdefghij"),
+                types.TextContent(type="text", text="second"),
+            ]
+        )
+    )
+    assert bounded.truncated is True
+    assert bounded.payload["content"] == [
+        {
+            "type": "text",
+            "text": "abcde",
+            "annotations": None,
+            "_meta": None,
+        }
+    ]
+    assert bounded.payload["_gateway"]["truncated"] is True
+
+    rejecting = _manager(
+        max_result_bytes=80,
+        max_text_bytes=4096,
+        max_content_items=4,
+    )
+    with pytest.raises(UpstreamMcpError) as captured:
+        rejecting._limit_result(
+            types.CallToolResult(
+                content=[types.TextContent(type="text", text="x" * 256)]
+            )
+        )
+    assert captured.value.code == "MCP_RESULT_TOO_LARGE"
+    assert captured.value.http_status == 413
+
+
+def test_disabled_global_federation_allows_only_explicit_pilot_tenant() -> None:
+    manager = _manager(
+        federation_enabled=False,
+        pilot_owner_subjects={"tenant-a"},
+        calls_per_minute_per_server=0,
+        calls_per_minute_per_tenant=0,
+    )
+
+    async def scenario() -> None:
+        assert manager.federation_enabled_for("tenant-a") is True
+        assert manager.federation_enabled_for("tenant-b") is False
+        async with manager._bounded(_server(owner="tenant-a")):
+            pass
+        with pytest.raises(UpstreamMcpError) as captured:
+            async with manager._bounded(_server(owner="tenant-b")):
+                pass
+        assert captured.value.code == "MCP_FEDERATION_DISABLED"
+        assert captured.value.http_status == 503
+
+    asyncio.run(scenario())

@@ -526,3 +526,29 @@ def test_thin_client_protocol_schema_rejects_gateway_process_overrides() -> None
     ):
         invalid = {**call, forbidden_name: forbidden_value}
         assert not validator.is_valid(invalid)
+
+
+def test_thin_client_runtime_cannot_impersonate_another_tenant(db: Session) -> None:
+    client = _client(db)
+    manager = ThinClientConnectionManager()
+    connection = asyncio.run(manager.register(client.id, FakeWebSocket()))
+    asyncio.run(
+        manager.register_runtime(
+            client.id,
+            connection,
+            runtime_id="runtime-a",
+            protocol_version=MCP_THIN_CLIENT_PROTOCOL_VERSION,
+            capabilities=MCP_THIN_CLIENT_CAPABILITIES,
+            local_server_ids={"stdio-a"},
+        )
+    )
+    with pytest.raises(ThinClientMcpError) as captured:
+        register_runtime(
+            db,
+            owner_subject="tenant-b",
+            client_id=client.id,
+            connection=connection,
+            message=_registration(),
+        )
+    assert captured.value.code == "MCP_SERVER_OFFLINE"
+    assert db.query(McpServer).count() == 0

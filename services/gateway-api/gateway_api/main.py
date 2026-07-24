@@ -62,6 +62,7 @@ def create_app() -> FastAPI:
         circuit_max_open_seconds=settings.gateway_mcp_upstream_circuit_max_open_seconds,
         federation_enabled=settings.gateway_mcp_federation_enabled,
         federation_writes_paused=settings.gateway_mcp_federation_writes_paused,
+        pilot_owner_subjects=settings.mcp_federation_pilot_owner_subjects,
         gateway_instance_id=(
             settings.gateway_mcp_instance_id
             or settings.gateway_replica_id

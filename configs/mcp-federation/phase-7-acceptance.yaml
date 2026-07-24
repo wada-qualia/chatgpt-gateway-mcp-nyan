@@ -1,0 +1,145 @@
+version: 1
+task: CMG-FED-700
+required_levels:
+- unit
+- contract
+- integration
+- compatibility
+- failure_injection
+- e2e
+legacy_surface_profile: docker-disabled-unrestricted-ssh
+legacy_surface_sha256: d19dac351a7a6998a1ef6f3d624837ed9aab8df6f9c59f41f777b76890198811
+legacy_tool_count: 94
+scenarios:
+- id: catalog_only_no_public_schema
+  levels:
+  - compatibility
+  - integration
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_three.py::test_catalog_only_addition_does_not_change_public_tool_schema
+- id: exact_revision_dispatch
+  levels:
+  - integration
+  - e2e
+  nodeids:
+  - services/gateway-api/tests/test_mcp_upstream_phase_two.py::test_refresh_and_exact_revision_call
+  - services/gateway-api/tests/test_mcp_federation_phase_three.py::test_catalog_read_and_guarded_action_lifecycle
+- id: schema_change_rejection
+  levels:
+  - contract
+  - failure_injection
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_three.py::test_transactional_catalog_reconciliation_rolls_back_and_marks_missing
+  - services/gateway-api/tests/test_mcp_federation_phase_four.py::test_runtime_registration_reconnect_and_transactional_catalog
+- id: malicious_metadata
+  levels:
+  - unit
+  - failure_injection
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_six.py::test_untrusted_metadata_is_bounded_and_control_characters_are_removed
+- id: false_read_only_annotations
+  levels:
+  - contract
+  - integration
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_one.py::test_upstream_annotations_are_advisory_and_read_requires_verification
+- id: oauth_audience_isolation
+  levels:
+  - contract
+  - failure_injection
+  nodeids:
+  - services/gateway-api/tests/test_mcp_upstream_phase_two.py::test_oauth_pkce_exchange_is_audience_bound_and_single_use
+- id: ssrf_dns_rebinding
+  levels:
+  - unit
+  - failure_injection
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_six.py::test_resolve_endpoint_rejects_any_mixed_private_dns_answer
+  - services/gateway-api/tests/test_mcp_federation_phase_six.py::test_connection_peer_must_match_prevalidated_dns_answer_set
+- id: recursion
+  levels:
+  - unit
+  - failure_injection
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_six.py::test_resolve_endpoint_rejects_self_recursion_before_dns
+  - services/gateway-api/tests/test_mcp_federation_phase_six.py::test_recursion_hop_limit_is_fail_closed
+- id: quotas
+  levels:
+  - unit
+  - integration
+  - failure_injection
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_six.py::test_sliding_window_quota_recovers_after_window
+  - services/gateway-api/tests/test_mcp_federation_phase_six.py::test_manager_enforces_emergency_disable_and_tenant_rate_quota
+- id: oversized_results
+  levels:
+  - unit
+  - failure_injection
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_six.py::test_oversized_results_are_truncated_then_rejected_at_hard_limit
+- id: thin_client_reconnect
+  levels:
+  - integration
+  - e2e
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_four.py::test_runtime_registration_reconnect_and_transactional_catalog
+- id: thin_client_impersonation
+  levels:
+  - integration
+  - failure_injection
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_four.py::test_thin_client_runtime_cannot_impersonate_another_tenant
+- id: stale_approvals
+  levels:
+  - integration
+  - failure_injection
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_three.py::test_approved_action_is_rejected_after_exposure_change
+- id: unknown_write_outcomes
+  levels:
+  - integration
+  - failure_injection
+  - e2e
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_four.py::test_exact_connection_fencing_and_unknown_write_outcome
+  - services/gateway-api/tests/test_mcp_federation_phase_four.py::test_disconnect_marks_only_dispatched_write_unknown
+- id: projection_rollback
+  levels:
+  - integration
+  - e2e
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_projection_generation_is_immutable_and_requires_evidence
+  - services/gateway-api/tests/test_mcp_federation_phase_six.py::test_projection_lifecycle_events_are_transactional_and_bounded
+- id: unchanged_legacy_tools
+  levels:
+  - contract
+  - compatibility
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_seven.py::test_phase_seven_manifest_and_legacy_surface_are_locked
+- id: local_mcp_end_to_end
+  levels:
+  - integration
+  - e2e
+  nodeids:
+  - cli/tests/test_local_mcp.py::test_local_config_keeps_execution_and_secrets_client_owned
+  - services/gateway-api/tests/test_mcp_federation_phase_four.py::test_upstream_manager_routes_exact_revision_through_thin_client
+  - services/gateway-api/tests/test_mcp_federation_phase_seven.py::test_local_readonly_pilot_runs_over_real_stdio_mcp
+- id: jenkins_readonly_facade
+  levels:
+  - unit
+  - contract
+  - compatibility
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_seven.py::test_jenkins_readonly_facade_is_bounded_and_has_no_mutating_tools
+- id: controlled_pilot_allowlist
+  levels:
+  - integration
+  - compatibility
+  - failure_injection
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_six.py::test_disabled_global_federation_allows_only_explicit_pilot_tenant
+- id: machine_readable_contracts
+  levels:
+  - contract
+  nodeids:
+  - services/gateway-api/tests/test_mcp_federation_phase_one.py::test_phase_one_machine_readable_contracts

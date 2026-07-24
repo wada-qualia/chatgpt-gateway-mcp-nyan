@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     oauth_supported_scopes: str = "workspace:read workspace:write workspace:exec devices:manage docker:manage audit:read"
     gateway_mcp_federation_enabled: bool = True
     gateway_mcp_federation_writes_paused: bool = False
+    gateway_mcp_federation_pilot_owner_subjects: str = ""
     gateway_mcp_instance_id: str = ""
     gateway_mcp_max_federation_hops: int = 4
     gateway_mcp_upstream_allow_private_networks: bool = False
@@ -121,6 +122,14 @@ class Settings(BaseSettings):
     @property
     def nats_servers(self) -> list[str]:
         return [value.strip() for value in self.gateway_nats_servers.split(",") if value.strip()]
+
+    @property
+    def mcp_federation_pilot_owner_subjects(self) -> set[str]:
+        return {
+            subject.strip()
+            for subject in self.gateway_mcp_federation_pilot_owner_subjects.split(",")
+            if subject.strip()
+        }
 
     @property
     def supported_scopes(self) -> list[str]:

@@ -32,6 +32,7 @@ from gateway_api.mcp_federation_broker import (
     search_catalog,
 )
 from gateway_api.mcp_upstream import UpstreamCallResult
+from gateway_api.routers.mcp import _tools
 from gateway_api.models import (
     ActionReceipt,
     AgentCommand,
@@ -39,6 +40,7 @@ from gateway_api.models import (
     McpActionPreparation,
     McpServer,
     McpTool,
+    McpToolExposure,
     McpToolRevision,
     SecretBlob,
     User,
@@ -523,3 +525,105 @@ def test_read_tool_rejects_write_revision_and_secret_shaped_arguments(
                 gateway_tool_call_id=None,
             )
         )
+
+
+def test_catalog_only_addition_does_not_change_public_tool_schema(db: Session) -> None:
+    baseline = _tools()
+    user = _user(db)
+    server = _server(db)
+    reconcile_catalog_snapshot(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        server_id=server.id,
+        catalog_generation=1,
+        protocol_version="2025-11-25",
+        tools=_snapshot(),
+    )
+    _configure_policy(db, server)
+    tool = db.query(McpTool).filter(McpTool.upstream_name == "sum_values").one()
+    _classify_and_expose(
+        db,
+        tool,
+        action_class="read",
+        read_only_status="verified",
+        approval_class="none",
+    )
+    assert _tools() == baseline
+
+
+def test_approved_action_is_rejected_after_exposure_change(db: Session) -> None:
+    user = _user(db)
+    server = _server(db)
+    reconcile_catalog_snapshot(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        server_id=server.id,
+        catalog_generation=1,
+        protocol_version="2025-11-25",
+        tools=_snapshot(include_write=True),
+    )
+    _configure_policy(db, server)
+    tool = db.query(McpTool).filter(McpTool.upstream_name == "publish_release").one()
+    revision = _classify_and_expose(
+        db,
+        tool,
+        action_class="write",
+        read_only_status="unverified",
+        approval_class="operator",
+    )
+    tool_ref = f"mcp-tool://{server.id}/{tool.id}/{revision.id}"
+    prepared = prepare_action(
+        db,
+        user=user,
+        payload=McpActionPrepareInput(
+            tool_ref=tool_ref,
+            schema_hash=revision.schema_hash,
+            arguments={"version": "2.0.0"},
+            justification="Exercise stale approval fencing.",
+            idempotency_key="phase7-stale-exposure",
+        ),
+        preparation_ttl_seconds=900,
+    )
+    preparation = db.get(
+        McpActionPreparation, prepared["preparation"]["preparation_id"]
+    )
+    approval = agent_autonomy_service.cast_vote(
+        db,
+        request_id=preparation.approval_request_id,
+        user=user,
+        decision="approve",
+        reason="Approve before the exposure changes.",
+    )
+    permit = agent_autonomy_service.issue_permit(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        request_id=approval.id,
+        ttl_seconds=300,
+    )
+    exposure = (
+        db.query(McpToolExposure).filter(McpToolExposure.tool_id == tool.id).one()
+    )
+    exposure.version += 1
+    db.commit()
+
+    upstream = StubUpstream()
+    with pytest.raises(
+        HTTPException, match="exposure or federation policy changed after preparation"
+    ):
+        asyncio.run(
+            execute_action(
+                db,
+                user=user,
+                payload=McpActionExecuteInput(
+                    preparation_id=preparation.id,
+                    permit_id=permit.id,
+                    expected_schema_hash=revision.schema_hash,
+                ),
+                upstream=upstream,
+                gateway_tool_call_id="phase7-stale-exposure-call",
+            )
+        )
+    assert upstream.calls == []

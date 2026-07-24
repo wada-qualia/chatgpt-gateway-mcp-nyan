@@ -390,6 +390,7 @@ class UpstreamMcpManager:
         circuit_max_open_seconds: float = 300.0,
         federation_enabled: bool = True,
         federation_writes_paused: bool = False,
+        pilot_owner_subjects: set[str] | list[str] | tuple[str, ...] = (),
         gateway_instance_id: str = "gateway-local",
         max_federation_hops: int = 4,
         catalog_stale_after_seconds: int = 3600,
@@ -418,6 +419,11 @@ class UpstreamMcpManager:
         )
         self.federation_enabled = bool(federation_enabled)
         self.federation_writes_paused = bool(federation_writes_paused)
+        self.pilot_owner_subjects = {
+            str(subject).strip()
+            for subject in pilot_owner_subjects
+            if str(subject).strip()
+        }
         self.gateway_instance_id = normalize_instance_id(gateway_instance_id)
         self.max_federation_hops = max(1, int(max_federation_hops))
         self.catalog_stale_after_seconds = max(1, int(catalog_stale_after_seconds))
@@ -458,6 +464,7 @@ class UpstreamMcpManager:
         return {
             "enabled": self.federation_enabled,
             "writes_paused": self.federation_writes_paused,
+            "pilot_owner_count": len(self.pilot_owner_subjects),
             "active_connections": self.telemetry.active_connections,
             "active_calls": self.telemetry.active_calls,
             "servers": status_counts,
@@ -1400,9 +1407,12 @@ class UpstreamMcpManager:
                 db.commit()
                 self.telemetry.increment("runtime_disconnected", outcome="closed")
 
+    def federation_enabled_for(self, owner_subject: str) -> bool:
+        return self.federation_enabled or owner_subject in self.pilot_owner_subjects
+
     @contextlib.asynccontextmanager
     async def _bounded(self, server: McpServer) -> AsyncIterator[None]:
-        if not self.federation_enabled:
+        if not self.federation_enabled_for(server.owner_subject):
             self.telemetry.increment("emergency_disabled", outcome="rejected")
             raise UpstreamMcpError(
                 "MCP_FEDERATION_DISABLED",

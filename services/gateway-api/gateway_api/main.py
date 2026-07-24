@@ -5,9 +5,16 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .database import SessionLocal, init_db
+from .mcp_federation_runtime import (
+    FederationBoundaryError,
+    new_traceparent,
+    parse_recursion_context,
+)
+from .mcp_upstream import UpstreamMcpManager
 from .routers import (
     access,
     account,
@@ -30,7 +37,6 @@ from .routers import (
     thin_clients,
     usage_accounting,
 )
-from .mcp_upstream import UpstreamMcpManager
 from .runtime import GatewayRuntime
 from .spa import SPAStaticFiles
 
@@ -46,8 +52,23 @@ def create_app() -> FastAPI:
         call_timeout_seconds=settings.gateway_mcp_upstream_call_timeout_seconds,
         cancellation_grace_seconds=settings.gateway_mcp_upstream_cancellation_grace_seconds,
         max_concurrency_per_server=settings.gateway_mcp_upstream_max_concurrency_per_server,
+        max_concurrency_per_tenant=settings.gateway_mcp_upstream_max_concurrency_per_tenant,
+        calls_per_minute_per_server=settings.gateway_mcp_upstream_calls_per_minute_per_server,
+        calls_per_minute_per_tenant=settings.gateway_mcp_upstream_calls_per_minute_per_tenant,
+        max_connections=settings.gateway_mcp_upstream_max_connections,
+        max_keepalive_connections=settings.gateway_mcp_upstream_max_keepalive_connections,
         circuit_failure_threshold=settings.gateway_mcp_upstream_circuit_failure_threshold,
         circuit_open_seconds=settings.gateway_mcp_upstream_circuit_open_seconds,
+        circuit_max_open_seconds=settings.gateway_mcp_upstream_circuit_max_open_seconds,
+        federation_enabled=settings.gateway_mcp_federation_enabled,
+        federation_writes_paused=settings.gateway_mcp_federation_writes_paused,
+        gateway_instance_id=(
+            settings.gateway_mcp_instance_id
+            or settings.gateway_replica_id
+            or "gateway-local"
+        ),
+        max_federation_hops=settings.gateway_mcp_max_federation_hops,
+        catalog_stale_after_seconds=settings.gateway_mcp_catalog_stale_after_seconds,
         max_result_bytes=settings.gateway_mcp_upstream_max_result_bytes,
         max_text_bytes=settings.gateway_mcp_upstream_max_text_bytes,
         max_content_items=settings.gateway_mcp_upstream_max_content_items,
@@ -82,6 +103,35 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def federation_boundary(request: Request, call_next):
+        traceparent = new_traceparent(request.headers.get("traceparent"))
+        request.state.traceparent = traceparent
+        federation_headers = {
+            key: value
+            for key, value in request.headers.items()
+            if key.lower().startswith("x-gateway-mcp-")
+        }
+        if federation_headers:
+            try:
+                request.state.mcp_recursion_context = parse_recursion_context(
+                    federation_headers,
+                    instance_id=upstream_mcp_manager.gateway_instance_id,
+                    max_hops=upstream_mcp_manager.max_federation_hops,
+                )
+            except FederationBoundaryError as exc:
+                upstream_mcp_manager.telemetry.increment(
+                    "recursion_rejected", outcome=exc.code
+                )
+                return JSONResponse(
+                    status_code=exc.http_status,
+                    content={"code": exc.code, "message": exc.message},
+                    headers={"traceparent": traceparent},
+                )
+        response = await call_next(request)
+        response.headers["traceparent"] = traceparent
+        return response
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {
@@ -96,6 +146,8 @@ def create_app() -> FastAPI:
     async def ready(request: Request) -> dict:
         init_db()
         state = request.app.state.gateway_runtime.readiness()
+        with SessionLocal() as db:
+            state["federation"] = upstream_mcp_manager.readiness_snapshot(db)
         if state["status"] != "ready":
             raise HTTPException(status_code=503, detail=state)
         return state

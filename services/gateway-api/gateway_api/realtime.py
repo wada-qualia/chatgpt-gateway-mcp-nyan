@@ -154,7 +154,9 @@ class RealtimeService:
         db.refresh(route)
         return route
 
-    def heartbeat_route(self, db: Session, *, connection_id: str) -> RealtimeRoute | None:
+    def heartbeat_route(
+        self, db: Session, *, connection_id: str
+    ) -> RealtimeRoute | None:
         route = (
             db.query(RealtimeRoute)
             .filter(
@@ -193,15 +195,21 @@ class RealtimeService:
         db.commit()
 
     @staticmethod
-    def _target_agent_ids(db: Session, envelope: dict[str, Any], replica_id: str) -> list[str]:
-        owner_subject = str(envelope.get("actor_subject") or "")
+    def _target_agent_ids(
+        db: Session, envelope: dict[str, Any], replica_id: str
+    ) -> list[str]:
+        owner_subject = str(
+            envelope.get("owner_subject") or envelope.get("actor_subject") or ""
+        )
         if not owner_subject:
             return []
         event_type = str(envelope.get("event_type") or "")
         payload = dict(envelope.get("payload") or {})
         direct_targets: list[str] = []
         if event_type == "gateway.agent.message.sent.v1":
-            direct_targets = [str(value) for value in payload.get("recipient_agent_ids") or []]
+            direct_targets = [
+                str(value) for value in payload.get("recipient_agent_ids") or []
+            ]
         elif event_type == "gateway.agent.command.issued.v1":
             target = payload.get("target_agent_id")
             direct_targets = [str(target)] if target else []
@@ -217,6 +225,20 @@ class RealtimeService:
                     )
                     .all()
                 ]
+        elif event_type.startswith("gateway.mcp."):
+            direct_targets = [
+                str(target_id)
+                for (target_id,) in db.query(RealtimeRoute.target_id)
+                .filter(
+                    RealtimeRoute.owner_subject == owner_subject,
+                    RealtimeRoute.replica_id == replica_id,
+                    RealtimeRoute.target_kind == "agent",
+                    RealtimeRoute.status == "online",
+                    RealtimeRoute.expires_at > utcnow(),
+                )
+                .distinct()
+                .all()
+            ]
         elif event_type in {
             "gateway.agent.registered.v1",
             "gateway.agent.heartbeat.v1",
@@ -261,16 +283,19 @@ class RealtimeService:
         except (UnicodeDecodeError, json.JSONDecodeError):
             return
         event_type = str(
-            headers.get("X-Gateway-Event-Type")
-            or wire_payload.get("event_type")
-            or ""
+            headers.get("X-Gateway-Event-Type") or wire_payload.get("event_type") or ""
         )
         actor_subject = str(
             headers.get("X-Gateway-Actor-Subject")
             or wire_payload.get("actor_subject")
             or ""
         )
-        if not event_type or not actor_subject:
+        owner_subject = str(
+            headers.get("X-Gateway-Owner-Subject")
+            or wire_payload.get("owner_subject")
+            or actor_subject
+        )
+        if not event_type or not actor_subject or not owner_subject:
             return
         event_payload = (
             dict(wire_payload.get("payload") or {})
@@ -281,6 +306,7 @@ class RealtimeService:
             "event_id": str(wire_payload.get("event_id") or ""),
             "event_type": event_type,
             "actor_subject": actor_subject,
+            "owner_subject": owner_subject,
             "action": str(headers.get("X-Gateway-Action") or ""),
             "resource_type": str(headers.get("X-Gateway-Resource-Type") or ""),
             "resource_id": str(headers.get("X-Gateway-Resource-Id") or "") or None,
@@ -304,7 +330,7 @@ class RealtimeService:
             for target_id in target_ids:
                 notification = RealtimeNotification(
                     id=str(uuid.uuid4()),
-                    owner_subject=str(envelope.get("actor_subject") or ""),
+                    owner_subject=str(envelope.get("owner_subject") or ""),
                     target_kind="agent",
                     target_id=target_id,
                     event_type=event_type,

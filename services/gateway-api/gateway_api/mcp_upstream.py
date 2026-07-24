@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import ipaddress
 import json
 import re
-import socket
 import time
 import uuid
 from dataclasses import dataclass
@@ -18,9 +16,11 @@ from jsonschema import Draft202012Validator, ValidationError
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .crypto import decrypt_text, encrypt_text
+from .events import emit_event
 from .mcp_federation import (
     get_revision,
     get_server,
@@ -28,6 +28,18 @@ from .mcp_federation import (
     reconcile_catalog_snapshot,
 )
 from .mcp_federation_policy import sha256_json
+from .mcp_federation_runtime import (
+    EndpointResolution,
+    FederationBoundaryError,
+    FederationTelemetry,
+    RecursionContext,
+    SlidingWindowLimiter,
+    assert_pinned_peer,
+    new_traceparent,
+    normalize_instance_id,
+    resolve_endpoint,
+    sanitize_untrusted,
+)
 from .models import (
     McpCredentialBinding,
     McpInvocation,
@@ -62,6 +74,8 @@ class CircuitState:
     failures: int = 0
     open_until_monotonic: float = 0.0
     last_error_code: str | None = None
+    open_count: int = 0
+    half_open_probe_active: bool = False
 
     @property
     def state(self) -> str:
@@ -366,8 +380,19 @@ class UpstreamMcpManager:
         call_timeout_seconds: float = 30.0,
         cancellation_grace_seconds: float = 3.0,
         max_concurrency_per_server: int = 4,
+        max_concurrency_per_tenant: int = 16,
+        calls_per_minute_per_server: int = 120,
+        calls_per_minute_per_tenant: int = 600,
+        max_connections: int = 32,
+        max_keepalive_connections: int = 8,
         circuit_failure_threshold: int = 3,
         circuit_open_seconds: float = 30.0,
+        circuit_max_open_seconds: float = 300.0,
+        federation_enabled: bool = True,
+        federation_writes_paused: bool = False,
+        gateway_instance_id: str = "gateway-local",
+        max_federation_hops: int = 4,
+        catalog_stale_after_seconds: int = 3600,
         max_result_bytes: int = 1_000_000,
         max_text_bytes: int = 512_000,
         max_content_items: int = 16,
@@ -380,17 +405,34 @@ class UpstreamMcpManager:
         self.connect_timeout_seconds = connect_timeout_seconds
         self.call_timeout_seconds = call_timeout_seconds
         self.cancellation_grace_seconds = cancellation_grace_seconds
-        self.max_concurrency_per_server = max_concurrency_per_server
-        self.circuit_failure_threshold = circuit_failure_threshold
-        self.circuit_open_seconds = circuit_open_seconds
+        self.max_concurrency_per_server = max(1, int(max_concurrency_per_server))
+        self.max_concurrency_per_tenant = max(1, int(max_concurrency_per_tenant))
+        self.calls_per_minute_per_server = max(0, int(calls_per_minute_per_server))
+        self.calls_per_minute_per_tenant = max(0, int(calls_per_minute_per_tenant))
+        self.max_connections = max(1, int(max_connections))
+        self.max_keepalive_connections = max(0, int(max_keepalive_connections))
+        self.circuit_failure_threshold = max(1, int(circuit_failure_threshold))
+        self.circuit_open_seconds = max(0.1, float(circuit_open_seconds))
+        self.circuit_max_open_seconds = max(
+            self.circuit_open_seconds, float(circuit_max_open_seconds)
+        )
+        self.federation_enabled = bool(federation_enabled)
+        self.federation_writes_paused = bool(federation_writes_paused)
+        self.gateway_instance_id = normalize_instance_id(gateway_instance_id)
+        self.max_federation_hops = max(1, int(max_federation_hops))
+        self.catalog_stale_after_seconds = max(1, int(catalog_stale_after_seconds))
         self.max_result_bytes = max_result_bytes
         self.max_text_bytes = max_text_bytes
         self.max_content_items = max_content_items
         self.max_catalog_tools = max(1, int(max_catalog_tools))
         self.thin_client_transport = thin_client_transport or thin_client_manager
         self._semaphores: dict[str, asyncio.Semaphore] = {}
+        self._tenant_semaphores: dict[str, asyncio.Semaphore] = {}
         self._circuits: dict[str, CircuitState] = {}
         self._active_calls: set[asyncio.Task[Any]] = set()
+        self._server_rate = SlidingWindowLimiter()
+        self._tenant_rate = SlidingWindowLimiter()
+        self.telemetry = FederationTelemetry()
         self.credentials = UpstreamCredentialResolver(self)
 
     async def stop(self) -> None:
@@ -400,65 +442,64 @@ class UpstreamMcpManager:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    def readiness_snapshot(self, db: Session) -> dict[str, Any]:
+        servers = db.scalars(select(McpServer)).all()
+        status_counts: dict[str, int] = {}
+        circuit_counts: dict[str, int] = {}
+        stale_catalogs = 0
+        now = utcnow()
+        for server in servers:
+            status_counts[server.status] = status_counts.get(server.status, 0) + 1
+            state = self.circuit_state(server.id)
+            circuit_counts[state] = circuit_counts.get(state, 0) + 1
+            refreshed = server.last_catalog_refreshed_at
+            if refreshed is None or (now - refreshed).total_seconds() > self.catalog_stale_after_seconds:
+                stale_catalogs += 1
+        return {
+            "enabled": self.federation_enabled,
+            "writes_paused": self.federation_writes_paused,
+            "active_connections": self.telemetry.active_connections,
+            "active_calls": self.telemetry.active_calls,
+            "servers": status_counts,
+            "circuits": circuit_counts,
+            "stale_catalogs": stale_catalogs,
+        }
+
+    def prometheus_lines(self, db: Session) -> list[str]:
+        snapshot = self.readiness_snapshot(db)
+        lines = [
+            "# TYPE gateway_mcp_servers gauge",
+            "# TYPE gateway_mcp_circuits gauge",
+            "# TYPE gateway_mcp_catalogs_stale gauge",
+        ]
+        for status, value in sorted(snapshot["servers"].items()):
+            lines.append(f'gateway_mcp_servers{{status="{status}"}} {value}')
+        for state, value in sorted(snapshot["circuits"].items()):
+            lines.append(f'gateway_mcp_circuits{{state="{state}"}} {value}')
+        lines.append(f'gateway_mcp_catalogs_stale {snapshot["stale_catalogs"]}')
+        lines.extend(self.telemetry.prometheus_lines())
+        return lines
+
     def circuit_state(self, server_id: str) -> str:
         return self._circuits.get(server_id, CircuitState()).state
 
-    async def validate_endpoint(self, endpoint: str, *, purpose: str = "mcp") -> None:
-        parsed = urlparse(endpoint)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise UpstreamMcpError(
-                "MCP_PROTOCOL_MISMATCH",
-                "Upstream endpoint must be an absolute HTTP URL",
-            )
-        if parsed.username or parsed.password or parsed.fragment:
-            raise UpstreamMcpError(
-                "MCP_PROTOCOL_MISMATCH",
-                "Upstream endpoint must not contain credentials or fragments",
-            )
-        if parsed.scheme != "https" and not self.allow_insecure_http:
-            raise UpstreamMcpError(
-                "MCP_PROTOCOL_MISMATCH",
-                f"Insecure HTTP is not allowed for {purpose} endpoints",
-            )
-        own = urlparse(self.public_base_url)
-        if parsed.hostname.lower() == (own.hostname or "").lower() and (
-            parsed.port or _default_port(parsed.scheme)
-        ) == (own.port or _default_port(own.scheme)):
-            raise UpstreamMcpError(
-                "MCP_RECURSION_DETECTED",
-                "The Gateway cannot federate its own public endpoint",
-                http_status=409,
-            )
-        port = parsed.port or _default_port(parsed.scheme)
+    async def validate_endpoint(
+        self, endpoint: str, *, purpose: str = "mcp"
+    ) -> EndpointResolution:
         try:
-            infos = await asyncio.to_thread(
-                socket.getaddrinfo,
-                parsed.hostname,
-                port,
-                type=socket.SOCK_STREAM,
+            return await resolve_endpoint(
+                endpoint,
+                public_base_url=self.public_base_url,
+                allow_private_networks=self.allow_private_networks,
+                allow_insecure_http=self.allow_insecure_http,
             )
-        except OSError as exc:
+        except FederationBoundaryError as exc:
             raise UpstreamMcpError(
-                "MCP_SERVER_OFFLINE",
-                "Upstream endpoint DNS resolution failed",
-                retryable=True,
+                exc.code,
+                exc.message if purpose == "mcp" else f"{purpose}: {exc.message}",
+                retryable=exc.code == "MCP_SERVER_OFFLINE",
+                http_status=exc.http_status,
             ) from exc
-        addresses = {item[4][0] for item in infos}
-        if not addresses:
-            raise UpstreamMcpError(
-                "MCP_SERVER_OFFLINE",
-                "Upstream endpoint DNS resolution returned no addresses",
-                retryable=True,
-            )
-        if not self.allow_private_networks:
-            for address in addresses:
-                ip = ipaddress.ip_address(address)
-                if not ip.is_global:
-                    raise UpstreamMcpError(
-                        "MCP_SERVER_QUARANTINED",
-                        "Upstream endpoint resolves to a non-public network",
-                        http_status=422,
-                    )
 
     @staticmethod
     def validate_resource_audience(endpoint: str, audience: str) -> None:
@@ -738,6 +779,19 @@ class UpstreamMcpManager:
         server = get_server(
             db, owner_subject=owner_subject, server_id=revision.server_id
         )
+        if self.federation_writes_paused and revision.action_class in {
+            "write",
+            "destructive",
+            "production",
+        }:
+            self.telemetry.increment("writes_paused_rejected", outcome=revision.action_class)
+            raise UpstreamMcpError(
+                "MCP_FEDERATION_WRITES_PAUSED",
+                "MCP federation write actions are paused by the emergency control",
+                http_status=503,
+            )
+        traceparent = new_traceparent()
+        operation_started = time.monotonic()
         try:
             Draft202012Validator.check_schema(revision.input_schema)
             Draft202012Validator(revision.input_schema).validate(arguments)
@@ -774,7 +828,28 @@ class UpstreamMcpManager:
             created_at=utcnow(),
         )
         db.add(invocation)
+        emit_event(
+            db,
+            event_type="gateway.mcp.invocation.started.v1",
+            actor_subject=actor_subject,
+            owner_subject=owner_subject,
+            action="mcp.invocation.started",
+            resource_type="mcp_invocation",
+            resource_id=invocation.id,
+            payload={
+                "invocation_id": invocation.id,
+                "server_id": server.id,
+                "tool_id": tool.id,
+                "revision_id": revision.id,
+                "schema_hash": revision.schema_hash,
+                "action_class": revision.action_class,
+                "traceparent": traceparent,
+                "correlation_id": correlation_id,
+            },
+            commit=False,
+        )
         db.commit()
+        self.telemetry.increment("invocation_started", action_class=revision.action_class)
         try:
             async with self._bounded(server):
                 if server.origin == "thin_client":
@@ -835,7 +910,44 @@ class UpstreamMcpManager:
             }
             invocation.response_sha256 = sha256_json(limited.payload)
             invocation.completed_at = utcnow()
+            duration_seconds = max(0.0, time.monotonic() - operation_started)
+            event_type = (
+                "gateway.mcp.invocation.failed.v1"
+                if raw.isError
+                else "gateway.mcp.invocation.completed.v1"
+            )
+            emit_event(
+                db,
+                event_type=event_type,
+                actor_subject=actor_subject,
+                owner_subject=owner_subject,
+                action="mcp.invocation.completed",
+                resource_type="mcp_invocation",
+                resource_id=invocation.id,
+                payload={
+                    "invocation_id": invocation.id,
+                    "server_id": server.id,
+                    "tool_id": tool.id,
+                    "revision_id": revision.id,
+                    "schema_hash": revision.schema_hash,
+                    "action_class": revision.action_class,
+                    "outcome": invocation.outcome,
+                    "duration_seconds": duration_seconds,
+                    "serialized_bytes": limited.serialized_bytes,
+                    "truncated": limited.truncated,
+                    "traceparent": traceparent,
+                    "correlation_id": correlation_id,
+                },
+                status="error" if raw.isError else "success",
+                commit=False,
+            )
             db.commit()
+            self.telemetry.increment(
+                "invocation_completed", outcome=invocation.outcome or "unknown"
+            )
+            self.telemetry.observe_latency(
+                "tool_call", invocation.outcome or "unknown", duration_seconds
+            )
             self._record_success(server.id)
             limited.invocation_id = invocation.id
             limited.is_error = bool(raw.isError)
@@ -846,7 +958,36 @@ class UpstreamMcpManager:
             invocation.normalized_error_code = exc.code
             invocation.normalized_error_detail = exc.message[:1000]
             invocation.completed_at = utcnow()
+            duration_seconds = max(0.0, time.monotonic() - operation_started)
+            emit_event(
+                db,
+                event_type="gateway.mcp.invocation.failed.v1",
+                actor_subject=actor_subject,
+                owner_subject=owner_subject,
+                action="mcp.invocation.failed",
+                resource_type="mcp_invocation",
+                resource_id=invocation.id,
+                payload={
+                    "invocation_id": invocation.id,
+                    "server_id": server.id,
+                    "tool_id": tool.id,
+                    "revision_id": revision.id,
+                    "schema_hash": revision.schema_hash,
+                    "action_class": revision.action_class,
+                    "outcome": invocation.outcome,
+                    "error_code": exc.code,
+                    "retryable": exc.retryable,
+                    "unknown_outcome": exc.unknown_outcome,
+                    "duration_seconds": duration_seconds,
+                    "traceparent": traceparent,
+                    "correlation_id": correlation_id,
+                },
+                status="error",
+                commit=False,
+            )
             db.commit()
+            self.telemetry.increment("invocation_failed", outcome=exc.code)
+            self.telemetry.observe_latency("tool_call", exc.code, duration_seconds)
             self._record_failure(server.id, exc)
             self._mark_failure(db, server, exc)
             raise
@@ -1075,14 +1216,34 @@ class UpstreamMcpManager:
             raise UpstreamMcpError(
                 "MCP_SERVER_OFFLINE", "Upstream MCP endpoint is not configured"
             )
-        await self.validate_endpoint(server.endpoint_url)
+        resolution = await self.validate_endpoint(server.endpoint_url)
         headers = await self.credentials.headers_for_server(db, server)
+        traceparent = new_traceparent()
+        headers.update(
+            RecursionContext(hop=0, visited=()).outbound_headers(
+                self.gateway_instance_id, traceparent
+            )
+        )
         timeout = httpx.Timeout(
             connect=self.connect_timeout_seconds,
             read=None,
             write=self.connect_timeout_seconds,
             pool=self.connect_timeout_seconds,
         )
+        limits = httpx.Limits(
+            max_connections=self.max_connections,
+            max_keepalive_connections=self.max_keepalive_connections,
+        )
+
+        async def validate_peer(response: httpx.Response) -> None:
+            try:
+                assert_pinned_peer(response, resolution)
+            except FederationBoundaryError as exc:
+                self.telemetry.increment("dns_rebinding_rejected", outcome=exc.code)
+                raise UpstreamMcpError(
+                    exc.code, exc.message, http_status=exc.http_status
+                ) from exc
+
         connection_id = str(uuid.uuid4())
         runtime = McpRuntimeConnection(
             id=str(uuid.uuid4()),
@@ -1103,7 +1264,9 @@ class UpstreamMcpManager:
             async with httpx.AsyncClient(
                 headers=headers,
                 timeout=timeout,
+                limits=limits,
                 follow_redirects=False,
+                event_hooks={"response": [validate_peer]},
             ) as http_client:
                 async with streamable_http_client(
                     server.endpoint_url,
@@ -1124,8 +1287,32 @@ class UpstreamMcpManager:
                             initialized.protocolVersion
                         ]
                         runtime.last_seen_at = utcnow()
+                        emit_event(
+                            db,
+                            event_type="gateway.mcp.runtime.connected.v1",
+                            actor_subject=server.owner_subject,
+                            owner_subject=server.owner_subject,
+                            action="mcp.runtime.connected",
+                            resource_type="mcp_runtime_connection",
+                            resource_id=runtime.id,
+                            payload={
+                                "runtime_connection_id": runtime.id,
+                                "server_id": server.id,
+                                "state": "online",
+                                "protocol_version": initialized.protocolVersion,
+                                "traceparent": traceparent,
+                            },
+                            commit=False,
+                        )
                         db.commit()
-                        yield session, initialized, get_session_id()
+                        self.telemetry.active_connections += 1
+                        self.telemetry.increment("runtime_connected", outcome="online")
+                        try:
+                            yield session, initialized, get_session_id()
+                        finally:
+                            self.telemetry.active_connections = max(
+                                0, self.telemetry.active_connections - 1
+                            )
         except UpstreamMcpError:
             runtime.state = "failed"
             runtime.disconnected_at = utcnow()
@@ -1194,39 +1381,125 @@ class UpstreamMcpManager:
                 runtime.state = "closed"
                 runtime.disconnected_at = utcnow()
                 runtime.last_seen_at = utcnow()
+                emit_event(
+                    db,
+                    event_type="gateway.mcp.runtime.disconnected.v1",
+                    actor_subject=server.owner_subject,
+                    owner_subject=server.owner_subject,
+                    action="mcp.runtime.disconnected",
+                    resource_type="mcp_runtime_connection",
+                    resource_id=runtime.id,
+                    payload={
+                        "runtime_connection_id": runtime.id,
+                        "server_id": server.id,
+                        "state": "closed",
+                        "traceparent": traceparent,
+                    },
+                    commit=False,
+                )
                 db.commit()
+                self.telemetry.increment("runtime_disconnected", outcome="closed")
 
     @contextlib.asynccontextmanager
     async def _bounded(self, server: McpServer) -> AsyncIterator[None]:
+        if not self.federation_enabled:
+            self.telemetry.increment("emergency_disabled", outcome="rejected")
+            raise UpstreamMcpError(
+                "MCP_FEDERATION_DISABLED",
+                "MCP federation is disabled by the emergency control",
+                http_status=503,
+            )
         if server.status == "disabled":
             raise UpstreamMcpError(
                 "MCP_SERVER_DISABLED",
                 "Upstream MCP server is disabled",
                 http_status=409,
             )
+        if not self._server_rate.acquire(server.id, self.calls_per_minute_per_server):
+            self.telemetry.increment("quota_rejected", scope="server")
+            raise UpstreamMcpError(
+                "MCP_QUOTA_EXCEEDED",
+                "Upstream MCP server rate quota exceeded",
+                retryable=True,
+                http_status=429,
+            )
+        tenant_key = server.owner_subject
+        if not self._tenant_rate.acquire(
+            tenant_key, self.calls_per_minute_per_tenant
+        ):
+            self.telemetry.increment("quota_rejected", scope="tenant")
+            raise UpstreamMcpError(
+                "MCP_QUOTA_EXCEEDED",
+                "Tenant MCP federation rate quota exceeded",
+                retryable=True,
+                http_status=429,
+            )
         circuit = self._circuits.setdefault(server.id, CircuitState())
-        if circuit.open_until_monotonic > time.monotonic():
+        now = time.monotonic()
+        if circuit.open_until_monotonic > now:
+            self.telemetry.increment("circuit_rejected", state="open")
             raise UpstreamMcpError(
                 "MCP_SERVER_OFFLINE",
                 "Upstream MCP circuit is open",
                 retryable=True,
                 http_status=503,
             )
-        semaphore = self._semaphores.setdefault(
+        half_open = bool(circuit.failures)
+        if half_open and circuit.half_open_probe_active:
+            self.telemetry.increment("circuit_rejected", state="half_open")
+            raise UpstreamMcpError(
+                "MCP_SERVER_OFFLINE",
+                "Upstream MCP circuit half-open probe is already running",
+                retryable=True,
+                http_status=503,
+            )
+        if half_open:
+            circuit.half_open_probe_active = True
+        server_semaphore = self._semaphores.setdefault(
             server.id, asyncio.Semaphore(self.max_concurrency_per_server)
         )
-        async with semaphore:
-            yield
+        tenant_semaphore = self._tenant_semaphores.setdefault(
+            tenant_key, asyncio.Semaphore(self.max_concurrency_per_tenant)
+        )
+        try:
+            async with tenant_semaphore, server_semaphore:
+                self.telemetry.active_calls += 1
+                try:
+                    yield
+                finally:
+                    self.telemetry.active_calls = max(
+                        0, self.telemetry.active_calls - 1
+                    )
+        finally:
+            if half_open:
+                circuit.half_open_probe_active = False
 
     def _record_success(self, server_id: str) -> None:
+        previous = self._circuits.get(server_id, CircuitState()).state
         self._circuits[server_id] = CircuitState()
+        if previous != "closed":
+            self.telemetry.increment(
+                "circuit_transition", from_state=previous, to_state="closed"
+            )
 
     def _record_failure(self, server_id: str, error: UpstreamMcpError) -> None:
         circuit = self._circuits.setdefault(server_id, CircuitState())
+        previous = circuit.state
         circuit.failures += 1
         circuit.last_error_code = error.code
+        circuit.half_open_probe_active = False
         if circuit.failures >= self.circuit_failure_threshold:
-            circuit.open_until_monotonic = time.monotonic() + self.circuit_open_seconds
+            circuit.open_count += 1
+            delay = min(
+                self.circuit_max_open_seconds,
+                self.circuit_open_seconds * (2 ** max(0, circuit.open_count - 1)),
+            )
+            circuit.open_until_monotonic = time.monotonic() + delay
+        current = circuit.state
+        if current != previous:
+            self.telemetry.increment(
+                "circuit_transition", from_state=previous, to_state=current
+            )
 
     def _mark_online(
         self,
@@ -1267,7 +1540,16 @@ class UpstreamMcpManager:
         db.commit()
 
     def _limit_result(self, result: types.CallToolResult) -> UpstreamCallResult:
-        payload = result.model_dump(mode="json", by_alias=True)
+        payload = sanitize_untrusted(
+            result.model_dump(mode="json", by_alias=True),
+            max_string=self.max_text_bytes,
+        )
+        if not isinstance(payload, dict):
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Upstream MCP result is not an object",
+                http_status=502,
+            )
         content = payload.get("content")
         truncated = False
         if isinstance(content, list) and len(content) > self.max_content_items:
@@ -1291,12 +1573,15 @@ class UpstreamMcpManager:
             payload, separators=(",", ":"), ensure_ascii=False
         ).encode("utf-8")
         if len(serialized) > self.max_result_bytes:
+            self.telemetry.increment("result_rejected", outcome="too_large")
             raise UpstreamMcpError(
                 "MCP_RESULT_TOO_LARGE",
                 "Upstream MCP result exceeds the Gateway result limit",
                 http_status=413,
             )
         payload.setdefault("_gateway", {})["truncated"] = truncated
+        if truncated:
+            self.telemetry.increment("result_truncated", outcome="bounded")
         return UpstreamCallResult(
             payload=payload, truncated=truncated, serialized_bytes=len(serialized)
         )

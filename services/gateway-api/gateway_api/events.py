@@ -27,6 +27,7 @@ def emit_event(
     resource_type: str,
     resource_id: str | None,
     payload: dict[str, Any],
+    owner_subject: str | None = None,
     status: str = "success",
     commit: bool = True,
     enqueue_outbox: bool = True,
@@ -55,7 +56,7 @@ def emit_event(
             OutboxEvent(
                 id=str(uuid.uuid4()),
                 audit_event_id=event.id,
-                owner_subject=actor_subject,
+                owner_subject=owner_subject or actor_subject,
                 event_type=event_type,
                 subject=event_subject(event_type),
                 payload=envelope,
@@ -65,6 +66,7 @@ def emit_event(
                     "X-Gateway-Event-Id": event.id,
                     "X-Gateway-Event-Type": event_type,
                     "X-Gateway-Actor-Subject": actor_subject,
+                    "X-Gateway-Owner-Subject": owner_subject or actor_subject,
                     "X-Gateway-Action": action,
                     "X-Gateway-Resource-Type": resource_type,
                     "X-Gateway-Resource-Id": resource_id or "",
@@ -84,6 +86,10 @@ def emit_event(
         db.flush()
     logger.info(
         "gateway_event_enqueued",
-        extra={"event_type": event_type, "resource_id": resource_id, "event_id": event.id},
+        extra={
+            "event_type": event_type,
+            "resource_id": resource_id,
+            "event_id": event.id,
+        },
     )
     return event

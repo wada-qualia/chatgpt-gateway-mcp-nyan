@@ -266,4 +266,5 @@ async def prometheus_metrics(request: Request, db: Session = Depends(get_db)) ->
             ),
         ]
     )
+    lines.extend(request.app.state.upstream_mcp_manager.prometheus_lines(db))
     return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")

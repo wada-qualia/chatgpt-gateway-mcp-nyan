@@ -276,10 +276,22 @@ channels:
     publish:
       message:
         $ref: '#/components/messages/McpInvocationFailed'
+  gateway.mcp.projection.candidate_created.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpProjectionCandidateCreated'
   gateway.mcp.projection.published.v1:
     publish:
       message:
         $ref: '#/components/messages/McpProjectionPublished'
+  gateway.mcp.projection.rolled_back.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpProjectionRolledBack'
+  gateway.mcp.projection.verified.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpProjectionVerified'
   gateway.mcp.runtime.connected.v1:
     publish:
       message:
@@ -366,10 +378,22 @@ components:
       name: gateway.mcp.invocation.failed.v1
       payload:
         $ref: ../schemas/gateway.mcp.invocation.failed.v1.schema.json
+    McpProjectionCandidateCreated:
+      name: gateway.mcp.projection.candidate_created.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.projection.candidate_created.v1.schema.json
     McpProjectionPublished:
       name: gateway.mcp.projection.published.v1
       payload:
         $ref: ../schemas/gateway.mcp.projection.published.v1.schema.json
+    McpProjectionRolledBack:
+      name: gateway.mcp.projection.rolled_back.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.projection.rolled_back.v1.schema.json
+    McpProjectionVerified:
+      name: gateway.mcp.projection.verified.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.projection.verified.v1.schema.json
     McpRuntimeConnected:
       name: gateway.mcp.runtime.connected.v1
       payload:

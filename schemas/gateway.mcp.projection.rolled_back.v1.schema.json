@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.projection.rolled_back.v1",
+  "title": "McpProjectionRolledBack",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "generation_id",
+    "profile_id",
+    "generation_number",
+    "schema_hash",
+    "replaced_generation_id",
+    "tools_list_changed_state",
+    "chatgpt_refresh_state"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "generation_id": {
+      "type": "string"
+    },
+    "profile_id": {
+      "type": "string"
+    },
+    "generation_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "schema_hash": {
+      "type": "string"
+    },
+    "replaced_generation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tools_list_changed_state": {
+      "enum": [
+        "not_required",
+        "pending",
+        "notified"
+      ]
+    },
+    "chatgpt_refresh_state": {
+      "enum": [
+        "not_required",
+        "pending",
+        "verified"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

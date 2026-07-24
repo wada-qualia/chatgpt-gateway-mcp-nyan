@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.projection.verified.v1",
+  "title": "McpProjectionVerified",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "verification_id",
+    "generation_id",
+    "profile_id",
+    "verification_kind",
+    "observed_schema_hash",
+    "evidence_field_count"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "verification_id": {
+      "type": "string"
+    },
+    "generation_id": {
+      "type": "string"
+    },
+    "profile_id": {
+      "type": "string"
+    },
+    "verification_kind": {
+      "enum": [
+        "generic_tools_list_changed",
+        "chatgpt_actions"
+      ]
+    },
+    "observed_schema_hash": {
+      "type": "string"
+    },
+    "evidence_field_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

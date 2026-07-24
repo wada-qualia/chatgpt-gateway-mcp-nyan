@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.projection.candidate_created.v1",
+  "title": "McpProjectionCandidateCreated",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "generation_id",
+    "profile_id",
+    "generation_number",
+    "previous_generation_id",
+    "schema_hash",
+    "tool_count",
+    "change_counts",
+    "removed_count"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "generation_id": {
+      "type": "string"
+    },
+    "profile_id": {
+      "type": "string"
+    },
+    "generation_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "previous_generation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "schema_hash": {
+      "type": "string"
+    },
+    "tool_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "change_counts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "removed_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

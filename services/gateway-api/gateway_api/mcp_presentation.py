@@ -13,6 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .auth import decode_jwt
+from .events import emit_event
 from .models import (
     McpProjectionGeneration,
     McpProjectionTool,
@@ -84,7 +85,9 @@ def _safe_description(value: str | None, *, limit: int = 1800) -> str:
     return text[:limit]
 
 
-def public_projection_name(server_slug: str, tool_name: str, explicit: str | None) -> str:
+def public_projection_name(
+    server_slug: str, tool_name: str, explicit: str | None
+) -> str:
     raw = explicit or f"{server_slug}__{tool_name}"
     normalized = _PUBLIC_NAME_RE.sub("_", raw.strip().lower()).strip("_")
     if not normalized:
@@ -128,10 +131,10 @@ def resolve_presentation_context(
         )
     client = db.get(OAuthClient, client_id)
     if client is None:
-        raise HTTPException(status_code=401, detail="OAuth client is no longer registered")
-    profile_id = str(
-        claims.get("presentation_profile") or client.presentation_profile
-    )
+        raise HTTPException(
+            status_code=401, detail="OAuth client is no longer registered"
+        )
+    profile_id = str(claims.get("presentation_profile") or client.presentation_profile)
     token_generation = int(
         claims.get("presentation_policy_generation")
         or client.presentation_policy_generation
@@ -147,7 +150,9 @@ def resolve_presentation_context(
     if profile_id not in PRESENTATION_PROFILES:
         raise HTTPException(status_code=403, detail="Invalid presentation profile")
     claim_allowed = claims.get("allowed_tool_names")
-    allowed_source = claim_allowed if isinstance(claim_allowed, list) else client.allowed_tool_names
+    allowed_source = (
+        claim_allowed if isinstance(claim_allowed, list) else client.allowed_tool_names
+    )
     allowed = (
         frozenset(str(name) for name in (allowed_source or []))
         if profile_id == "agent-restricted"
@@ -174,7 +179,9 @@ def update_oauth_client_profile(
     client = db.get(OAuthClient, client_id)
     if client is None:
         raise HTTPException(status_code=404, detail="OAuth client not found")
-    normalized_allowed = sorted({str(name).strip() for name in allowed_tool_names if str(name).strip()})
+    normalized_allowed = sorted(
+        {str(name).strip() for name in allowed_tool_names if str(name).strip()}
+    )
     if profile_id != "agent-restricted":
         normalized_allowed = []
     if (
@@ -247,7 +254,9 @@ def classify_projection_change(
     if _is_additive_object_schema(previous.input_schema, revision.input_schema):
         old_output = previous.output_schema or {}
         new_output = revision.output_schema or {}
-        if old_output == new_output or _is_additive_object_schema(old_output, new_output):
+        if old_output == new_output or _is_additive_object_schema(
+            old_output, new_output
+        ):
             return "backward_compatible_additive"
     return "breaking_schema"
 
@@ -266,9 +275,7 @@ def active_generation(
     )
 
 
-def generation_tools(
-    db: Session, *, generation_id: str
-) -> list[McpProjectionTool]:
+def generation_tools(db: Session, *, generation_id: str) -> list[McpProjectionTool]:
     return (
         db.query(McpProjectionTool)
         .filter(McpProjectionTool.generation_id == generation_id)
@@ -321,11 +328,15 @@ def create_candidate_generation(
         query = query.filter(McpToolExposure.id.in_(exposure_ids))
     rows = query.all()
     if exposure_ids is not None and len(rows) != len(set(exposure_ids)):
-        raise HTTPException(status_code=404, detail="One or more native exposures were not found")
+        raise HTTPException(
+            status_code=404, detail="One or more native exposures were not found"
+        )
     previous = active_generation(db, owner_subject=owner_subject, profile_id=profile_id)
     previous_by_name = {
         item.public_name: item
-        for item in (generation_tools(db, generation_id=previous.id) if previous else [])
+        for item in (
+            generation_tools(db, generation_id=previous.id) if previous else []
+        )
     }
     reserved = set(reserved_names)
     prepared: list[dict[str, Any]] = []
@@ -334,17 +345,26 @@ def create_candidate_generation(
         if server.trust_level != "approved":
             raise HTTPException(
                 status_code=422,
-                detail={"code": "MCP_PROJECTION_SERVER_UNREVIEWED", "server_id": server.id},
+                detail={
+                    "code": "MCP_PROJECTION_SERVER_UNREVIEWED",
+                    "server_id": server.id,
+                },
             )
         if revision.action_class == "unknown":
             raise HTTPException(
                 status_code=422,
-                detail={"code": "MCP_PROJECTION_REVISION_UNCLASSIFIED", "revision_id": revision.id},
+                detail={
+                    "code": "MCP_PROJECTION_REVISION_UNCLASSIFIED",
+                    "revision_id": revision.id,
+                },
             )
         if revision.action_class == "read" and revision.read_only_status != "verified":
             raise HTTPException(
                 status_code=422,
-                detail={"code": "MCP_PROJECTION_READ_ONLY_UNVERIFIED", "revision_id": revision.id},
+                detail={
+                    "code": "MCP_PROJECTION_READ_ONLY_UNVERIFIED",
+                    "revision_id": revision.id,
+                },
             )
         _validate_revision_schema(revision)
         public_name = public_projection_name(
@@ -355,7 +375,10 @@ def create_candidate_generation(
         if public_name in reserved or public_name in names:
             raise HTTPException(
                 status_code=409,
-                detail={"code": "MCP_PROJECTION_NAME_COLLISION", "public_name": public_name},
+                detail={
+                    "code": "MCP_PROJECTION_NAME_COLLISION",
+                    "public_name": public_name,
+                },
             )
         names.add(public_name)
         title = _safe_description(revision.sanitized_title, limit=240) or None
@@ -426,7 +449,11 @@ def create_candidate_generation(
         previous_generation_id=previous.id if previous else None,
         content_hash=_sha256(content_document),
         schema_hash=_sha256(schema_document),
-        change_summary={"counts": counts, "removed": removed, "tool_count": len(prepared)},
+        change_summary={
+            "counts": counts,
+            "removed": removed,
+            "tool_count": len(prepared),
+        },
         tools_list_changed_state="not_required",
         chatgpt_refresh_state="not_required",
         created_by_subject=actor_subject,
@@ -444,6 +471,26 @@ def create_candidate_generation(
                 **item,
             )
         )
+    emit_event(
+        db,
+        event_type="gateway.mcp.projection.candidate_created.v1",
+        actor_subject=actor_subject,
+        owner_subject=owner_subject,
+        action="mcp.projection.candidate_created",
+        resource_type="mcp_projection_generation",
+        resource_id=generation.id,
+        payload={
+            "generation_id": generation.id,
+            "profile_id": generation.profile_id,
+            "generation_number": generation.generation_number,
+            "previous_generation_id": generation.previous_generation_id,
+            "schema_hash": generation.schema_hash,
+            "tool_count": len(prepared),
+            "change_counts": dict(counts),
+            "removed_count": len(removed),
+        },
+        commit=False,
+    )
     db.commit()
     db.refresh(generation)
     return generation
@@ -479,10 +526,16 @@ def publish_generation(
     actor_subject: str,
     generation_id: str,
 ) -> McpProjectionGeneration:
-    generation = get_generation(db, owner_subject=owner_subject, generation_id=generation_id)
+    generation = get_generation(
+        db, owner_subject=owner_subject, generation_id=generation_id
+    )
     if generation.status != "candidate":
-        raise HTTPException(status_code=409, detail="Only candidate generations can be published")
-    current = active_generation(db, owner_subject=owner_subject, profile_id=generation.profile_id)
+        raise HTTPException(
+            status_code=409, detail="Only candidate generations can be published"
+        )
+    current = active_generation(
+        db, owner_subject=owner_subject, profile_id=generation.profile_id
+    )
     if current is not None:
         current.status = "superseded"
         current.updated_at = utcnow()
@@ -491,10 +544,29 @@ def publish_generation(
     generation.published_at = utcnow()
     generation.updated_at = utcnow()
     generation.tools_list_changed_state = (
-        "pending" if PRESENTATION_PROFILES[generation.profile_id]["supports_list_changed"] else "not_required"
+        "pending"
+        if PRESENTATION_PROFILES[generation.profile_id]["supports_list_changed"]
+        else "not_required"
     )
     generation.chatgpt_refresh_state = (
-        "pending" if PRESENTATION_PROFILES[generation.profile_id]["chatgpt_refresh_required"] else "not_required"
+        "pending"
+        if PRESENTATION_PROFILES[generation.profile_id]["chatgpt_refresh_required"]
+        else "not_required"
+    )
+    emit_event(
+        db,
+        event_type="gateway.mcp.projection.published.v1",
+        actor_subject=actor_subject,
+        owner_subject=owner_subject,
+        action="mcp.projection.published",
+        resource_type="mcp_projection_generation",
+        resource_id=generation.id,
+        payload={
+            "projection_generation": generation.generation_number,
+            "tool_count": int((generation.change_summary or {}).get("tool_count") or 0),
+            "schema_set_hash": generation.schema_hash,
+        },
+        commit=False,
     )
     db.commit()
     db.refresh(generation)
@@ -508,10 +580,16 @@ def rollback_generation(
     actor_subject: str,
     generation_id: str,
 ) -> McpProjectionGeneration:
-    generation = get_generation(db, owner_subject=owner_subject, generation_id=generation_id)
+    generation = get_generation(
+        db, owner_subject=owner_subject, generation_id=generation_id
+    )
     if generation.status not in {"superseded", "active"}:
-        raise HTTPException(status_code=409, detail="Generation is not eligible for rollback")
-    current = active_generation(db, owner_subject=owner_subject, profile_id=generation.profile_id)
+        raise HTTPException(
+            status_code=409, detail="Generation is not eligible for rollback"
+        )
+    current = active_generation(
+        db, owner_subject=owner_subject, profile_id=generation.profile_id
+    )
     if current is not None and current.id != generation.id:
         current.status = "superseded"
         current.updated_at = utcnow()
@@ -520,10 +598,37 @@ def rollback_generation(
     generation.published_at = utcnow()
     generation.updated_at = utcnow()
     generation.tools_list_changed_state = (
-        "pending" if PRESENTATION_PROFILES[generation.profile_id]["supports_list_changed"] else "not_required"
+        "pending"
+        if PRESENTATION_PROFILES[generation.profile_id]["supports_list_changed"]
+        else "not_required"
     )
     generation.chatgpt_refresh_state = (
-        "pending" if PRESENTATION_PROFILES[generation.profile_id]["chatgpt_refresh_required"] else "not_required"
+        "pending"
+        if PRESENTATION_PROFILES[generation.profile_id]["chatgpt_refresh_required"]
+        else "not_required"
+    )
+    emit_event(
+        db,
+        event_type="gateway.mcp.projection.rolled_back.v1",
+        actor_subject=actor_subject,
+        owner_subject=owner_subject,
+        action="mcp.projection.rolled_back",
+        resource_type="mcp_projection_generation",
+        resource_id=generation.id,
+        payload={
+            "generation_id": generation.id,
+            "profile_id": generation.profile_id,
+            "generation_number": generation.generation_number,
+            "schema_hash": generation.schema_hash,
+            "replaced_generation_id": (
+                current.id
+                if current is not None and current.id != generation.id
+                else None
+            ),
+            "tools_list_changed_state": generation.tools_list_changed_state,
+            "chatgpt_refresh_state": generation.chatgpt_refresh_state,
+        },
+        commit=False,
     )
     db.commit()
     db.refresh(generation)
@@ -540,9 +645,13 @@ def record_projection_verification(
     observed_schema_hash: str,
     evidence: dict[str, Any],
 ) -> McpProjectionVerification:
-    generation = get_generation(db, owner_subject=owner_subject, generation_id=generation_id)
+    generation = get_generation(
+        db, owner_subject=owner_subject, generation_id=generation_id
+    )
     if generation.status != "active":
-        raise HTTPException(status_code=409, detail="Only the active generation can be verified")
+        raise HTTPException(
+            status_code=409, detail="Only the active generation can be verified"
+        )
     if observed_schema_hash != generation.schema_hash:
         raise HTTPException(
             status_code=409,
@@ -554,11 +663,16 @@ def record_projection_verification(
         )
     if verification_kind == "chatgpt_actions":
         if generation.profile_id != "chatgpt-stable":
-            raise HTTPException(status_code=422, detail="ChatGPT verification applies only to chatgpt-stable")
+            raise HTTPException(
+                status_code=422,
+                detail="ChatGPT verification applies only to chatgpt-stable",
+            )
         generation.chatgpt_refresh_state = "verified"
     elif verification_kind == "generic_tools_list_changed":
         if not PRESENTATION_PROFILES[generation.profile_id]["supports_list_changed"]:
-            raise HTTPException(status_code=422, detail="Profile does not advertise tools.listChanged")
+            raise HTTPException(
+                status_code=422, detail="Profile does not advertise tools.listChanged"
+            )
         generation.tools_list_changed_state = "notified"
     else:
         raise HTTPException(status_code=422, detail="Unknown verification kind")
@@ -573,6 +687,24 @@ def record_projection_verification(
         verified_by_subject=actor_subject,
     )
     db.add(verification)
+    emit_event(
+        db,
+        event_type="gateway.mcp.projection.verified.v1",
+        actor_subject=actor_subject,
+        owner_subject=owner_subject,
+        action="mcp.projection.verified",
+        resource_type="mcp_projection_verification",
+        resource_id=verification.id,
+        payload={
+            "verification_id": verification.id,
+            "generation_id": generation.id,
+            "profile_id": generation.profile_id,
+            "verification_kind": verification_kind,
+            "observed_schema_hash": observed_schema_hash,
+            "evidence_field_count": len(evidence or {}),
+        },
+        commit=False,
+    )
     db.commit()
     db.refresh(verification)
     return verification
@@ -593,11 +725,18 @@ def projection_entries_for_context(
     roles = set(user_roles)
     entries: list[NativeProjectionEntry] = []
     for tool in generation_tools(db, generation_id=generation.id):
-        if tool.required_role and tool.required_role not in roles and "gateway-admin" not in roles:
+        if (
+            tool.required_role
+            and tool.required_role not in roles
+            and "gateway-admin" not in roles
+        ):
             continue
         if tool.required_scope and tool.required_scope not in context.scopes:
             continue
-        if context.allowed_tool_names is not None and tool.public_name not in context.allowed_tool_names:
+        if (
+            context.allowed_tool_names is not None
+            and tool.public_name not in context.allowed_tool_names
+        ):
             continue
         entries.append(NativeProjectionEntry(generation=generation, tool=tool))
     return entries
@@ -618,7 +757,9 @@ def native_tool_definition(entry: NativeProjectionEntry) -> dict[str, Any]:
     return definition
 
 
-def generation_payload(db: Session, generation: McpProjectionGeneration, *, include_tools: bool = False) -> dict[str, Any]:
+def generation_payload(
+    db: Session, generation: McpProjectionGeneration, *, include_tools: bool = False
+) -> dict[str, Any]:
     payload = {
         "id": generation.id,
         "owner_subject": generation.owner_subject,

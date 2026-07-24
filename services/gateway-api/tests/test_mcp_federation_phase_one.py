@@ -511,7 +511,7 @@ def test_phase_one_machine_readable_contracts() -> None:
         for name, channel in asyncapi["channels"].items()
         if name.startswith("gateway.mcp.")
     }
-    assert len(mcp_channels) == 22
+    assert len(mcp_channels) == 25
     for event_type, channel in mcp_channels.items():
         message_ref = channel["publish"]["message"]["$ref"]
         message = asyncapi["components"]["messages"][message_ref.rsplit("/", 1)[-1]]

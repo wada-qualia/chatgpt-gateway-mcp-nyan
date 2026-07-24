@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.policy.created.v1",
+  "title": "McpPolicyCreated",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "policy_id",
+    "server_id",
+    "trust_level",
+    "generation",
+    "status"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "policy_id": {
+      "type": "string"
+    },
+    "server_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "trust_level": {
+      "type": "string"
+    },
+    "generation": {
+      "type": "integer"
+    },
+    "status": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

@@ -873,3 +873,318 @@ class LupToolPhaseSealOut(BaseModel):
     created: bool
     created_at: datetime
     updated_at: datetime
+
+class McpStrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class McpCredentialBindingCreate(McpStrictModel):
+    binding_type: Literal["oauth", "service_account", "thin_client_local"]
+    provider: str | None = Field(default=None, max_length=120)
+    secret_blob_id: str | None = Field(default=None, max_length=36)
+    audience: str | None = Field(default=None, max_length=512)
+    scopes: list[str] = Field(default_factory=list, max_length=100)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class McpCredentialBindingOut(OrmModel):
+    id: str
+    owner_subject: str
+    binding_type: str
+    provider: str | None = None
+    audience: str | None = None
+    scopes: list[str]
+    status: str
+    version: int
+    meta: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+    rotated_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+class McpServerCreate(McpStrictModel):
+    display_name: str = Field(min_length=1, max_length=180)
+    origin: Literal["gateway", "thin_client"]
+    transport: Literal["streamable_http", "legacy_sse", "stdio", "private_http"]
+    endpoint_url: str | None = Field(default=None, max_length=2048)
+    thin_client_id: str | None = Field(default=None, max_length=36)
+    runtime_id: str | None = Field(default=None, max_length=160)
+    credential_binding_id: str | None = Field(default=None, max_length=36)
+
+    @model_validator(mode="after")
+    def validate_origin_transport(self) -> "McpServerCreate":
+        if self.origin == "gateway":
+            if self.transport not in {"streamable_http", "legacy_sse"}:
+                raise ValueError("Gateway-origin MCP servers require an HTTP transport")
+            if not self.endpoint_url:
+                raise ValueError("Gateway-origin MCP servers require endpoint_url")
+            if self.thin_client_id or self.runtime_id:
+                raise ValueError(
+                    "Gateway-origin MCP servers cannot select a thin-client runtime"
+                )
+        else:
+            if self.transport not in {"stdio", "streamable_http", "private_http"}:
+                raise ValueError(
+                    "Thin-client MCP servers use stdio, streamable_http or private_http"
+                )
+            if not self.thin_client_id or not self.runtime_id:
+                raise ValueError(
+                    "Thin-client MCP servers require thin_client_id and runtime_id"
+                )
+        return self
+
+
+class McpServerUpdate(McpStrictModel):
+    expected_version: int = Field(ge=1)
+    display_name: str | None = Field(default=None, min_length=1, max_length=180)
+    credential_binding_id: str | None = Field(default=None, max_length=36)
+    enabled: bool | None = None
+
+
+class McpServerOut(OrmModel):
+    id: str
+    owner_subject: str
+    origin: str
+    thin_client_id: str | None = None
+    runtime_id: str | None = None
+    display_name: str
+    normalized_slug: str
+    transport: str
+    endpoint_url: str | None = None
+    credential_binding_id: str | None = None
+    status: str
+    trust_level: str
+    quarantine_reason: str | None = None
+    negotiated_protocol_version: str | None = None
+    capabilities: dict[str, Any]
+    catalog_generation: int
+    policy_generation: int
+    version: int
+    last_connected_at: datetime | None = None
+    last_catalog_refreshed_at: datetime | None = None
+    disabled_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class McpServerCommand(McpStrictModel):
+    expected_version: int = Field(ge=1)
+
+
+class McpServerHealthOut(BaseModel):
+    server_id: str
+    status: str
+    trust_level: str
+    catalog_generation: int
+    negotiated_protocol_version: str | None = None
+    last_connected_at: datetime | None = None
+    last_catalog_refreshed_at: datetime | None = None
+
+
+class McpFederationPolicyUpdate(McpStrictModel):
+    expected_version: int = Field(ge=0)
+    trust_level: Literal[
+        "unreviewed", "restricted", "approved", "quarantined", "revoked"
+    ]
+    allowed_action_classes: list[
+        Literal["read", "write", "destructive", "production"]
+    ] = Field(default_factory=list, max_length=4)
+    required_roles: list[str] = Field(default_factory=list, max_length=50)
+    required_scopes: list[str] = Field(default_factory=list, max_length=100)
+    approval_mapping: dict[str, Literal["none", "operator", "quorum", "production"]] = (
+        Field(default_factory=dict)
+    )
+    tool_allowlist: list[str] = Field(default_factory=list, max_length=500)
+    tool_denylist: list[str] = Field(default_factory=list, max_length=500)
+    status: Literal["active", "disabled"] = "active"
+
+
+class McpFederationPolicyOut(OrmModel):
+    id: str
+    owner_subject: str
+    server_id: str | None = None
+    trust_level: str
+    allowed_action_classes: list[str]
+    required_roles: list[str]
+    required_scopes: list[str]
+    approval_mapping: dict[str, str]
+    tool_allowlist: list[str]
+    tool_denylist: list[str]
+    status: str
+    generation: int
+    version: int
+    created_by_subject: str
+    updated_by_subject: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class McpToolRevisionClassification(McpStrictModel):
+    expected_version: int = Field(ge=1)
+    action_class: Literal["read", "write", "destructive", "production"]
+    read_only_status: Literal["unverified", "verified", "rejected"]
+
+
+class McpToolRevisionOut(OrmModel):
+    id: str
+    owner_subject: str
+    server_id: str
+    tool_id: str
+    revision_number: int
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any] | None = None
+    sanitized_title: str | None = None
+    sanitized_description: str
+    annotations: dict[str, Any]
+    schema_hash: str
+    protocol_version: str | None = None
+    catalog_generation: int
+    action_class: str
+    read_only_status: str
+    risk_evidence: dict[str, Any]
+    version: int
+    classified_by_subject: str | None = None
+    classified_at: datetime | None = None
+    superseded_by_revision_id: str | None = None
+    discovered_at: datetime
+    created_at: datetime
+
+
+class McpToolOut(OrmModel):
+    id: str
+    owner_subject: str
+    server_id: str
+    upstream_name: str
+    normalized_name: str
+    lifecycle_state: str
+    current_revision_id: str | None = None
+    version: int
+    first_observed_at: datetime
+    last_observed_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class McpToolExposureUpdate(McpStrictModel):
+    expected_version: int = Field(ge=0)
+    revision_id: str = Field(max_length=36)
+    mode: Literal["hidden", "catalog_only", "native_projected"]
+    enabled: bool
+    projected_name: str | None = Field(default=None, max_length=255)
+    required_role: str | None = Field(default=None, max_length=120)
+    required_scope: str | None = Field(default=None, max_length=160)
+    approval_class: Literal["none", "operator", "quorum", "production"]
+    projection_generation: int = Field(default=0, ge=0)
+
+
+class McpToolExposureOut(OrmModel):
+    id: str
+    owner_subject: str
+    server_id: str
+    tool_id: str
+    revision_id: str
+    mode: str
+    projected_name: str | None = None
+    enabled: bool
+    required_role: str | None = None
+    required_scope: str | None = None
+    approval_class: str
+    projection_generation: int
+    policy_generation: int
+    version: int
+    reviewed_by_subject: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class McpInvocationOut(OrmModel):
+    id: str
+    owner_subject: str
+    actor_subject: str
+    gateway_tool_call_id: str | None = None
+    correlation_id: str | None = None
+    server_id: str
+    tool_id: str
+    revision_id: str
+    schema_hash: str
+    action_class: str
+    arguments_redacted: dict[str, Any]
+    arguments_sha256: str
+    preparation_id: str | None = None
+    approval_request_id: str | None = None
+    execution_permit_id: str | None = None
+    outcome: str
+    unknown_outcome: bool
+    normalized_error_code: str | None = None
+    normalized_error_detail: str | None = None
+    response_metadata: dict[str, Any]
+    response_sha256: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    created_at: datetime
+
+
+class McpRuntimeConnectionOut(OrmModel):
+    id: str
+    owner_subject: str
+    server_id: str
+    thin_client_id: str | None = None
+    runtime_id: str | None = None
+    connection_instance_id: str
+    supported_transports: list[str]
+    supported_protocol_versions: list[str]
+    state: str
+    acknowledged_catalog_generation: int
+    meta: dict[str, Any]
+    connected_at: datetime
+    last_seen_at: datetime
+    disconnected_at: datetime | None = None
+
+
+class McpCatalogSearchInput(McpStrictModel):
+    query: str = Field(min_length=1, max_length=512)
+    server_id: str | None = Field(default=None, max_length=36)
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class McpToolDescribeInput(McpStrictModel):
+    tool_ref: str = Field(min_length=1, max_length=512)
+    schema_hash: str = Field(min_length=64, max_length=64)
+
+
+class McpCallReadInput(McpStrictModel):
+    tool_ref: str = Field(min_length=1, max_length=512)
+    schema_hash: str = Field(min_length=64, max_length=64)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("arguments")
+    @classmethod
+    def reject_reserved_identity_fields(cls, value: dict[str, Any]) -> dict[str, Any]:
+        forbidden = {
+            "tenant",
+            "tenant_id",
+            "owner_subject",
+            "principal",
+            "actor_subject",
+            "credential",
+            "credential_id",
+            "risk_class",
+            "action_class",
+            "trust_level",
+        }
+        present = sorted(forbidden.intersection(value))
+        if present:
+            raise ValueError("Caller-controlled identity or trust fields are forbidden")
+        return value
+
+
+class McpActionPrepareInput(McpCallReadInput):
+    justification: str = Field(min_length=1, max_length=2000)
+
+
+class McpActionExecuteInput(McpStrictModel):
+    preparation_id: str = Field(max_length=36)
+    permit_id: str = Field(max_length=36)
+    expected_schema_hash: str = Field(min_length=64, max_length=64)

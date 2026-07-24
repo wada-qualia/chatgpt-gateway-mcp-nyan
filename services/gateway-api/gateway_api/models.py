@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -820,6 +821,440 @@ class RealtimeNotification(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class McpCredentialBinding(Base):
+    __tablename__ = "mcp_credential_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "idempotency_key",
+            name="uq_mcp_credential_binding_owner_idempotency",
+        ),
+        CheckConstraint(
+            "binding_type in ('oauth', 'service_account', 'thin_client_local')",
+            name="ck_mcp_credential_binding_type",
+        ),
+        Index("ix_mcp_credential_binding_owner_status", "owner_subject", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    binding_type: Mapped[str] = mapped_column(String(40), index=True)
+    provider: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    secret_blob_id: Mapped[str | None] = mapped_column(
+        ForeignKey("secret_blobs.id"), nullable=True, index=True
+    )
+    audience: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    rotated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class McpServer(Base):
+    __tablename__ = "mcp_servers"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject", "normalized_slug", name="uq_mcp_server_owner_slug"
+        ),
+        UniqueConstraint(
+            "owner_subject", "idempotency_key", name="uq_mcp_server_owner_idempotency"
+        ),
+        CheckConstraint(
+            "origin in ('gateway', 'thin_client')", name="ck_mcp_server_origin"
+        ),
+        CheckConstraint(
+            "transport in ('streamable_http', 'legacy_sse', 'stdio', 'private_http')",
+            name="ck_mcp_server_transport",
+        ),
+        CheckConstraint(
+            "trust_level in ('unreviewed', 'restricted', 'approved', 'quarantined', 'revoked')",
+            name="ck_mcp_server_trust_level",
+        ),
+        Index("ix_mcp_server_owner_status", "owner_subject", "status"),
+        Index("ix_mcp_server_owner_trust", "owner_subject", "trust_level"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    origin: Mapped[str] = mapped_column(String(40), index=True)
+    thin_client_id: Mapped[str | None] = mapped_column(
+        ForeignKey("thin_clients.id"), nullable=True, index=True
+    )
+    runtime_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True, index=True
+    )
+    display_name: Mapped[str] = mapped_column(String(180))
+    normalized_slug: Mapped[str] = mapped_column(String(120))
+    transport: Mapped[str] = mapped_column(String(40), index=True)
+    endpoint_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    credential_binding_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_credential_bindings.id"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(40), default="draft", index=True)
+    trust_level: Mapped[str] = mapped_column(
+        String(40), default="unreviewed", index=True
+    )
+    quarantine_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    negotiated_protocol_version: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    capabilities: Mapped[dict] = mapped_column(JSON, default=dict)
+    catalog_generation: Mapped[int] = mapped_column(Integer, default=0)
+    policy_generation: Mapped[int] = mapped_column(Integer, default=1)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    last_connected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_catalog_refreshed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    disabled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpTool(Base):
+    __tablename__ = "mcp_tools"
+    __table_args__ = (
+        UniqueConstraint("server_id", "upstream_name", name="uq_mcp_tool_server_name"),
+        Index("ix_mcp_tool_owner_state", "owner_subject", "lifecycle_state"),
+        Index(
+            "ix_mcp_tool_server_current_revision", "server_id", "current_revision_id"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    upstream_name: Mapped[str] = mapped_column(String(255))
+    normalized_name: Mapped[str] = mapped_column(String(255), index=True)
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(40), default="active", index=True
+    )
+    current_revision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_tool_revisions.id"), nullable=True, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    first_observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    last_observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpToolRevision(Base):
+    __tablename__ = "mcp_tool_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "tool_id", "revision_number", name="uq_mcp_tool_revision_number"
+        ),
+        UniqueConstraint(
+            "tool_id", "schema_hash", name="uq_mcp_tool_revision_schema_hash"
+        ),
+        CheckConstraint(
+            "action_class in ('unknown', 'read', 'write', 'destructive', 'production')",
+            name="ck_mcp_tool_revision_action_class",
+        ),
+        CheckConstraint(
+            "read_only_status in ('unverified', 'verified', 'rejected')",
+            name="ck_mcp_tool_revision_read_only_status",
+        ),
+        Index("ix_mcp_tool_revision_owner_hash", "owner_subject", "schema_hash"),
+        Index(
+            "ix_mcp_tool_revision_server_generation", "server_id", "catalog_generation"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    tool_id: Mapped[str] = mapped_column(ForeignKey("mcp_tools.id"), index=True)
+    revision_number: Mapped[int] = mapped_column(Integer)
+    input_schema: Mapped[dict] = mapped_column(JSON)
+    output_schema: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    sanitized_title: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    sanitized_description: Mapped[str] = mapped_column(Text, default="")
+    annotations: Mapped[dict] = mapped_column(JSON, default=dict)
+    schema_hash: Mapped[str] = mapped_column(String(64), index=True)
+    protocol_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    catalog_generation: Mapped[int] = mapped_column(Integer)
+    action_class: Mapped[str] = mapped_column(String(40), default="unknown", index=True)
+    read_only_status: Mapped[str] = mapped_column(
+        String(40), default="unverified", index=True
+    )
+    risk_evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    classified_by_subject: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    classified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    superseded_by_revision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_tool_revisions.id"), nullable=True, index=True
+    )
+    discovered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpToolExposure(Base):
+    __tablename__ = "mcp_tool_exposures"
+    __table_args__ = (
+        UniqueConstraint(
+            "revision_id",
+            "projection_generation",
+            name="uq_mcp_tool_exposure_revision_generation",
+        ),
+        CheckConstraint(
+            "mode in ('hidden', 'catalog_only', 'native_projected')",
+            name="ck_mcp_tool_exposure_mode",
+        ),
+        CheckConstraint(
+            "approval_class in ('none', 'operator', 'quorum', 'production')",
+            name="ck_mcp_tool_exposure_approval_class",
+        ),
+        Index("ix_mcp_tool_exposure_owner_enabled", "owner_subject", "enabled"),
+        Index("ix_mcp_tool_exposure_tool_mode", "tool_id", "mode"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    tool_id: Mapped[str] = mapped_column(ForeignKey("mcp_tools.id"), index=True)
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_tool_revisions.id"), index=True
+    )
+    mode: Mapped[str] = mapped_column(String(40), default="hidden", index=True)
+    projected_name: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    required_role: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    required_scope: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    approval_class: Mapped[str] = mapped_column(String(40), default="none")
+    projection_generation: Mapped[int] = mapped_column(Integer, default=0)
+    policy_generation: Mapped[int] = mapped_column(Integer, default=1)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    reviewed_by_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpFederationPolicy(Base):
+    __tablename__ = "mcp_federation_policies"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject", "server_id", name="uq_mcp_federation_policy_owner_server"
+        ),
+        UniqueConstraint(
+            "owner_subject",
+            "idempotency_key",
+            name="uq_mcp_federation_policy_owner_idempotency",
+        ),
+        CheckConstraint(
+            "trust_level in ('unreviewed', 'restricted', 'approved', 'quarantined', 'revoked')",
+            name="ck_mcp_federation_policy_trust_level",
+        ),
+        Index("ix_mcp_federation_policy_owner_status", "owner_subject", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_servers.id"), nullable=True, index=True
+    )
+    trust_level: Mapped[str] = mapped_column(
+        String(40), default="unreviewed", index=True
+    )
+    allowed_action_classes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    required_roles: Mapped[list[str]] = mapped_column(JSON, default=list)
+    required_scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    approval_mapping: Mapped[dict] = mapped_column(JSON, default=dict)
+    tool_allowlist: Mapped[list[str]] = mapped_column(JSON, default=list)
+    tool_denylist: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    created_by_subject: Mapped[str] = mapped_column(String(255))
+    updated_by_subject: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpRuntimeConnection(Base):
+    __tablename__ = "mcp_runtime_connections"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "connection_instance_id",
+            name="uq_mcp_runtime_connection_instance",
+        ),
+        Index("ix_mcp_runtime_connection_server_state", "server_id", "state"),
+        Index("ix_mcp_runtime_connection_owner_seen", "owner_subject", "last_seen_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    thin_client_id: Mapped[str | None] = mapped_column(
+        ForeignKey("thin_clients.id"), nullable=True, index=True
+    )
+    runtime_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True, index=True
+    )
+    connection_instance_id: Mapped[str] = mapped_column(String(160), index=True)
+    supported_transports: Mapped[list[str]] = mapped_column(JSON, default=list)
+    supported_protocol_versions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    state: Mapped[str] = mapped_column(String(40), default="online", index=True)
+    acknowledged_catalog_generation: Mapped[int] = mapped_column(Integer, default=0)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    connected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    disconnected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class McpMutationReceipt(Base):
+    __tablename__ = "mcp_mutation_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "operation",
+            "idempotency_key",
+            name="uq_mcp_mutation_receipt_owner_operation_key",
+        ),
+        Index(
+            "ix_mcp_mutation_receipt_owner_created",
+            "owner_subject",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    operation: Mapped[str] = mapped_column(String(120), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    resource_type: Mapped[str] = mapped_column(String(80))
+    resource_id: Mapped[str] = mapped_column(String(36), index=True)
+    response_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+
+class McpInvocation(Base):
+    __tablename__ = "mcp_invocations"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "idempotency_key",
+            name="uq_mcp_invocation_owner_idempotency",
+        ),
+        CheckConstraint(
+            "action_class in ('unknown', 'read', 'write', 'destructive', 'production')",
+            name="ck_mcp_invocation_action_class",
+        ),
+        Index("ix_mcp_invocation_owner_started", "owner_subject", "started_at"),
+        Index("ix_mcp_invocation_server_started", "server_id", "started_at"),
+        Index("ix_mcp_invocation_outcome_started", "outcome", "started_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    actor_subject: Mapped[str] = mapped_column(String(255), index=True)
+    gateway_tool_call_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    correlation_id: Mapped[str | None] = mapped_column(
+        String(160), nullable=True, index=True
+    )
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    tool_id: Mapped[str] = mapped_column(ForeignKey("mcp_tools.id"), index=True)
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_tool_revisions.id"), index=True
+    )
+    schema_hash: Mapped[str] = mapped_column(String(64), index=True)
+    action_class: Mapped[str] = mapped_column(String(40), index=True)
+    arguments_redacted: Mapped[dict] = mapped_column(JSON, default=dict)
+    arguments_sha256: Mapped[str] = mapped_column(String(64))
+    preparation_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    approval_request_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    execution_permit_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    outcome: Mapped[str] = mapped_column(String(40), default="running", index=True)
+    unknown_outcome: Mapped[bool] = mapped_column(Boolean, default=False)
+    normalized_error_code: Mapped[str | None] = mapped_column(
+        String(120), nullable=True
+    )
+    normalized_error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    response_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
 
 
 class LupTaskStart(Base):

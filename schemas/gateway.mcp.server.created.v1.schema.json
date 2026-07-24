@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.server.created.v1",
+  "title": "McpServerCreated",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "server_id",
+    "origin",
+    "transport",
+    "status",
+    "trust_level"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "server_id": {
+      "type": "string"
+    },
+    "origin": {
+      "type": "string"
+    },
+    "transport": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "trust_level": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

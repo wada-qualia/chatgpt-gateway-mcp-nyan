@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.broker_tools.v1",
+  "title": "McpFederationBrokerTools",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "toolRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "schemaHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "safeArguments": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "enum": [
+            "tenant",
+            "tenant_id",
+            "owner_subject",
+            "principal",
+            "actor_subject",
+            "credential",
+            "credential_id",
+            "risk_class",
+            "action_class",
+            "trust_level"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "mcp_catalog_search": {
+      "type": "object",
+      "required": [
+        "query"
+      ],
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "server_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 36
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "default": 20
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcp_tool_describe": {
+      "type": "object",
+      "required": [
+        "tool_ref",
+        "schema_hash"
+      ],
+      "properties": {
+        "tool_ref": {
+          "$ref": "#/$defs/toolRef"
+        },
+        "schema_hash": {
+          "$ref": "#/$defs/schemaHash"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcp_call_read": {
+      "type": "object",
+      "required": [
+        "tool_ref",
+        "schema_hash",
+        "arguments"
+      ],
+      "properties": {
+        "tool_ref": {
+          "$ref": "#/$defs/toolRef"
+        },
+        "schema_hash": {
+          "$ref": "#/$defs/schemaHash"
+        },
+        "arguments": {
+          "$ref": "#/$defs/safeArguments"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcp_action_prepare": {
+      "type": "object",
+      "required": [
+        "tool_ref",
+        "schema_hash",
+        "arguments",
+        "justification"
+      ],
+      "properties": {
+        "tool_ref": {
+          "$ref": "#/$defs/toolRef"
+        },
+        "schema_hash": {
+          "$ref": "#/$defs/schemaHash"
+        },
+        "arguments": {
+          "$ref": "#/$defs/safeArguments"
+        },
+        "justification": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcp_action_execute": {
+      "type": "object",
+      "required": [
+        "preparation_id",
+        "permit_id",
+        "expected_schema_hash"
+      ],
+      "properties": {
+        "preparation_id": {
+          "type": "string",
+          "maxLength": 36
+        },
+        "permit_id": {
+          "type": "string",
+          "maxLength": 36
+        },
+        "expected_schema_hash": {
+          "$ref": "#/$defs/schemaHash"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

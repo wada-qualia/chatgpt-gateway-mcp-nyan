@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.catalog.refreshed.v1",
+  "title": "McpCatalogRefreshed",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "server_id",
+    "catalog_generation",
+    "tool_count",
+    "protocol_version"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "server_id": {
+      "type": "string"
+    },
+    "catalog_generation": {
+      "type": "integer"
+    },
+    "tool_count": {
+      "type": "integer"
+    },
+    "protocol_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

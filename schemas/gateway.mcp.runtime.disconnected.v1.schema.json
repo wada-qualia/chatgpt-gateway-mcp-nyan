@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.runtime.disconnected.v1",
+  "title": "McpRuntimeDisconnected",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "connection_id",
+    "server_id",
+    "thin_client_id",
+    "runtime_id",
+    "state"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "connection_id": {
+      "type": "string"
+    },
+    "server_id": {
+      "type": "string"
+    },
+    "thin_client_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "runtime_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "state": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,1687 @@
+openapi: 3.1.0
+info:
+  title: ChatGPT MCP SSH Gateway Federation Control Plane
+  version: 1.0.0
+  description: Tenant-scoped MCP federation control-plane API. Raw credential values
+    are never accepted by this contract.
+paths:
+  /api/mcp/credential-bindings:
+    post:
+      tags:
+      - mcp-federation
+      summary: Create Credential Binding
+      operationId: create_credential_binding_api_mcp_credential_bindings_post
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpCredentialBindingCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpCredentialBindingOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - mcp-federation
+      summary: List Credential Bindings
+      operationId: list_credential_bindings_api_mcp_credential_bindings_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/McpCredentialBindingOut'
+                title: Response List Credential Bindings Api Mcp Credential Bindings
+                  Get
+  /api/mcp/servers:
+    post:
+      tags:
+      - mcp-federation
+      summary: Create Server
+      operationId: create_server_api_mcp_servers_post
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpServerCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServerOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - mcp-federation
+      summary: List Servers
+      operationId: list_servers_api_mcp_servers_get
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/McpServerOut'
+                title: Response List Servers Api Mcp Servers Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/servers/{server_id}:
+    get:
+      tags:
+      - mcp-federation
+      summary: Get Server
+      operationId: get_server_api_mcp_servers__server_id__get
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServerOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - mcp-federation
+      summary: Update Server
+      operationId: update_server_api_mcp_servers__server_id__patch
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpServerUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServerOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - mcp-federation
+      summary: Disable Server
+      operationId: disable_server_api_mcp_servers__server_id__delete
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: integer
+          minimum: 0
+          title: If-Match
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServerOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/servers/{server_id}/authorize:
+    post:
+      tags:
+      - mcp-federation
+      summary: Authorize Server
+      operationId: authorize_server_api_mcp_servers__server_id__authorize_post
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpServerCommand'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServerOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/servers/{server_id}/refresh:
+    post:
+      tags:
+      - mcp-federation
+      summary: Refresh Server
+      operationId: refresh_server_api_mcp_servers__server_id__refresh_post
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpServerCommand'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServerOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/servers/{server_id}/test:
+    post:
+      tags:
+      - mcp-federation
+      summary: Test Server Control Plane
+      operationId: test_server_control_plane_api_mcp_servers__server_id__test_post
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServerHealthOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/servers/{server_id}/policy:
+    get:
+      tags:
+      - mcp-federation
+      summary: Get Server Policy
+      operationId: get_server_policy_api_mcp_servers__server_id__policy_get
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/McpFederationPolicyOut'
+                - type: 'null'
+                title: Response Get Server Policy Api Mcp Servers  Server Id  Policy
+                  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - mcp-federation
+      summary: Update Server Policy
+      operationId: update_server_policy_api_mcp_servers__server_id__policy_put
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpFederationPolicyUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpFederationPolicyOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/servers/{server_id}/tools:
+    get:
+      tags:
+      - mcp-federation
+      summary: List Server Tools
+      operationId: list_server_tools_api_mcp_servers__server_id__tools_get
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/McpToolOut'
+                title: Response List Server Tools Api Mcp Servers  Server Id  Tools
+                  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/tools/{tool_id}/revisions:
+    get:
+      tags:
+      - mcp-federation
+      summary: List Tool Revisions
+      operationId: list_tool_revisions_api_mcp_tools__tool_id__revisions_get
+      parameters:
+      - name: tool_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tool Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/McpToolRevisionOut'
+                title: Response List Tool Revisions Api Mcp Tools  Tool Id  Revisions
+                  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/revisions/{revision_id}/classification:
+    put:
+      tags:
+      - mcp-federation
+      summary: Classify Tool Revision
+      operationId: classify_tool_revision_api_mcp_revisions__revision_id__classification_put
+      parameters:
+      - name: revision_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Revision Id
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpToolRevisionClassification'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpToolRevisionOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/tools/{tool_id}/exposure:
+    patch:
+      tags:
+      - mcp-federation
+      summary: Update Tool Exposure
+      operationId: update_tool_exposure_api_mcp_tools__tool_id__exposure_patch
+      parameters:
+      - name: tool_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tool Id
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpToolExposureUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpToolExposureOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/invocations:
+    get:
+      tags:
+      - mcp-federation
+      summary: List Invocations
+      operationId: list_invocations_api_mcp_invocations_get
+      parameters:
+      - name: server_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Server Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 100
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/McpInvocationOut'
+                title: Response List Invocations Api Mcp Invocations Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/runtime-connections:
+    get:
+      tags:
+      - mcp-federation
+      summary: List Runtime Connections
+      operationId: list_runtime_connections_api_mcp_runtime_connections_get
+      parameters:
+      - name: server_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Server Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/McpRuntimeConnectionOut'
+                title: Response List Runtime Connections Api Mcp Runtime Connections
+                  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    McpCredentialBindingCreate:
+      properties:
+        binding_type:
+          type: string
+          enum:
+          - oauth
+          - service_account
+          - thin_client_local
+          title: Binding Type
+        provider:
+          anyOf:
+          - type: string
+            maxLength: 120
+          - type: 'null'
+          title: Provider
+        secret_blob_id:
+          anyOf:
+          - type: string
+            maxLength: 36
+          - type: 'null'
+          title: Secret Blob Id
+        audience:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          title: Audience
+        scopes:
+          items:
+            type: string
+          type: array
+          maxItems: 100
+          title: Scopes
+        meta:
+          additionalProperties: true
+          type: object
+          title: Meta
+      additionalProperties: false
+      type: object
+      required:
+      - binding_type
+      title: McpCredentialBindingCreate
+    McpCredentialBindingOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        binding_type:
+          type: string
+          title: Binding Type
+        provider:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Provider
+        audience:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Audience
+        scopes:
+          items:
+            type: string
+          type: array
+          title: Scopes
+        status:
+          type: string
+          title: Status
+        version:
+          type: integer
+          title: Version
+        meta:
+          additionalProperties: true
+          type: object
+          title: Meta
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+        rotated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Rotated At
+        revoked_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Revoked At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - binding_type
+      - scopes
+      - status
+      - version
+      - meta
+      - created_at
+      - updated_at
+      title: McpCredentialBindingOut
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    McpServerCreate:
+      properties:
+        display_name:
+          type: string
+          maxLength: 180
+          minLength: 1
+          title: Display Name
+        origin:
+          type: string
+          enum:
+          - gateway
+          - thin_client
+          title: Origin
+        transport:
+          type: string
+          enum:
+          - streamable_http
+          - legacy_sse
+          - stdio
+          - private_http
+          title: Transport
+        endpoint_url:
+          anyOf:
+          - type: string
+            maxLength: 2048
+          - type: 'null'
+          title: Endpoint Url
+        thin_client_id:
+          anyOf:
+          - type: string
+            maxLength: 36
+          - type: 'null'
+          title: Thin Client Id
+        runtime_id:
+          anyOf:
+          - type: string
+            maxLength: 160
+          - type: 'null'
+          title: Runtime Id
+        credential_binding_id:
+          anyOf:
+          - type: string
+            maxLength: 36
+          - type: 'null'
+          title: Credential Binding Id
+      additionalProperties: false
+      type: object
+      required:
+      - display_name
+      - origin
+      - transport
+      title: McpServerCreate
+    McpServerOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        origin:
+          type: string
+          title: Origin
+        thin_client_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thin Client Id
+        runtime_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Runtime Id
+        display_name:
+          type: string
+          title: Display Name
+        normalized_slug:
+          type: string
+          title: Normalized Slug
+        transport:
+          type: string
+          title: Transport
+        endpoint_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Endpoint Url
+        credential_binding_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Credential Binding Id
+        status:
+          type: string
+          title: Status
+        trust_level:
+          type: string
+          title: Trust Level
+        quarantine_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quarantine Reason
+        negotiated_protocol_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Negotiated Protocol Version
+        capabilities:
+          additionalProperties: true
+          type: object
+          title: Capabilities
+        catalog_generation:
+          type: integer
+          title: Catalog Generation
+        policy_generation:
+          type: integer
+          title: Policy Generation
+        version:
+          type: integer
+          title: Version
+        last_connected_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Connected At
+        last_catalog_refreshed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Catalog Refreshed At
+        disabled_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Disabled At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - origin
+      - display_name
+      - normalized_slug
+      - transport
+      - status
+      - trust_level
+      - capabilities
+      - catalog_generation
+      - policy_generation
+      - version
+      - created_at
+      - updated_at
+      title: McpServerOut
+    McpServerUpdate:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+        display_name:
+          anyOf:
+          - type: string
+            maxLength: 180
+            minLength: 1
+          - type: 'null'
+          title: Display Name
+        credential_binding_id:
+          anyOf:
+          - type: string
+            maxLength: 36
+          - type: 'null'
+          title: Credential Binding Id
+        enabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Enabled
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      title: McpServerUpdate
+    McpServerCommand:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      title: McpServerCommand
+    McpServerHealthOut:
+      properties:
+        server_id:
+          type: string
+          title: Server Id
+        status:
+          type: string
+          title: Status
+        trust_level:
+          type: string
+          title: Trust Level
+        catalog_generation:
+          type: integer
+          title: Catalog Generation
+        negotiated_protocol_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Negotiated Protocol Version
+        last_connected_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Connected At
+        last_catalog_refreshed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Catalog Refreshed At
+      type: object
+      required:
+      - server_id
+      - status
+      - trust_level
+      - catalog_generation
+      title: McpServerHealthOut
+    McpFederationPolicyOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Server Id
+        trust_level:
+          type: string
+          title: Trust Level
+        allowed_action_classes:
+          items:
+            type: string
+          type: array
+          title: Allowed Action Classes
+        required_roles:
+          items:
+            type: string
+          type: array
+          title: Required Roles
+        required_scopes:
+          items:
+            type: string
+          type: array
+          title: Required Scopes
+        approval_mapping:
+          additionalProperties:
+            type: string
+          type: object
+          title: Approval Mapping
+        tool_allowlist:
+          items:
+            type: string
+          type: array
+          title: Tool Allowlist
+        tool_denylist:
+          items:
+            type: string
+          type: array
+          title: Tool Denylist
+        status:
+          type: string
+          title: Status
+        generation:
+          type: integer
+          title: Generation
+        version:
+          type: integer
+          title: Version
+        created_by_subject:
+          type: string
+          title: Created By Subject
+        updated_by_subject:
+          type: string
+          title: Updated By Subject
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - trust_level
+      - allowed_action_classes
+      - required_roles
+      - required_scopes
+      - approval_mapping
+      - tool_allowlist
+      - tool_denylist
+      - status
+      - generation
+      - version
+      - created_by_subject
+      - updated_by_subject
+      - created_at
+      - updated_at
+      title: McpFederationPolicyOut
+    McpFederationPolicyUpdate:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 0.0
+          title: Expected Version
+        trust_level:
+          type: string
+          enum:
+          - unreviewed
+          - restricted
+          - approved
+          - quarantined
+          - revoked
+          title: Trust Level
+        allowed_action_classes:
+          items:
+            type: string
+            enum:
+            - read
+            - write
+            - destructive
+            - production
+          type: array
+          maxItems: 4
+          title: Allowed Action Classes
+        required_roles:
+          items:
+            type: string
+          type: array
+          maxItems: 50
+          title: Required Roles
+        required_scopes:
+          items:
+            type: string
+          type: array
+          maxItems: 100
+          title: Required Scopes
+        approval_mapping:
+          additionalProperties:
+            type: string
+            enum:
+            - none
+            - operator
+            - quorum
+            - production
+          type: object
+          title: Approval Mapping
+        tool_allowlist:
+          items:
+            type: string
+          type: array
+          maxItems: 500
+          title: Tool Allowlist
+        tool_denylist:
+          items:
+            type: string
+          type: array
+          maxItems: 500
+          title: Tool Denylist
+        status:
+          type: string
+          enum:
+          - active
+          - disabled
+          title: Status
+          default: active
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      - trust_level
+      title: McpFederationPolicyUpdate
+    McpToolOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          type: string
+          title: Server Id
+        upstream_name:
+          type: string
+          title: Upstream Name
+        normalized_name:
+          type: string
+          title: Normalized Name
+        lifecycle_state:
+          type: string
+          title: Lifecycle State
+        current_revision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Current Revision Id
+        version:
+          type: integer
+          title: Version
+        first_observed_at:
+          type: string
+          format: date-time
+          title: First Observed At
+        last_observed_at:
+          type: string
+          format: date-time
+          title: Last Observed At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - server_id
+      - upstream_name
+      - normalized_name
+      - lifecycle_state
+      - version
+      - first_observed_at
+      - last_observed_at
+      - created_at
+      - updated_at
+      title: McpToolOut
+    McpToolRevisionOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          type: string
+          title: Server Id
+        tool_id:
+          type: string
+          title: Tool Id
+        revision_number:
+          type: integer
+          title: Revision Number
+        input_schema:
+          additionalProperties: true
+          type: object
+          title: Input Schema
+        output_schema:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Output Schema
+        sanitized_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sanitized Title
+        sanitized_description:
+          type: string
+          title: Sanitized Description
+        annotations:
+          additionalProperties: true
+          type: object
+          title: Annotations
+        schema_hash:
+          type: string
+          title: Schema Hash
+        protocol_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Protocol Version
+        catalog_generation:
+          type: integer
+          title: Catalog Generation
+        action_class:
+          type: string
+          title: Action Class
+        read_only_status:
+          type: string
+          title: Read Only Status
+        risk_evidence:
+          additionalProperties: true
+          type: object
+          title: Risk Evidence
+        version:
+          type: integer
+          title: Version
+        classified_by_subject:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Classified By Subject
+        classified_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Classified At
+        superseded_by_revision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Superseded By Revision Id
+        discovered_at:
+          type: string
+          format: date-time
+          title: Discovered At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - server_id
+      - tool_id
+      - revision_number
+      - input_schema
+      - sanitized_description
+      - annotations
+      - schema_hash
+      - catalog_generation
+      - action_class
+      - read_only_status
+      - risk_evidence
+      - version
+      - discovered_at
+      - created_at
+      title: McpToolRevisionOut
+    McpToolRevisionClassification:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+        action_class:
+          type: string
+          enum:
+          - read
+          - write
+          - destructive
+          - production
+          title: Action Class
+        read_only_status:
+          type: string
+          enum:
+          - unverified
+          - verified
+          - rejected
+          title: Read Only Status
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      - action_class
+      - read_only_status
+      title: McpToolRevisionClassification
+    McpToolExposureUpdate:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 0.0
+          title: Expected Version
+        revision_id:
+          type: string
+          maxLength: 36
+          title: Revision Id
+        mode:
+          type: string
+          enum:
+          - hidden
+          - catalog_only
+          - native_projected
+          title: Mode
+        enabled:
+          type: boolean
+          title: Enabled
+        projected_name:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: Projected Name
+        required_role:
+          anyOf:
+          - type: string
+            maxLength: 120
+          - type: 'null'
+          title: Required Role
+        required_scope:
+          anyOf:
+          - type: string
+            maxLength: 160
+          - type: 'null'
+          title: Required Scope
+        approval_class:
+          type: string
+          enum:
+          - none
+          - operator
+          - quorum
+          - production
+          title: Approval Class
+        projection_generation:
+          type: integer
+          minimum: 0.0
+          title: Projection Generation
+          default: 0
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      - revision_id
+      - mode
+      - enabled
+      - approval_class
+      title: McpToolExposureUpdate
+    McpToolExposureOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          type: string
+          title: Server Id
+        tool_id:
+          type: string
+          title: Tool Id
+        revision_id:
+          type: string
+          title: Revision Id
+        mode:
+          type: string
+          title: Mode
+        projected_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Projected Name
+        enabled:
+          type: boolean
+          title: Enabled
+        required_role:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Required Role
+        required_scope:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Required Scope
+        approval_class:
+          type: string
+          title: Approval Class
+        projection_generation:
+          type: integer
+          title: Projection Generation
+        policy_generation:
+          type: integer
+          title: Policy Generation
+        version:
+          type: integer
+          title: Version
+        reviewed_by_subject:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reviewed By Subject
+        reviewed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Reviewed At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - server_id
+      - tool_id
+      - revision_id
+      - mode
+      - enabled
+      - approval_class
+      - projection_generation
+      - policy_generation
+      - version
+      - created_at
+      - updated_at
+      title: McpToolExposureOut
+    McpInvocationOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        actor_subject:
+          type: string
+          title: Actor Subject
+        gateway_tool_call_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Gateway Tool Call Id
+        correlation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Id
+        server_id:
+          type: string
+          title: Server Id
+        tool_id:
+          type: string
+          title: Tool Id
+        revision_id:
+          type: string
+          title: Revision Id
+        schema_hash:
+          type: string
+          title: Schema Hash
+        action_class:
+          type: string
+          title: Action Class
+        arguments_redacted:
+          additionalProperties: true
+          type: object
+          title: Arguments Redacted
+        arguments_sha256:
+          type: string
+          title: Arguments Sha256
+        preparation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Preparation Id
+        approval_request_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Approval Request Id
+        execution_permit_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Execution Permit Id
+        outcome:
+          type: string
+          title: Outcome
+        unknown_outcome:
+          type: boolean
+          title: Unknown Outcome
+        normalized_error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Normalized Error Code
+        normalized_error_detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Normalized Error Detail
+        response_metadata:
+          additionalProperties: true
+          type: object
+          title: Response Metadata
+        response_sha256:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Response Sha256
+        started_at:
+          type: string
+          format: date-time
+          title: Started At
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - actor_subject
+      - server_id
+      - tool_id
+      - revision_id
+      - schema_hash
+      - action_class
+      - arguments_redacted
+      - arguments_sha256
+      - outcome
+      - unknown_outcome
+      - response_metadata
+      - started_at
+      - created_at
+      title: McpInvocationOut
+    McpRuntimeConnectionOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          type: string
+          title: Server Id
+        thin_client_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thin Client Id
+        runtime_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Runtime Id
+        connection_instance_id:
+          type: string
+          title: Connection Instance Id
+        supported_transports:
+          items:
+            type: string
+          type: array
+          title: Supported Transports
+        supported_protocol_versions:
+          items:
+            type: string
+          type: array
+          title: Supported Protocol Versions
+        state:
+          type: string
+          title: State
+        acknowledged_catalog_generation:
+          type: integer
+          title: Acknowledged Catalog Generation
+        meta:
+          additionalProperties: true
+          type: object
+          title: Meta
+        connected_at:
+          type: string
+          format: date-time
+          title: Connected At
+        last_seen_at:
+          type: string
+          format: date-time
+          title: Last Seen At
+        disconnected_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Disconnected At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - server_id
+      - connection_instance_id
+      - supported_transports
+      - supported_protocol_versions
+      - state
+      - acknowledged_catalog_generation
+      - meta
+      - connected_at
+      - last_seen_at
+      title: McpRuntimeConnectionOut
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError

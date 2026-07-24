@@ -22,7 +22,9 @@ class UserOut(OrmModel):
 class AccountSettingsOut(BaseModel):
     ui_language: Literal["en", "ru"]
     ssh_command_profile: Literal["restricted", "filtered", "unrestricted"]
-    ssh_command_profile_override: Literal["restricted", "filtered", "unrestricted"] | None = None
+    ssh_command_profile_override: (
+        Literal["restricted", "filtered", "unrestricted"] | None
+    ) = None
     ssh_command_profile_default: Literal["restricted", "filtered", "unrestricted"]
     raw_commands_enabled: bool
     deny_patterns_enabled: bool
@@ -30,7 +32,9 @@ class AccountSettingsOut(BaseModel):
 
 class AccountSettingsUpdate(BaseModel):
     ui_language: Literal["en", "ru"] | None = None
-    ssh_command_profile: Literal["inherit", "restricted", "filtered", "unrestricted"] | None = None
+    ssh_command_profile: (
+        Literal["inherit", "restricted", "filtered", "unrestricted"] | None
+    ) = None
 
 
 class DeviceCreate(BaseModel):
@@ -45,7 +49,9 @@ class DeviceCreate(BaseModel):
 
 class DeviceUpdate(BaseModel):
     name: str | None = None
-    target: str | None = Field(default=None, description="SSH target in user@host:port form")
+    target: str | None = Field(
+        default=None, description="SSH target in user@host:port form"
+    )
     auth_type: Literal["password", "private_key", "agent"] | None = None
     password: str | None = None
     private_key: str | None = None
@@ -450,9 +456,9 @@ class AutonomyPolicyCreate(BaseModel):
     name: str
     assignment_mode: Literal["manual", "suggest", "automatic"] = "manual"
     coordinator_agent_id: str | None = None
-    allowed_action_classes: list[Literal["read", "write", "destructive", "production"]] = Field(
-        default_factory=lambda: ["read"]
-    )
+    allowed_action_classes: list[
+        Literal["read", "write", "destructive", "production"]
+    ] = Field(default_factory=lambda: ["read"])
     allowed_tools: list[str] = Field(default_factory=list)
     allowed_command_profiles: list[str] = Field(default_factory=list)
     max_parallel_assignments: int = 1
@@ -467,7 +473,9 @@ class AutonomyPolicyUpdate(BaseModel):
     status: Literal["active", "paused", "disabled"] | None = None
     assignment_mode: Literal["manual", "suggest", "automatic"] | None = None
     coordinator_agent_id: str | None = None
-    allowed_action_classes: list[Literal["read", "write", "destructive", "production"]] | None = None
+    allowed_action_classes: (
+        list[Literal["read", "write", "destructive", "production"]] | None
+    ) = None
     allowed_tools: list[str] | None = None
     allowed_command_profiles: list[str] | None = None
     max_parallel_assignments: int | None = None
@@ -652,8 +660,12 @@ class LupTaskStartCreate(BaseModel):
         if value is None:
             return None
         normalized = value.lower()
-        if len(normalized) != 32 or any(character not in "0123456789abcdef" for character in normalized):
-            raise ValueError("trace_id must be a 32-character lowercase hexadecimal W3C trace id")
+        if len(normalized) != 32 or any(
+            character not in "0123456789abcdef" for character in normalized
+        ):
+            raise ValueError(
+                "trace_id must be a 32-character lowercase hexadecimal W3C trace id"
+            )
         if normalized == "0" * 32:
             raise ValueError("trace_id must not be all zeros")
         return normalized
@@ -682,6 +694,7 @@ class LupTaskStartOut(BaseModel):
     created: bool
     created_at: datetime
     updated_at: datetime
+
 
 class LupModelIdentityCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -874,6 +887,7 @@ class LupToolPhaseSealOut(BaseModel):
     created: bool
     created_at: datetime
     updated_at: datetime
+
 
 class LupFinalResponseCompleteCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -1202,6 +1216,22 @@ class McpToolExposureOut(OrmModel):
     reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class McpProjectionCandidateCreate(McpStrictModel):
+    profile_id: Literal["chatgpt-stable", "developer-dynamic", "agent-restricted"]
+    exposure_ids: list[str] | None = Field(default=None, max_length=500)
+
+
+class McpProjectionVerificationCreate(McpStrictModel):
+    verification_kind: Literal["generic_tools_list_changed", "chatgpt_actions"]
+    observed_schema_hash: str = Field(min_length=64, max_length=64)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class McpOAuthPresentationUpdate(McpStrictModel):
+    profile_id: Literal["chatgpt-stable", "developer-dynamic", "agent-restricted"]
+    allowed_tool_names: list[str] = Field(default_factory=list, max_length=1000)
 
 
 class McpInvocationOut(OrmModel):

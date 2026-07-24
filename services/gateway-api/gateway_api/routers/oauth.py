@@ -63,22 +63,30 @@ def _pkce_s256(verifier: str) -> str:
 
 
 @router.get("/.well-known/oauth-protected-resource")
-async def well_known_resource(request: Request, settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+async def well_known_resource(
+    request: Request, settings: Settings = Depends(get_settings)
+) -> dict[str, Any]:
     return protected_resource_metadata(_base(request, settings), settings)
 
 
 @router.get("/.well-known/oauth-protected-resource/mcp")
-async def well_known_resource_mcp(request: Request, settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+async def well_known_resource_mcp(
+    request: Request, settings: Settings = Depends(get_settings)
+) -> dict[str, Any]:
     return protected_resource_metadata(_base(request, settings), settings)
 
 
 @router.get("/.well-known/oauth-authorization-server")
-async def well_known_oauth(request: Request, settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+async def well_known_oauth(
+    request: Request, settings: Settings = Depends(get_settings)
+) -> dict[str, Any]:
     return oauth_metadata(_base(request, settings), settings)
 
 
 @router.get("/.well-known/openid-configuration")
-async def well_known_openid(request: Request, settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+async def well_known_openid(
+    request: Request, settings: Settings = Depends(get_settings)
+) -> dict[str, Any]:
     metadata = oauth_metadata(_base(request, settings), settings)
     metadata["subject_types_supported"] = ["public"]
     metadata["id_token_signing_alg_values_supported"] = ["HS256"]
@@ -86,7 +94,11 @@ async def well_known_openid(request: Request, settings: Settings = Depends(get_s
 
 
 @router.post("/oauth/register", status_code=201)
-async def register_client(payload: dict[str, Any], db: Session = Depends(get_db), settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+async def register_client(
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
     redirect_uris = [str(uri) for uri in payload.get("redirect_uris", [])]
     if not redirect_uris or any(not _is_allowed_redirect(uri) for uri in redirect_uris):
         raise HTTPException(status_code=400, detail="Unsupported redirect_uri")
@@ -129,10 +141,17 @@ async def authorize(
     if client is None:
         if not _is_allowed_redirect(redirect_uri):
             raise HTTPException(status_code=400, detail="Unsupported redirect_uri")
-        client = OAuthClient(client_id=client_id, client_name="Auto-registered MCP client", redirect_uris=[redirect_uri], scope=" ".join(settings.supported_scopes))
+        client = OAuthClient(
+            client_id=client_id,
+            client_name="Auto-registered MCP client",
+            redirect_uris=[redirect_uri],
+            scope=" ".join(settings.supported_scopes),
+        )
         db.add(client)
         db.commit()
-    if redirect_uri not in client.redirect_uris or not _is_allowed_redirect(redirect_uri):
+    if redirect_uri not in client.redirect_uris or not _is_allowed_redirect(
+        redirect_uri
+    ):
         raise HTTPException(status_code=400, detail="redirect_uri is not registered")
     code = secrets.token_urlsafe(36)
     auth_code = OAuthCode(
@@ -150,7 +169,10 @@ async def authorize(
     if state:
         query["state"] = state
     separator = "&" if "?" in redirect_uri else "?"
-    return RedirectResponse(url=f"{redirect_uri}{separator}{'&'.join(f'{k}={v}' for k, v in query.items())}", status_code=307)
+    return RedirectResponse(
+        url=f"{redirect_uri}{separator}{'&'.join(f'{k}={v}' for k, v in query.items())}",
+        status_code=307,
+    )
 
 
 @router.post("/oauth/token")
@@ -166,7 +188,12 @@ async def token(
     if grant_type != "authorization_code":
         raise HTTPException(status_code=400, detail="Unsupported grant_type")
     auth_code = db.get(OAuthCode, code)
-    if auth_code is None or auth_code.consumed or auth_code.client_id != client_id or auth_code.redirect_uri != redirect_uri:
+    if (
+        auth_code is None
+        or auth_code.consumed
+        or auth_code.client_id != client_id
+        or auth_code.redirect_uri != redirect_uri
+    ):
         raise HTTPException(status_code=400, detail="Invalid authorization code")
     expires_at = auth_code.expires_at
     if expires_at.tzinfo is None:
@@ -178,6 +205,9 @@ async def token(
     if _pkce_s256(code_verifier) != auth_code.code_challenge:
         raise HTTPException(status_code=400, detail="Invalid PKCE verifier")
     user = db.query(User).filter(User.subject == auth_code.subject).one()
+    oauth_client = db.get(OAuthClient, client_id)
+    if oauth_client is None:
+        raise HTTPException(status_code=400, detail="OAuth client is not registered")
     auth_code.consumed = True
     db.commit()
     access_token = create_jwt(
@@ -187,7 +217,12 @@ async def token(
         scopes=auth_code.scope.split(),
         token_type="access",
         ttl_seconds=settings.gateway_access_token_ttl_seconds,
-        extra={"client_id": client_id},
+        extra={
+            "client_id": client_id,
+            "presentation_profile": oauth_client.presentation_profile,
+            "presentation_policy_generation": oauth_client.presentation_policy_generation,
+            "allowed_tool_names": list(oauth_client.allowed_tool_names or []),
+        },
     )
     return JSONResponse(
         {
@@ -206,4 +241,9 @@ async def revoke() -> dict[str, bool]:
 
 @router.get("/oauth/userinfo")
 async def userinfo(user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return {"sub": user.subject, "preferred_username": user.username, "email": user.email, "roles": user.roles}
+    return {
+        "sub": user.subject,
+        "preferred_username": user.username,
+        "email": user.email,
+        "roles": user.roles,
+    }

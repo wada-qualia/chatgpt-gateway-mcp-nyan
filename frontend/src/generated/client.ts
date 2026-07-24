@@ -309,6 +309,62 @@ export type McpToolExposure = {
   updated_at: string;
 };
 
+export type McpPresentationProfileId = 'chatgpt-stable' | 'developer-dynamic' | 'agent-restricted';
+
+export type McpPresentationProfile = {
+  id: McpPresentationProfileId;
+  label: string;
+  description: string;
+  supports_list_changed: boolean;
+  chatgpt_refresh_required: boolean;
+};
+
+export type McpProjectionTool = {
+  id: string;
+  position: number;
+  public_name: string;
+  revision_id: string;
+  source_schema_hash: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown> | null;
+  sanitized_title: string | null;
+  sanitized_description: string;
+  annotations: Record<string, unknown>;
+  action_class: string;
+  required_role: string | null;
+  required_scope: string | null;
+  approval_class: string;
+  change_classification: string;
+};
+
+export type McpProjectionGeneration = {
+  id: string;
+  profile_id: McpPresentationProfileId;
+  generation_number: number;
+  status: 'candidate' | 'active' | 'superseded' | 'retired';
+  previous_generation_id: string | null;
+  content_hash: string;
+  schema_hash: string;
+  change_summary: { counts?: Record<string, number>; removed?: string[]; tool_count?: number };
+  tools_list_changed_state: 'not_required' | 'pending' | 'notified';
+  chatgpt_refresh_state: 'not_required' | 'pending' | 'verified';
+  created_by_subject: string;
+  published_by_subject: string | null;
+  created_at: string;
+  published_at: string | null;
+  updated_at: string;
+  tools?: McpProjectionTool[];
+};
+
+export type McpOAuthPresentation = {
+  client_id: string;
+  client_name: string;
+  presentation_profile: McpPresentationProfileId;
+  presentation_policy_generation: number;
+  allowed_tool_names: string[];
+  updated_at: string;
+};
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     credentials: 'include',
@@ -465,6 +521,39 @@ export const api = {
     request<McpCredentialBinding>('/api/mcp/oauth/complete', {
       method: 'POST',
       body: JSON.stringify({ state, code })
+    }),
+  mcpPresentationProfiles: () =>
+    request<McpPresentationProfile[]>('/api/mcp/presentation-profiles'),
+  mcpOAuthPresentations: () =>
+    request<McpOAuthPresentation[]>('/api/mcp/oauth-clients/presentation'),
+  updateMcpOAuthPresentation: (clientId: string, payload: {
+    profile_id: McpPresentationProfileId;
+    allowed_tool_names?: string[];
+  }) => request<McpOAuthPresentation>(`/api/mcp/oauth-clients/${clientId}/presentation`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  }),
+  mcpProjectionGenerations: (profileId?: McpPresentationProfileId) => {
+    const suffix = profileId ? `?profile_id=${encodeURIComponent(profileId)}` : '';
+    return request<McpProjectionGeneration[]>(`/api/mcp/projection-generations${suffix}`);
+  },
+  createMcpProjectionGeneration: (payload: {
+    profile_id: McpPresentationProfileId;
+    exposure_ids?: string[];
+  }) => request<McpProjectionGeneration>('/api/mcp/projection-generations', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  }),
+  mcpProjectionGeneration: (generationId: string) =>
+    request<McpProjectionGeneration>(`/api/mcp/projection-generations/${generationId}`),
+  publishMcpProjectionGeneration: (generationId: string) =>
+    request<McpProjectionGeneration>(`/api/mcp/projection-generations/${generationId}/publish`, { method: 'POST', body: '{}' }),
+  rollbackMcpProjectionGeneration: (generationId: string) =>
+    request<McpProjectionGeneration>(`/api/mcp/projection-generations/${generationId}/rollback`, { method: 'POST', body: '{}' }),
+  verifyMcpProjectionGeneration: (generation: Pick<McpProjectionGeneration, 'id' | 'schema_hash'>, verificationKind: 'generic_tools_list_changed' | 'chatgpt_actions', evidence: Record<string, unknown>) =>
+    request<{ generation: McpProjectionGeneration }>(`/api/mcp/projection-generations/${generation.id}/verify`, {
+      method: 'POST',
+      body: JSON.stringify({ verification_kind: verificationKind, observed_schema_hash: generation.schema_hash, evidence })
     }),
   audit: () => request<AuditEvent[]>('/api/audit/events')
 };

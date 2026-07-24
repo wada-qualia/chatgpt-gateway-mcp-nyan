@@ -20,6 +20,9 @@ import { Button } from "@gateway/ui";
 import {
   api,
   type McpServer,
+  type McpOAuthPresentation,
+  type McpPresentationProfileId,
+  type McpProjectionGeneration,
   type McpServerHealth,
   type McpTool,
 } from "@gateway/generated/client";
@@ -157,6 +160,170 @@ function McpCatalogPanel({ server }: { server: McpServer }) {
       {tools.isError ? <div className="operation-banner">{readableError(tools.error)}</div> : null}
       {tools.isSuccess && tools.data.length === 0 ? <div className="mcp-catalog-loading">{t("mcpConnections.catalog.empty")}</div> : null}
       <div className="mcp-tool-list">{tools.data?.map((tool) => <McpToolRow key={tool.id} tool={tool} />)}</div>
+    </section>
+  );
+}
+
+function ProjectionGenerationCard({
+  generation,
+  busy,
+  onPublish,
+  onRollback,
+  onVerify,
+  previousGeneration,
+}: {
+  generation: McpProjectionGeneration;
+  previousGeneration?: McpProjectionGeneration;
+  busy: boolean;
+  onPublish: () => void;
+  onRollback: () => void;
+  onVerify: () => void;
+}) {
+  const counts = generation.change_summary.counts ?? {};
+  const pendingChatGpt = generation.chatgpt_refresh_state === "pending";
+  const pendingGeneric = generation.tools_list_changed_state === "pending";
+  const previousTools = new Map((previousGeneration?.tools ?? []).map((tool) => [tool.public_name, tool]));
+  return (
+    <article className="mcp-projection-card">
+      <div className="mcp-projection-card-head">
+        <div>
+          <strong>{generation.profile_id} · generation {generation.generation_number}</strong>
+          <small>{generation.status} · {generation.change_summary.tool_count ?? 0} tools</small>
+        </div>
+        <span className={`mcp-status mcp-status-${generation.status}`}>{generation.status}</span>
+      </div>
+      <div className="mcp-projection-counts">
+        {Object.entries(counts).map(([kind, count]) => <span key={kind}>{kind}: {count}</span>)}
+      </div>
+      <dl className="mcp-projection-meta">
+        <div><dt>Schema hash</dt><dd><code>{generation.schema_hash}</code></dd></div>
+        <div><dt>Generic clients</dt><dd>{generation.tools_list_changed_state}</dd></div>
+        <div><dt>ChatGPT actions</dt><dd>{generation.chatgpt_refresh_state}</dd></div>
+      </dl>
+      <div className="mcp-projection-tool-diffs">
+        {(generation.tools ?? []).map((tool) => {
+          const previous = previousTools.get(tool.public_name);
+          const schemaChanged = !previous || JSON.stringify(previous.input_schema) !== JSON.stringify(tool.input_schema) || JSON.stringify(previous.output_schema) !== JSON.stringify(tool.output_schema);
+          return (
+            <details key={tool.id} className="mcp-projection-tool-diff">
+              <summary><code>{tool.public_name}</code><span>{tool.change_classification}</span></summary>
+              <p>Exact revision: <code>{tool.revision_id}</code></p>
+              {schemaChanged ? (
+                <div className="mcp-schema-diff-grid">
+                  <div><strong>Previous schema</strong><pre>{previous ? JSON.stringify({ inputSchema: previous.input_schema, outputSchema: previous.output_schema }, null, 2) : "New projected action"}</pre></div>
+                  <div><strong>Candidate schema</strong><pre>{JSON.stringify({ inputSchema: tool.input_schema, outputSchema: tool.output_schema }, null, 2)}</pre></div>
+                </div>
+              ) : <p>Schema unchanged; metadata or policy classification only.</p>}
+            </details>
+          );
+        })}
+      </div>
+      {pendingChatGpt ? <p className="mcp-projection-warning">Published in Gateway, but ChatGPT action refresh is not verified. Do not treat the action list as updated until evidence is recorded.</p> : null}
+      <div className="mcp-card-actions">
+        {generation.status === "candidate" ? <Button disabled={busy} onClick={onPublish}>Publish generation</Button> : null}
+        {generation.status === "superseded" ? <Button disabled={busy} onClick={onRollback}>Rollback to this generation</Button> : null}
+        {generation.status === "active" && (pendingChatGpt || pendingGeneric) ? <Button disabled={busy} onClick={onVerify}>{pendingChatGpt ? "Verify ChatGPT actions" : "Record tools/list_changed"}</Button> : null}
+      </div>
+    </article>
+  );
+}
+
+function OAuthPresentationRow({
+  client,
+  busy,
+  onSave,
+}: {
+  client: McpOAuthPresentation;
+  busy: boolean;
+  onSave: (profile: McpPresentationProfileId, allowedNames: string[]) => void;
+}) {
+  const [profile, setProfile] = useState<McpPresentationProfileId>(client.presentation_profile);
+  const [allowed, setAllowed] = useState(client.allowed_tool_names.join(", "));
+  useEffect(() => {
+    setProfile(client.presentation_profile);
+    setAllowed(client.allowed_tool_names.join(", "));
+  }, [client]);
+  return (
+    <div className="mcp-oauth-presentation-row">
+      <div><strong>{client.client_name}</strong><small>{client.client_id} · policy generation {client.presentation_policy_generation}</small></div>
+      <select value={profile} onChange={(event) => setProfile(event.target.value as McpPresentationProfileId)}>
+        <option value="chatgpt-stable">ChatGPT stable</option>
+        <option value="developer-dynamic">Developer dynamic</option>
+        <option value="agent-restricted">Agent restricted</option>
+      </select>
+      {profile === "agent-restricted" ? <input aria-label="Allowed tool names" placeholder="workspace_info, mcp_catalog_search" value={allowed} onChange={(event) => setAllowed(event.target.value)} /> : null}
+      <Button disabled={busy} onClick={() => onSave(profile, allowed.split(",").map((name) => name.trim()).filter(Boolean))}>Save profile</Button>
+    </div>
+  );
+}
+
+function McpProjectionManager({ onError }: { onError: (message: string) => void }) {
+  const queryClient = useQueryClient();
+  const [profile, setProfile] = useState<McpPresentationProfileId>("chatgpt-stable");
+  const profiles = useQuery({ queryKey: ["mcpPresentationProfiles"], queryFn: api.mcpPresentationProfiles });
+  const generations = useQuery({ queryKey: ["mcpProjectionGenerations", profile], queryFn: () => api.mcpProjectionGenerations(profile) });
+  const oauthClients = useQuery({ queryKey: ["mcpOAuthPresentations"], queryFn: api.mcpOAuthPresentations });
+  const profileItems = Array.isArray(profiles.data) ? profiles.data : [];
+  const generationItems = Array.isArray(generations.data) ? generations.data : [];
+  const oauthClientItems = Array.isArray(oauthClients.data) ? oauthClients.data : [];
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["mcpProjectionGenerations"] });
+    await queryClient.invalidateQueries({ queryKey: ["mcpOAuthPresentations"] });
+  };
+  const create = useMutation({
+    mutationFn: () => api.createMcpProjectionGeneration({ profile_id: profile }),
+    onSuccess: refresh,
+    onError: (error) => onError(readableError(error)),
+  });
+  const publish = useMutation({
+    mutationFn: api.publishMcpProjectionGeneration,
+    onSuccess: refresh,
+    onError: (error) => onError(readableError(error)),
+  });
+  const rollback = useMutation({
+    mutationFn: api.rollbackMcpProjectionGeneration,
+    onSuccess: refresh,
+    onError: (error) => onError(readableError(error)),
+  });
+  const verify = useMutation({
+    mutationFn: (generation: McpProjectionGeneration) => {
+      const reference = window.prompt("Enter the ChatGPT/OpenAI update evidence reference. The Gateway will verify the exact schema hash before marking refresh complete.");
+      if (!reference) throw new Error("Verification cancelled: evidence reference is required");
+      const kind = generation.chatgpt_refresh_state === "pending" ? "chatgpt_actions" : "generic_tools_list_changed";
+      return api.verifyMcpProjectionGeneration(generation, kind, { operator_reference: reference, observed_at: new Date().toISOString() });
+    },
+    onSuccess: refresh,
+    onError: (error) => onError(readableError(error)),
+  });
+  const updateClient = useMutation({
+    mutationFn: ({ clientId, profileId, allowedNames }: { clientId: string; profileId: McpPresentationProfileId; allowedNames: string[] }) => api.updateMcpOAuthPresentation(clientId, { profile_id: profileId, allowed_tool_names: allowedNames }),
+    onSuccess: refresh,
+    onError: (error) => onError(readableError(error)),
+  });
+  const busy = create.isPending || publish.isPending || rollback.isPending || verify.isPending || updateClient.isPending;
+
+  return (
+    <section className="mcp-projection-manager">
+      <div className="mcp-projection-heading">
+        <div><h2>ChatGPT presentation profiles</h2><p>Native action schemas are immutable per generation. Upstream catalog refreshes never mutate the active ChatGPT action list.</p></div>
+        <div className="mcp-projection-controls">
+          <select value={profile} onChange={(event) => setProfile(event.target.value as McpPresentationProfileId)}>
+            {profileItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+          <Button disabled={busy} onClick={() => create.mutate()}>{create.isPending ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Create candidate</Button>
+        </div>
+      </div>
+      {profileItems.find((item) => item.id === profile)?.description ? <p className="mcp-projection-profile-note">{profileItems.find((item) => item.id === profile)?.description}</p> : null}
+      {generations.isError ? <div className="operation-banner">{readableError(generations.error)}</div> : null}
+      <div className="mcp-projection-grid">
+        {generationItems.map((generation) => <ProjectionGenerationCard key={generation.id} generation={generation} previousGeneration={generation.previous_generation_id ? generationItems.find((item) => item.id === generation.previous_generation_id) : undefined} busy={busy} onPublish={() => publish.mutate(generation.id)} onRollback={() => rollback.mutate(generation.id)} onVerify={() => verify.mutate(generation)} />)}
+        {generations.isSuccess && generationItems.length === 0 ? <div className="mcp-empty">No projection generations for this profile.</div> : null}
+      </div>
+      <div className="mcp-oauth-presentation-list">
+        <h3>OAuth client presentation binding</h3>
+        <p>Changing a profile increments policy generation. Existing access tokens must authorize again before using the new action surface.</p>
+        {oauthClientItems.map((client) => <OAuthPresentationRow key={client.client_id} client={client} busy={busy} onSave={(profileId, allowedNames) => updateClient.mutate({ clientId: client.client_id, profileId, allowedNames })} />)}
+      </div>
     </section>
   );
 }
@@ -319,6 +486,8 @@ export function McpConnectionsPage() {
 
       {operationError ? <div className="operation-banner" role="alert"><AlertCircle size={18} /> {operationError}</div> : null}
       {completeOAuth.isPending ? <div className="mcp-oauth-banner"><LoaderCircle className="spin" size={18} /> {t("mcpConnections.oauthCompleting")}</div> : null}
+
+      <McpProjectionManager onError={setOperationError} />
 
       {showForm ? (
         <form className="mcp-connection-form" onSubmit={(event) => { event.preventDefault(); createConnection.mutate(form); }}>

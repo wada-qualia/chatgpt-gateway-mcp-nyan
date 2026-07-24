@@ -3,7 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from ..account_settings import effective_ssh_command_profile
 from ..auth import get_current_user, require_role
+from ..config import Settings, get_settings
 from ..database import get_db
 from ..dto import (
     McpCredentialBindingCreate,
@@ -11,6 +13,9 @@ from ..dto import (
     McpFederationPolicyOut,
     McpFederationPolicyUpdate,
     McpInvocationOut,
+    McpOAuthPresentationUpdate,
+    McpProjectionCandidateCreate,
+    McpProjectionVerificationCreate,
     McpRuntimeConnectionOut,
     McpServerCommand,
     McpServerCreate,
@@ -24,12 +29,24 @@ from ..dto import (
     McpToolRevisionOut,
 )
 from ..mcp_federation import mcp_federation_service
+from ..mcp_presentation import (
+    PRESENTATION_PROFILES,
+    create_candidate_generation,
+    generation_payload,
+    get_generation,
+    list_generations,
+    oauth_client_presentation_payload,
+    presentation_profile_payload,
+    publish_generation,
+    record_projection_verification,
+    rollback_generation,
+    update_oauth_client_profile,
+)
 from ..mcp_upstream import UpstreamMcpError, UpstreamMcpManager
-from ..models import User
+from ..models import OAuthClient, User
 from ..policy import enforce
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp-federation"])
-
 
 
 def upstream_manager(request: Request) -> UpstreamMcpManager:
@@ -38,6 +55,7 @@ def upstream_manager(request: Request) -> UpstreamMcpManager:
 
 def raise_upstream_error(exc: UpstreamMcpError) -> None:
     raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
+
 
 def idempotency_key(
     value: str = Header(alias="Idempotency-Key", min_length=1, max_length=160),
@@ -325,9 +343,7 @@ async def classify_tool_revision(
     )
 
 
-@router.get(
-    "/tools/{tool_id}/exposure", response_model=McpToolExposureOut | None
-)
+@router.get("/tools/{tool_id}/exposure", response_model=McpToolExposureOut | None)
 async def get_tool_exposure(
     tool_id: str,
     user: User = Depends(get_current_user),
@@ -384,3 +400,171 @@ async def list_runtime_connections(
     return mcp_federation_service.list_runtime_connections(
         db, owner_subject=user.subject, server_id=server_id
     )
+
+
+@router.get("/presentation-profiles")
+async def list_presentation_profiles(
+    user: User = Depends(get_current_user),
+):
+    enforce(user, action="read")
+    return [
+        presentation_profile_payload(profile_id) for profile_id in PRESENTATION_PROFILES
+    ]
+
+
+@router.get("/oauth-clients/presentation")
+async def list_oauth_client_presentations(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-admin")
+    clients = (
+        db.query(OAuthClient)
+        .order_by(OAuthClient.client_name.asc(), OAuthClient.client_id.asc())
+        .all()
+    )
+    return [oauth_client_presentation_payload(client) for client in clients]
+
+
+@router.patch("/oauth-clients/{client_id}/presentation")
+async def patch_oauth_client_presentation(
+    client_id: str,
+    payload: McpOAuthPresentationUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-admin")
+    client = update_oauth_client_profile(
+        db,
+        client_id=client_id,
+        profile_id=payload.profile_id,
+        allowed_tool_names=payload.allowed_tool_names,
+    )
+    return oauth_client_presentation_payload(client)
+
+
+@router.get("/projection-generations")
+async def list_projection_generations_endpoint(
+    profile_id: str | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-auditor", "gateway-admin")
+    return [
+        generation_payload(db, generation, include_tools=True)
+        for generation in list_generations(
+            db,
+            owner_subject=user.subject,
+            profile_id=profile_id,
+        )
+    ]
+
+
+@router.post("/projection-generations", status_code=201)
+async def create_projection_generation_endpoint(
+    payload: McpProjectionCandidateCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    require_role(user, "gateway-admin")
+    from .mcp import _tools
+
+    reserved_names = {
+        str(tool["name"])
+        for tool in _tools(
+            settings,
+            effective_ssh_command_profile(user, settings),
+        )
+    }
+    generation = create_candidate_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        profile_id=payload.profile_id,
+        reserved_names=reserved_names,
+        exposure_ids=payload.exposure_ids,
+    )
+    return generation_payload(db, generation, include_tools=True)
+
+
+@router.get("/projection-generations/{generation_id}")
+async def get_projection_generation_endpoint(
+    generation_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-auditor", "gateway-admin")
+    generation = get_generation(
+        db,
+        owner_subject=user.subject,
+        generation_id=generation_id,
+    )
+    return generation_payload(db, generation, include_tools=True)
+
+
+@router.post("/projection-generations/{generation_id}/publish")
+async def publish_projection_generation_endpoint(
+    generation_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-admin")
+    generation = publish_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        generation_id=generation_id,
+    )
+    return generation_payload(db, generation, include_tools=True)
+
+
+@router.post("/projection-generations/{generation_id}/rollback")
+async def rollback_projection_generation_endpoint(
+    generation_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-admin")
+    generation = rollback_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        generation_id=generation_id,
+    )
+    return generation_payload(db, generation, include_tools=True)
+
+
+@router.post("/projection-generations/{generation_id}/verify", status_code=201)
+async def verify_projection_generation_endpoint(
+    generation_id: str,
+    payload: McpProjectionVerificationCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-admin")
+    verification = record_projection_verification(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        generation_id=generation_id,
+        verification_kind=payload.verification_kind,
+        observed_schema_hash=payload.observed_schema_hash,
+        evidence=payload.evidence,
+    )
+    generation = get_generation(
+        db,
+        owner_subject=user.subject,
+        generation_id=generation_id,
+    )
+    return {
+        "generation": generation_payload(db, generation, include_tools=True),
+        "verification": {
+            "id": verification.id,
+            "verification_kind": verification.verification_kind,
+            "observed_schema_hash": verification.observed_schema_hash,
+            "evidence": verification.evidence,
+            "verified_by_subject": verification.verified_by_subject,
+            "verified_at": verification.verified_at,
+        },
+    }

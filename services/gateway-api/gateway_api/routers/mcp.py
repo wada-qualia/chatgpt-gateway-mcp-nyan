@@ -35,7 +35,14 @@ from ..mcp_federation_broker import (
     mcp_federation_broker_tool_names,
     mcp_federation_broker_tools,
 )
-from ..mcp_upstream import UpstreamMcpManager
+from ..mcp_presentation import (
+    PresentationContext,
+    native_tool_definition,
+    projection_entries_for_context,
+    resolve_presentation_context,
+)
+from ..mcp_tool_registry import ToolDispatchTarget, ToolRegistry
+from ..mcp_upstream import UpstreamMcpError, UpstreamMcpManager
 from ..agent_coordination import WriteLeaseContext, agent_coordination_service
 from ..agent_coordination_tools import (
     agent_coordination_tool_names,
@@ -47,7 +54,17 @@ from ..config import Settings, get_settings
 from ..database import get_db
 from ..events import emit_event
 from ..models import (
-    CommandSession, Device, DockerWorkspace, FileChangeSet, ThinClient, User, utcnow,
+    CommandSession,
+    Device,
+    DockerWorkspace,
+    FileChangeSet,
+    McpProjectionGeneration,
+    McpProjectionTool,
+    McpServer,
+    McpToolExposure,
+    ThinClient,
+    User,
+    utcnow,
 )
 from ..monitoring import CommandRunResult, monitoring_service
 from ..policy import enforce
@@ -829,7 +846,7 @@ def _tool(
     }
 
 
-def _tools(
+def _legacy_tools(
     settings: Settings | None = None,
     ssh_command_profile: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -1207,15 +1224,94 @@ def _tools(
     ]
 
 
+def _tool_registry(
+    settings: Settings,
+    ssh_command_profile: str,
+    *,
+    db: Session | None = None,
+    user: User | None = None,
+    presentation: PresentationContext | None = None,
+) -> ToolRegistry:
+    legacy = _legacy_tools(settings, ssh_command_profile)
+    order_by_name = {str(tool["name"]): index for index, tool in enumerate(legacy)}
+    broker_names = set(mcp_federation_broker_tool_names())
+    registry = ToolRegistry()
+    registry.register(
+        "gateway",
+        [tool for tool in legacy if str(tool["name"]) not in broker_names],
+        order_by_name=order_by_name,
+    )
+    registry.register(
+        "broker",
+        [tool for tool in legacy if str(tool["name"]) in broker_names],
+        order_by_name=order_by_name,
+    )
+    if db is not None and user is not None and presentation is not None:
+        entries = projection_entries_for_context(
+            db,
+            owner_subject=user.subject,
+            user_roles=user.roles,
+            context=presentation,
+        )
+        native_tools = [native_tool_definition(entry) for entry in entries]
+        native_targets = {
+            entry.tool.public_name: ToolDispatchTarget(
+                provider="native_projection",
+                public_name=entry.tool.public_name,
+                revision_id=entry.tool.revision_id,
+                generation_id=entry.generation.id,
+                metadata={
+                    "projection_tool_id": entry.tool.id,
+                    "server_id": entry.tool.server_id,
+                    "source_exposure_id": entry.tool.source_exposure_id,
+                    "profile_id": entry.generation.profile_id,
+                },
+            )
+            for entry in entries
+        }
+        registry.register(
+            "native_projection",
+            native_tools,
+            start_order=len(legacy) + 1000,
+            targets=native_targets,
+        )
+    return registry.filtered(
+        set(presentation.allowed_tool_names)
+        if presentation is not None and presentation.allowed_tool_names is not None
+        else None
+    )
+
+
+def _tools(
+    settings: Settings | None = None,
+    ssh_command_profile: str | None = None,
+    *,
+    db: Session | None = None,
+    user: User | None = None,
+    presentation: PresentationContext | None = None,
+) -> list[dict[str, Any]]:
+    resolved_settings = settings or get_settings()
+    resolved_profile = (
+        ssh_command_profile or resolved_settings.ssh_command_profile_default
+    )
+    return _tool_registry(
+        resolved_settings,
+        resolved_profile,
+        db=db,
+        user=user,
+        presentation=presentation,
+    ).tools()
+
+
 def _tool_by_name(
     name: str,
     settings: Settings,
     ssh_command_profile: str,
+    *,
+    registry: ToolRegistry | None = None,
 ) -> dict[str, Any] | None:
-    for tool in _tools(settings, ssh_command_profile):
-        if tool["name"] == name:
-            return tool
-    return None
+    selected = registry or _tool_registry(settings, ssh_command_profile)
+    return selected.tool(name)
 
 
 def _normalized_arg_name(name: str) -> str:
@@ -1227,10 +1323,12 @@ def _validate_tool_arguments(
     args: dict[str, Any],
     settings: Settings,
     ssh_command_profile: str,
+    *,
+    registry: ToolRegistry | None = None,
 ) -> dict[str, Any]:
     if not isinstance(args, dict):
         raise HTTPException(status_code=400, detail="Tool arguments must be an object")
-    tool = _tool_by_name(name, settings, ssh_command_profile)
+    tool = _tool_by_name(name, settings, ssh_command_profile, registry=registry)
     if tool is None:
         raise HTTPException(status_code=404, detail=f"Unknown tool: {name}")
     schema = tool.get("inputSchema") or {}
@@ -1510,7 +1608,10 @@ def _session_payload(session: CommandSession) -> dict[str, Any]:
 
 @router.get("/mcp")
 async def mcp_info(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
-    return {"name": settings.app_name, "transport": "http-json-rpc", "tools": [tool["name"] for tool in _tools()],
+    return {
+        "name": settings.app_name,
+        "transport": "http-json-rpc",
+        "tools": [tool["name"] for tool in _tools()],
     }
 
 
@@ -1524,15 +1625,28 @@ async def mcp(
     body = await request.json()
     method = body.get("method")
     request_id = body.get("id")
+    ssh_profile = effective_ssh_command_profile(user, settings)
+    presentation = resolve_presentation_context(request, db, user)
+    registry = _tool_registry(
+        settings,
+        ssh_profile,
+        db=db,
+        user=user,
+        presentation=presentation,
+    )
     try:
         if method == "initialize":
             result = {
                 "protocolVersion": "2025-03-26",
-                "capabilities": {"tools": {}},
+                "capabilities": {
+                    "tools": {"listChanged": True}
+                    if presentation.supports_list_changed
+                    else {}
+                },
                 "serverInfo": {"name": settings.app_name, "version": "0.1.0"},
             }
         elif method == "tools/list":
-            result = {"tools": _tools(settings, effective_ssh_command_profile(user, settings))}
+            result = {"tools": registry.tools()}
         elif method == "tools/call":
             params = body.get("params") or {}
             name = str(params.get("name") or "")
@@ -1540,9 +1654,12 @@ async def mcp(
                 name,
                 params.get("arguments") or {},
                 settings,
-                effective_ssh_command_profile(user, settings),
+                ssh_profile,
+                registry=registry,
             )
-            tool_call = monitoring_service.create_tool_call(db, owner_subject=user.subject, tool_name=name, arguments=arguments)
+            tool_call = monitoring_service.create_tool_call(
+                db, owner_subject=user.subject, tool_name=name, arguments=arguments
+            )
             try:
                 result = await _call_tool(
                     name,
@@ -1552,6 +1669,8 @@ async def mcp(
                     settings,
                     upstream=request.app.state.upstream_mcp_manager,
                     tool_call_id=tool_call.id,
+                    dispatch_target=registry.target(name),
+                    presentation=presentation,
                 )
                 structured = result.get("structuredContent") or {}
                 session_id = structured.get("session_id")
@@ -1560,26 +1679,103 @@ async def mcp(
                     call=tool_call,
                     status="error" if result.get("isError") else "success",
                     session_id=str(session_id) if session_id else None,
-                    error=str(structured.get("error")) if result.get("isError") else None,
+                    error=str(structured.get("error"))
+                    if result.get("isError")
+                    else None,
                 )
                 structured["background_session_tails"] = (
                     monitoring_service.background_tails(
-                    db,
-                    owner_subject=user.subject,
-                    tool_call_id=tool_call.id,
+                        db,
+                        owner_subject=user.subject,
+                        tool_call_id=tool_call.id,
                     )
                 )
                 result["structuredContent"] = structured
                 result = _refresh_result_content(result)
             except HTTPException as exc:
-                monitoring_service.finish_tool_call(db, call=tool_call, status="error", error=str(exc.detail))
+                monitoring_service.finish_tool_call(
+                    db, call=tool_call, status="error", error=str(exc.detail)
+                )
                 raise
         else:
-            raise HTTPException(status_code=400, detail=f"Unsupported JSON-RPC method: {method}")
+            raise HTTPException(
+                status_code=400, detail=f"Unsupported JSON-RPC method: {method}"
+            )
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
     except HTTPException as exc:
-        return {"jsonrpc": "2.0", "id": request_id, "error": {"code": exc.status_code, "message": str(exc.detail)},
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {"code": exc.status_code, "message": str(exc.detail)},
         }
+
+
+async def _call_native_projection(
+    target: ToolDispatchTarget,
+    args: dict[str, Any],
+    user: User,
+    db: Session,
+    upstream: UpstreamMcpManager,
+    presentation: PresentationContext,
+    *,
+    tool_call_id: str | None,
+) -> dict[str, Any]:
+    generation = db.get(McpProjectionGeneration, target.generation_id)
+    projection_tool_id = str(target.metadata.get("projection_tool_id") or "")
+    projection = db.get(McpProjectionTool, projection_tool_id)
+    if (
+        generation is None
+        or projection is None
+        or generation.owner_subject != user.subject
+        or generation.status != "active"
+        or generation.profile_id != presentation.profile_id
+        or projection.generation_id != generation.id
+        or projection.public_name != target.public_name
+        or projection.revision_id != target.revision_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "MCP_PROJECTED_TOOL_STALE",
+                "message": "The projected tool no longer belongs to the active presentation generation",
+            },
+        )
+    exposure = db.get(McpToolExposure, projection.source_exposure_id)
+    server = db.get(McpServer, projection.server_id)
+    if (
+        exposure is None
+        or exposure.owner_subject != user.subject
+        or exposure.mode != "native_projected"
+        or not exposure.enabled
+        or exposure.revision_id != projection.revision_id
+        or server is None
+        or server.owner_subject != user.subject
+        or server.status != "online"
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "MCP_PROJECTED_TOOL_UNAVAILABLE",
+                "message": "The projected action remains published but its exact upstream revision is unavailable",
+                "generation_id": generation.id,
+                "revision_id": projection.revision_id,
+                "server_id": projection.server_id,
+            },
+        )
+    try:
+        call = await upstream.call_exact_revision(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            revision_id=projection.revision_id,
+            arguments=args,
+            gateway_tool_call_id=tool_call_id,
+        )
+    except UpstreamMcpError as exc:
+        raise HTTPException(
+            status_code=exc.http_status, detail=exc.as_detail()
+        ) from exc
+    return dict(call.payload)
 
 
 async def _call_tool(
@@ -1591,7 +1787,21 @@ async def _call_tool(
     *,
     upstream: UpstreamMcpManager,
     tool_call_id: str | None = None,
+    dispatch_target: ToolDispatchTarget | None = None,
+    presentation: PresentationContext | None = None,
 ) -> dict[str, Any]:
+    if dispatch_target is not None and dispatch_target.provider == "native_projection":
+        if presentation is None:
+            raise HTTPException(status_code=409, detail="Presentation context is required")
+        return await _call_native_projection(
+            dispatch_target,
+            args,
+            user,
+            db,
+            upstream,
+            presentation,
+            tool_call_id=tool_call_id,
+        )
     if name in agent_collaboration_tool_names():
         return _result(await call_agent_collaboration_tool(name, args, user, db))
     if name in agent_coordination_tool_names():

@@ -173,12 +173,24 @@ class FileChangeSet(Base):
 
 class OAuthClient(Base):
     __tablename__ = "oauth_clients"
+    __table_args__ = (
+        CheckConstraint(
+            "presentation_profile in ('chatgpt-stable', 'developer-dynamic', 'agent-restricted')",
+            name="ck_oauth_client_presentation_profile",
+        ),
+    )
 
     client_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     client_name: Mapped[str] = mapped_column(String(255), default="ChatGPT Connector")
     redirect_uris: Mapped[list[str]] = mapped_column(JSON, default=list)
     scope: Mapped[str] = mapped_column(Text, default="")
+    presentation_profile: Mapped[str] = mapped_column(
+        String(40), default="chatgpt-stable", index=True
+    )
+    presentation_policy_generation: Mapped[int] = mapped_column(Integer, default=1)
+    allowed_tool_names: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class OAuthCode(Base):
@@ -1081,6 +1093,154 @@ class McpToolExposure(Base):
         DateTime(timezone=True), default=utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpProjectionGeneration(Base):
+    __tablename__ = "mcp_projection_generations"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "profile_id",
+            "generation_number",
+            name="uq_mcp_projection_owner_profile_generation",
+        ),
+        CheckConstraint(
+            "profile_id in ('chatgpt-stable', 'developer-dynamic', 'agent-restricted')",
+            name="ck_mcp_projection_profile",
+        ),
+        CheckConstraint(
+            "status in ('candidate', 'active', 'superseded', 'retired')",
+            name="ck_mcp_projection_status",
+        ),
+        CheckConstraint(
+            "tools_list_changed_state in ('not_required', 'pending', 'notified')",
+            name="ck_mcp_projection_list_changed_state",
+        ),
+        CheckConstraint(
+            "chatgpt_refresh_state in ('not_required', 'pending', 'verified')",
+            name="ck_mcp_projection_chatgpt_refresh_state",
+        ),
+        Index(
+            "ix_mcp_projection_owner_profile_status",
+            "owner_subject",
+            "profile_id",
+            "status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    profile_id: Mapped[str] = mapped_column(String(40), index=True)
+    generation_number: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default="candidate", index=True)
+    previous_generation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_projection_generations.id"), nullable=True, index=True
+    )
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    schema_hash: Mapped[str] = mapped_column(String(64), index=True)
+    change_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    tools_list_changed_state: Mapped[str] = mapped_column(
+        String(32), default="not_required"
+    )
+    chatgpt_refresh_state: Mapped[str] = mapped_column(
+        String(32), default="not_required"
+    )
+    created_by_subject: Mapped[str] = mapped_column(String(255))
+    published_by_subject: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpProjectionTool(Base):
+    __tablename__ = "mcp_projection_tools"
+    __table_args__ = (
+        UniqueConstraint(
+            "generation_id", "public_name", name="uq_mcp_projection_tool_public_name"
+        ),
+        UniqueConstraint(
+            "generation_id", "position", name="uq_mcp_projection_tool_position"
+        ),
+        CheckConstraint(
+            "action_class in ('read', 'write', 'destructive', 'production')",
+            name="ck_mcp_projection_tool_action_class",
+        ),
+        CheckConstraint(
+            "change_classification in ('new', 'metadata_only', 'backward_compatible_additive', 'behavior_risk', 'breaking_schema', 'removed_unavailable')",
+            name="ck_mcp_projection_tool_change",
+        ),
+        Index("ix_mcp_projection_tool_revision", "revision_id"),
+        Index(
+            "ix_mcp_projection_tool_generation_position", "generation_id", "position"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    generation_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_projection_generations.id"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer)
+    public_name: Mapped[str] = mapped_column(String(255), index=True)
+    source_exposure_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_tool_exposures.id"), index=True
+    )
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    tool_id: Mapped[str] = mapped_column(ForeignKey("mcp_tools.id"), index=True)
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_tool_revisions.id"), index=True
+    )
+    source_schema_hash: Mapped[str] = mapped_column(String(64), index=True)
+    input_schema: Mapped[dict] = mapped_column(JSON)
+    output_schema: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    sanitized_title: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    sanitized_description: Mapped[str] = mapped_column(Text, default="")
+    annotations: Mapped[dict] = mapped_column(JSON, default=dict)
+    action_class: Mapped[str] = mapped_column(String(40), index=True)
+    required_role: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    required_scope: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    approval_class: Mapped[str] = mapped_column(String(40), default="none")
+    change_classification: Mapped[str] = mapped_column(String(40), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpProjectionVerification(Base):
+    __tablename__ = "mcp_projection_verifications"
+    __table_args__ = (
+        CheckConstraint(
+            "verification_kind in ('generic_tools_list_changed', 'chatgpt_actions')",
+            name="ck_mcp_projection_verification_kind",
+        ),
+        Index(
+            "ix_mcp_projection_verification_generation",
+            "generation_id",
+            "verification_kind",
+            "verified_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    generation_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_projection_generations.id"), index=True
+    )
+    verification_kind: Mapped[str] = mapped_column(String(40), index=True)
+    observed_schema_hash: Mapped[str] = mapped_column(String(64))
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    verified_by_subject: Mapped[str] = mapped_column(String(255))
+    verified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow
     )
 

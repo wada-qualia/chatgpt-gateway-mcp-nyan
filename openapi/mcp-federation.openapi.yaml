@@ -1,7 +1,9 @@
 openapi: 3.1.0
 info:
   title: ChatGPT Gateway MCP Federation Control Plane
-  version: 2.0.0
+  version: 2.1.0
+  description: Machine-readable MCP federation, presentation-profile and immutable
+    projection management contract.
 paths:
   /api/mcp/credential-bindings:
     post:
@@ -632,6 +634,217 @@ paths:
                   $ref: '#/components/schemas/McpRuntimeConnectionOut'
                 title: Response List Runtime Connections Api Mcp Runtime Connections
                   Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/presentation-profiles:
+    get:
+      tags:
+      - mcp-federation
+      summary: List Presentation Profiles
+      operationId: list_presentation_profiles_api_mcp_presentation_profiles_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/mcp/oauth-clients/presentation:
+    get:
+      tags:
+      - mcp-federation
+      summary: List Oauth Client Presentations
+      operationId: list_oauth_client_presentations_api_mcp_oauth_clients_presentation_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/mcp/oauth-clients/{client_id}/presentation:
+    patch:
+      tags:
+      - mcp-federation
+      summary: Patch Oauth Client Presentation
+      operationId: patch_oauth_client_presentation_api_mcp_oauth_clients__client_id__presentation_patch
+      parameters:
+      - name: client_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Client Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpOAuthPresentationUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/projection-generations:
+    get:
+      tags:
+      - mcp-federation
+      summary: List Projection Generations Endpoint
+      operationId: list_projection_generations_endpoint_api_mcp_projection_generations_get
+      parameters:
+      - name: profile_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Profile Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - mcp-federation
+      summary: Create Projection Generation Endpoint
+      operationId: create_projection_generation_endpoint_api_mcp_projection_generations_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpProjectionCandidateCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/projection-generations/{generation_id}:
+    get:
+      tags:
+      - mcp-federation
+      summary: Get Projection Generation Endpoint
+      operationId: get_projection_generation_endpoint_api_mcp_projection_generations__generation_id__get
+      parameters:
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Generation Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/projection-generations/{generation_id}/publish:
+    post:
+      tags:
+      - mcp-federation
+      summary: Publish Projection Generation Endpoint
+      operationId: publish_projection_generation_endpoint_api_mcp_projection_generations__generation_id__publish_post
+      parameters:
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Generation Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/projection-generations/{generation_id}/rollback:
+    post:
+      tags:
+      - mcp-federation
+      summary: Rollback Projection Generation Endpoint
+      operationId: rollback_projection_generation_endpoint_api_mcp_projection_generations__generation_id__rollback_post
+      parameters:
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Generation Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/projection-generations/{generation_id}/verify:
+    post:
+      tags:
+      - mcp-federation
+      summary: Verify Projection Generation Endpoint
+      operationId: verify_projection_generation_endpoint_api_mcp_projection_generations__generation_id__verify_post
+      parameters:
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Generation Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpProjectionVerificationCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
         '422':
           description: Validation Error
           content:
@@ -1561,6 +1774,71 @@ components:
       - state
       - expires_at
       title: McpOAuthAuthorizationStarted
+    McpOAuthPresentationUpdate:
+      properties:
+        profile_id:
+          type: string
+          enum:
+          - chatgpt-stable
+          - developer-dynamic
+          - agent-restricted
+          title: Profile Id
+        allowed_tool_names:
+          items:
+            type: string
+          type: array
+          maxItems: 1000
+          title: Allowed Tool Names
+      additionalProperties: false
+      type: object
+      required:
+      - profile_id
+      title: McpOAuthPresentationUpdate
+    McpProjectionCandidateCreate:
+      properties:
+        profile_id:
+          type: string
+          enum:
+          - chatgpt-stable
+          - developer-dynamic
+          - agent-restricted
+          title: Profile Id
+        exposure_ids:
+          anyOf:
+          - items:
+              type: string
+            type: array
+            maxItems: 500
+          - type: 'null'
+          title: Exposure Ids
+      additionalProperties: false
+      type: object
+      required:
+      - profile_id
+      title: McpProjectionCandidateCreate
+    McpProjectionVerificationCreate:
+      properties:
+        verification_kind:
+          type: string
+          enum:
+          - generic_tools_list_changed
+          - chatgpt_actions
+          title: Verification Kind
+        observed_schema_hash:
+          type: string
+          maxLength: 64
+          minLength: 64
+          title: Observed Schema Hash
+        evidence:
+          additionalProperties: true
+          type: object
+          title: Evidence
+      additionalProperties: false
+      type: object
+      required:
+      - verification_kind
+      - observed_schema_hash
+      title: McpProjectionVerificationCreate
     McpRuntimeConnectionOut:
       properties:
         id:
@@ -1783,6 +2061,11 @@ components:
           - type: string
           - type: 'null'
           title: Runtime Id
+        local_server_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Local Server Id
         display_name:
           type: string
           title: Display Name

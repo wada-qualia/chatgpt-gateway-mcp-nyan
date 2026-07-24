@@ -75,6 +75,7 @@ USER root
 COPY requirements-dev.txt /app/
 COPY --chown=appuser:appuser packaging /app/packaging
 COPY --chown=appuser:appuser deploy /app/deploy
+COPY --chown=appuser:appuser Dockerfile /app/Dockerfile
 COPY --chown=appuser:appuser Jenkinsfile /app/Jenkinsfile
 RUN /opt/venv/bin/pip install --no-cache-dir -r /app/requirements-dev.txt
 USER appuser

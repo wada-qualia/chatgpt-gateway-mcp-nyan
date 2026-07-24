@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user, require_role
@@ -24,11 +24,20 @@ from ..dto import (
     McpToolRevisionOut,
 )
 from ..mcp_federation import mcp_federation_service
+from ..mcp_upstream import UpstreamMcpError, UpstreamMcpManager
 from ..models import User
 from ..policy import enforce
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp-federation"])
 
+
+
+def upstream_manager(request: Request) -> UpstreamMcpManager:
+    return request.app.state.upstream_mcp_manager
+
+
+def raise_upstream_error(exc: UpstreamMcpError) -> None:
+    raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
 
 def idempotency_key(
     value: str = Header(alias="Idempotency-Key", min_length=1, max_length=160),
@@ -197,15 +206,23 @@ async def refresh_server(
     request_key: str = Depends(idempotency_key),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    upstream: UpstreamMcpManager = Depends(upstream_manager),
 ):
-    return transition_server(
-        transition="refresh",
-        server_id=server_id,
-        payload=payload,
-        request_key=request_key,
-        user=user,
-        db=db,
+    enforce(user, action="update", owner_subject=user.subject)
+    server = mcp_federation_service.get_server(
+        db, owner_subject=user.subject, server_id=server_id
     )
+    if server.version != payload.expected_version:
+        raise HTTPException(status_code=409, detail="Optimistic version conflict")
+    try:
+        return await upstream.refresh_server(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            server_id=server_id,
+        )
+    except UpstreamMcpError as exc:
+        raise_upstream_error(exc)
 
 
 @router.post("/servers/{server_id}/test", response_model=McpServerHealthOut)
@@ -213,11 +230,15 @@ async def test_server_control_plane(
     server_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    upstream: UpstreamMcpManager = Depends(upstream_manager),
 ):
     enforce(user, action="read")
-    return mcp_federation_service.server_health(
-        db, owner_subject=user.subject, server_id=server_id
-    )
+    try:
+        return await upstream.test_server(
+            db, owner_subject=user.subject, server_id=server_id
+        )
+    except UpstreamMcpError as exc:
+        raise_upstream_error(exc)
 
 
 @router.get("/servers/{server_id}/policy", response_model=McpFederationPolicyOut | None)
@@ -301,6 +322,20 @@ async def classify_tool_revision(
         expected_version=payload.expected_version,
         action_class=payload.action_class,
         read_only_status=payload.read_only_status,
+    )
+
+
+@router.get(
+    "/tools/{tool_id}/exposure", response_model=McpToolExposureOut | None
+)
+async def get_tool_exposure(
+    tool_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    enforce(user, action="read")
+    return mcp_federation_service.get_current_exposure(
+        db, owner_subject=user.subject, tool_id=tool_id
     )
 
 

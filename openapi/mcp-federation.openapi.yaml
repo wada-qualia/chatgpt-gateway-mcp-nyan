@@ -1,9 +1,7 @@
 openapi: 3.1.0
 info:
-  title: ChatGPT MCP SSH Gateway Federation Control Plane
-  version: 1.0.0
-  description: Tenant-scoped MCP federation control-plane API. Raw credential values
-    are never accepted by this contract.
+  title: ChatGPT Gateway MCP Federation Control Plane
+  version: 2.0.0
 paths:
   /api/mcp/credential-bindings:
     post:
@@ -500,6 +498,35 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /api/mcp/tools/{tool_id}/exposure:
+    get:
+      tags:
+      - mcp-federation
+      summary: Get Tool Exposure
+      operationId: get_tool_exposure_api_mcp_tools__tool_id__exposure_get
+      parameters:
+      - name: tool_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tool Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/McpToolExposureOut'
+                - type: 'null'
+                title: Response Get Tool Exposure Api Mcp Tools  Tool Id  Exposure
+                  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     patch:
       tags:
       - mcp-federation
@@ -611,8 +638,228 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/credential-bindings/material:
+    post:
+      tags:
+      - mcp-upstream
+      summary: Create Material Binding
+      operationId: create_material_binding_api_mcp_credential_bindings_material_post
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpCredentialMaterialCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpCredentialBindingOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/credential-bindings/{binding_id}/rotate:
+    post:
+      tags:
+      - mcp-upstream
+      summary: Rotate Material Binding
+      operationId: rotate_material_binding_api_mcp_credential_bindings__binding_id__rotate_post
+      parameters:
+      - name: binding_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Binding Id
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpCredentialMaterialRotate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpCredentialBindingOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/credential-bindings/{binding_id}/revoke:
+    post:
+      tags:
+      - mcp-upstream
+      summary: Revoke Material Binding
+      operationId: revoke_material_binding_api_mcp_credential_bindings__binding_id__revoke_post
+      parameters:
+      - name: binding_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Binding Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpCredentialCommand'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpCredentialBindingOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/servers/{server_id}/oauth/start:
+    post:
+      tags:
+      - mcp-upstream
+      summary: Oauth Start
+      operationId: oauth_start_api_mcp_servers__server_id__oauth_start_post
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpOAuthAuthorizationStart'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpOAuthAuthorizationStarted'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/oauth/complete:
+    post:
+      tags:
+      - mcp-upstream
+      summary: Oauth Complete
+      operationId: oauth_complete_api_mcp_oauth_complete_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpOAuthAuthorizationComplete'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpCredentialBindingOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/servers/{server_id}/runtime-call:
+    post:
+      tags:
+      - mcp-upstream
+      summary: Runtime Call
+      operationId: runtime_call_api_mcp_servers__server_id__runtime_call_post
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpUpstreamCallInput'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpUpstreamCallOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
     McpCredentialBindingCreate:
       properties:
         binding_type:
@@ -723,210 +970,203 @@ components:
       - created_at
       - updated_at
       title: McpCredentialBindingOut
-    HTTPValidationError:
-      properties:
-        detail:
-          items:
-            $ref: '#/components/schemas/ValidationError'
-          type: array
-          title: Detail
-      type: object
-      title: HTTPValidationError
-    McpServerCreate:
-      properties:
-        display_name:
-          type: string
-          maxLength: 180
-          minLength: 1
-          title: Display Name
-        origin:
-          type: string
-          enum:
-          - gateway
-          - thin_client
-          title: Origin
-        transport:
-          type: string
-          enum:
-          - streamable_http
-          - legacy_sse
-          - stdio
-          - private_http
-          title: Transport
-        endpoint_url:
-          anyOf:
-          - type: string
-            maxLength: 2048
-          - type: 'null'
-          title: Endpoint Url
-        thin_client_id:
-          anyOf:
-          - type: string
-            maxLength: 36
-          - type: 'null'
-          title: Thin Client Id
-        runtime_id:
-          anyOf:
-          - type: string
-            maxLength: 160
-          - type: 'null'
-          title: Runtime Id
-        credential_binding_id:
-          anyOf:
-          - type: string
-            maxLength: 36
-          - type: 'null'
-          title: Credential Binding Id
-      additionalProperties: false
-      type: object
-      required:
-      - display_name
-      - origin
-      - transport
-      title: McpServerCreate
-    McpServerOut:
-      properties:
-        id:
-          type: string
-          title: Id
-        owner_subject:
-          type: string
-          title: Owner Subject
-        origin:
-          type: string
-          title: Origin
-        thin_client_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Thin Client Id
-        runtime_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Runtime Id
-        display_name:
-          type: string
-          title: Display Name
-        normalized_slug:
-          type: string
-          title: Normalized Slug
-        transport:
-          type: string
-          title: Transport
-        endpoint_url:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Endpoint Url
-        credential_binding_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Credential Binding Id
-        status:
-          type: string
-          title: Status
-        trust_level:
-          type: string
-          title: Trust Level
-        quarantine_reason:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Quarantine Reason
-        negotiated_protocol_version:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Negotiated Protocol Version
-        capabilities:
-          additionalProperties: true
-          type: object
-          title: Capabilities
-        catalog_generation:
-          type: integer
-          title: Catalog Generation
-        policy_generation:
-          type: integer
-          title: Policy Generation
-        version:
-          type: integer
-          title: Version
-        last_connected_at:
-          anyOf:
-          - type: string
-            format: date-time
-          - type: 'null'
-          title: Last Connected At
-        last_catalog_refreshed_at:
-          anyOf:
-          - type: string
-            format: date-time
-          - type: 'null'
-          title: Last Catalog Refreshed At
-        disabled_at:
-          anyOf:
-          - type: string
-            format: date-time
-          - type: 'null'
-          title: Disabled At
-        created_at:
-          type: string
-          format: date-time
-          title: Created At
-        updated_at:
-          type: string
-          format: date-time
-          title: Updated At
-      type: object
-      required:
-      - id
-      - owner_subject
-      - origin
-      - display_name
-      - normalized_slug
-      - transport
-      - status
-      - trust_level
-      - capabilities
-      - catalog_generation
-      - policy_generation
-      - version
-      - created_at
-      - updated_at
-      title: McpServerOut
-    McpServerUpdate:
+    McpCredentialCommand:
       properties:
         expected_version:
           type: integer
           minimum: 1.0
           title: Expected Version
-        display_name:
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      title: McpCredentialCommand
+    McpCredentialMaterialCreate:
+      properties:
+        binding_type:
+          type: string
+          enum:
+          - oauth
+          - service_account
+          title: Binding Type
+        provider:
           anyOf:
           - type: string
-            maxLength: 180
+            maxLength: 120
+          - type: 'null'
+          title: Provider
+        audience:
+          anyOf:
+          - type: string
+            maxLength: 2083
+            minLength: 1
+            format: uri
+          - type: 'null'
+          title: Audience
+        scopes:
+          items:
+            type: string
+          type: array
+          maxItems: 100
+          title: Scopes
+        mode:
+          type: string
+          enum:
+          - bearer
+          - header
+          - oauth
+          title: Mode
+        access_token:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Access Token
+        refresh_token:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Refresh Token
+        token_endpoint:
+          anyOf:
+          - type: string
+            maxLength: 2083
+            minLength: 1
+            format: uri
+          - type: 'null'
+          title: Token Endpoint
+        client_id:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          title: Client Id
+        client_secret:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Client Secret
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        header_name:
+          anyOf:
+          - type: string
+            maxLength: 120
             minLength: 1
           - type: 'null'
-          title: Display Name
-        credential_binding_id:
+          title: Header Name
+        header_value:
           anyOf:
           - type: string
-            maxLength: 36
+            format: password
+            writeOnly: true
           - type: 'null'
-          title: Credential Binding Id
-        enabled:
-          anyOf:
-          - type: boolean
-          - type: 'null'
-          title: Enabled
+          title: Header Value
       additionalProperties: false
       type: object
       required:
-      - expected_version
-      title: McpServerUpdate
-    McpServerCommand:
+      - binding_type
+      - mode
+      title: McpCredentialMaterialCreate
+    McpCredentialMaterialRotate:
       properties:
+        binding_type:
+          type: string
+          enum:
+          - oauth
+          - service_account
+          title: Binding Type
+        provider:
+          anyOf:
+          - type: string
+            maxLength: 120
+          - type: 'null'
+          title: Provider
+        audience:
+          anyOf:
+          - type: string
+            maxLength: 2083
+            minLength: 1
+            format: uri
+          - type: 'null'
+          title: Audience
+        scopes:
+          items:
+            type: string
+          type: array
+          maxItems: 100
+          title: Scopes
+        mode:
+          type: string
+          enum:
+          - bearer
+          - header
+          - oauth
+          title: Mode
+        access_token:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Access Token
+        refresh_token:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Refresh Token
+        token_endpoint:
+          anyOf:
+          - type: string
+            maxLength: 2083
+            minLength: 1
+            format: uri
+          - type: 'null'
+          title: Token Endpoint
+        client_id:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          title: Client Id
+        client_secret:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Client Secret
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        header_name:
+          anyOf:
+          - type: string
+            maxLength: 120
+            minLength: 1
+          - type: 'null'
+          title: Header Name
+        header_value:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Header Value
         expected_version:
           type: integer
           minimum: 1.0
@@ -934,46 +1174,10 @@ components:
       additionalProperties: false
       type: object
       required:
+      - binding_type
+      - mode
       - expected_version
-      title: McpServerCommand
-    McpServerHealthOut:
-      properties:
-        server_id:
-          type: string
-          title: Server Id
-        status:
-          type: string
-          title: Status
-        trust_level:
-          type: string
-          title: Trust Level
-        catalog_generation:
-          type: integer
-          title: Catalog Generation
-        negotiated_protocol_version:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Negotiated Protocol Version
-        last_connected_at:
-          anyOf:
-          - type: string
-            format: date-time
-          - type: 'null'
-          title: Last Connected At
-        last_catalog_refreshed_at:
-          anyOf:
-          - type: string
-            format: date-time
-          - type: 'null'
-          title: Last Catalog Refreshed At
-      type: object
-      required:
-      - server_id
-      - status
-      - trust_level
-      - catalog_generation
-      title: McpServerHealthOut
+      title: McpCredentialMaterialRotate
     McpFederationPolicyOut:
       properties:
         id:
@@ -1135,343 +1339,6 @@ components:
       - expected_version
       - trust_level
       title: McpFederationPolicyUpdate
-    McpToolOut:
-      properties:
-        id:
-          type: string
-          title: Id
-        owner_subject:
-          type: string
-          title: Owner Subject
-        server_id:
-          type: string
-          title: Server Id
-        upstream_name:
-          type: string
-          title: Upstream Name
-        normalized_name:
-          type: string
-          title: Normalized Name
-        lifecycle_state:
-          type: string
-          title: Lifecycle State
-        current_revision_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Current Revision Id
-        version:
-          type: integer
-          title: Version
-        first_observed_at:
-          type: string
-          format: date-time
-          title: First Observed At
-        last_observed_at:
-          type: string
-          format: date-time
-          title: Last Observed At
-        created_at:
-          type: string
-          format: date-time
-          title: Created At
-        updated_at:
-          type: string
-          format: date-time
-          title: Updated At
-      type: object
-      required:
-      - id
-      - owner_subject
-      - server_id
-      - upstream_name
-      - normalized_name
-      - lifecycle_state
-      - version
-      - first_observed_at
-      - last_observed_at
-      - created_at
-      - updated_at
-      title: McpToolOut
-    McpToolRevisionOut:
-      properties:
-        id:
-          type: string
-          title: Id
-        owner_subject:
-          type: string
-          title: Owner Subject
-        server_id:
-          type: string
-          title: Server Id
-        tool_id:
-          type: string
-          title: Tool Id
-        revision_number:
-          type: integer
-          title: Revision Number
-        input_schema:
-          additionalProperties: true
-          type: object
-          title: Input Schema
-        output_schema:
-          anyOf:
-          - additionalProperties: true
-            type: object
-          - type: 'null'
-          title: Output Schema
-        sanitized_title:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Sanitized Title
-        sanitized_description:
-          type: string
-          title: Sanitized Description
-        annotations:
-          additionalProperties: true
-          type: object
-          title: Annotations
-        schema_hash:
-          type: string
-          title: Schema Hash
-        protocol_version:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Protocol Version
-        catalog_generation:
-          type: integer
-          title: Catalog Generation
-        action_class:
-          type: string
-          title: Action Class
-        read_only_status:
-          type: string
-          title: Read Only Status
-        risk_evidence:
-          additionalProperties: true
-          type: object
-          title: Risk Evidence
-        version:
-          type: integer
-          title: Version
-        classified_by_subject:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Classified By Subject
-        classified_at:
-          anyOf:
-          - type: string
-            format: date-time
-          - type: 'null'
-          title: Classified At
-        superseded_by_revision_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Superseded By Revision Id
-        discovered_at:
-          type: string
-          format: date-time
-          title: Discovered At
-        created_at:
-          type: string
-          format: date-time
-          title: Created At
-      type: object
-      required:
-      - id
-      - owner_subject
-      - server_id
-      - tool_id
-      - revision_number
-      - input_schema
-      - sanitized_description
-      - annotations
-      - schema_hash
-      - catalog_generation
-      - action_class
-      - read_only_status
-      - risk_evidence
-      - version
-      - discovered_at
-      - created_at
-      title: McpToolRevisionOut
-    McpToolRevisionClassification:
-      properties:
-        expected_version:
-          type: integer
-          minimum: 1.0
-          title: Expected Version
-        action_class:
-          type: string
-          enum:
-          - read
-          - write
-          - destructive
-          - production
-          title: Action Class
-        read_only_status:
-          type: string
-          enum:
-          - unverified
-          - verified
-          - rejected
-          title: Read Only Status
-      additionalProperties: false
-      type: object
-      required:
-      - expected_version
-      - action_class
-      - read_only_status
-      title: McpToolRevisionClassification
-    McpToolExposureUpdate:
-      properties:
-        expected_version:
-          type: integer
-          minimum: 0.0
-          title: Expected Version
-        revision_id:
-          type: string
-          maxLength: 36
-          title: Revision Id
-        mode:
-          type: string
-          enum:
-          - hidden
-          - catalog_only
-          - native_projected
-          title: Mode
-        enabled:
-          type: boolean
-          title: Enabled
-        projected_name:
-          anyOf:
-          - type: string
-            maxLength: 255
-          - type: 'null'
-          title: Projected Name
-        required_role:
-          anyOf:
-          - type: string
-            maxLength: 120
-          - type: 'null'
-          title: Required Role
-        required_scope:
-          anyOf:
-          - type: string
-            maxLength: 160
-          - type: 'null'
-          title: Required Scope
-        approval_class:
-          type: string
-          enum:
-          - none
-          - operator
-          - quorum
-          - production
-          title: Approval Class
-        projection_generation:
-          type: integer
-          minimum: 0.0
-          title: Projection Generation
-          default: 0
-      additionalProperties: false
-      type: object
-      required:
-      - expected_version
-      - revision_id
-      - mode
-      - enabled
-      - approval_class
-      title: McpToolExposureUpdate
-    McpToolExposureOut:
-      properties:
-        id:
-          type: string
-          title: Id
-        owner_subject:
-          type: string
-          title: Owner Subject
-        server_id:
-          type: string
-          title: Server Id
-        tool_id:
-          type: string
-          title: Tool Id
-        revision_id:
-          type: string
-          title: Revision Id
-        mode:
-          type: string
-          title: Mode
-        projected_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Projected Name
-        enabled:
-          type: boolean
-          title: Enabled
-        required_role:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Required Role
-        required_scope:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Required Scope
-        approval_class:
-          type: string
-          title: Approval Class
-        projection_generation:
-          type: integer
-          title: Projection Generation
-        policy_generation:
-          type: integer
-          title: Policy Generation
-        version:
-          type: integer
-          title: Version
-        reviewed_by_subject:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Reviewed By Subject
-        reviewed_at:
-          anyOf:
-          - type: string
-            format: date-time
-          - type: 'null'
-          title: Reviewed At
-        created_at:
-          type: string
-          format: date-time
-          title: Created At
-        updated_at:
-          type: string
-          format: date-time
-          title: Updated At
-      type: object
-      required:
-      - id
-      - owner_subject
-      - server_id
-      - tool_id
-      - revision_id
-      - mode
-      - enabled
-      - approval_class
-      - projection_generation
-      - policy_generation
-      - version
-      - created_at
-      - updated_at
-      title: McpToolExposureOut
     McpInvocationOut:
       properties:
         id:
@@ -1587,6 +1454,113 @@ components:
       - started_at
       - created_at
       title: McpInvocationOut
+    McpOAuthAuthorizationComplete:
+      properties:
+        state:
+          type: string
+          maxLength: 512
+          minLength: 20
+          title: State
+        code:
+          type: string
+          format: password
+          title: Code
+          writeOnly: true
+      additionalProperties: false
+      type: object
+      required:
+      - state
+      - code
+      title: McpOAuthAuthorizationComplete
+    McpOAuthAuthorizationStart:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+        authorization_endpoint:
+          type: string
+          maxLength: 2083
+          minLength: 1
+          format: uri
+          title: Authorization Endpoint
+        token_endpoint:
+          type: string
+          maxLength: 2083
+          minLength: 1
+          format: uri
+          title: Token Endpoint
+        client_id:
+          type: string
+          maxLength: 512
+          minLength: 1
+          title: Client Id
+        client_secret:
+          anyOf:
+          - type: string
+            format: password
+            writeOnly: true
+          - type: 'null'
+          title: Client Secret
+        redirect_uri:
+          type: string
+          maxLength: 2083
+          minLength: 1
+          format: uri
+          title: Redirect Uri
+        scopes:
+          items:
+            type: string
+          type: array
+          maxItems: 100
+          title: Scopes
+        audience:
+          type: string
+          maxLength: 2083
+          minLength: 1
+          format: uri
+          title: Audience
+        extra_authorization_parameters:
+          additionalProperties:
+            type: string
+          type: object
+          title: Extra Authorization Parameters
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      - authorization_endpoint
+      - token_endpoint
+      - client_id
+      - redirect_uri
+      - audience
+      title: McpOAuthAuthorizationStart
+    McpOAuthAuthorizationStarted:
+      properties:
+        server_id:
+          type: string
+          title: Server Id
+        binding_id:
+          type: string
+          title: Binding Id
+        authorization_url:
+          type: string
+          title: Authorization Url
+        state:
+          type: string
+          title: State
+        expires_at:
+          type: string
+          format: date-time
+          title: Expires At
+      type: object
+      required:
+      - server_id
+      - binding_id
+      - authorization_url
+      - state
+      - expires_at
+      title: McpOAuthAuthorizationStarted
     McpRuntimeConnectionOut:
       properties:
         id:
@@ -1659,6 +1633,661 @@ components:
       - connected_at
       - last_seen_at
       title: McpRuntimeConnectionOut
+    McpServerCommand:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      title: McpServerCommand
+    McpServerCreate:
+      properties:
+        display_name:
+          type: string
+          maxLength: 180
+          minLength: 1
+          title: Display Name
+        origin:
+          type: string
+          enum:
+          - gateway
+          - thin_client
+          title: Origin
+        transport:
+          type: string
+          enum:
+          - streamable_http
+          - legacy_sse
+          - stdio
+          - private_http
+          title: Transport
+        endpoint_url:
+          anyOf:
+          - type: string
+            maxLength: 2048
+          - type: 'null'
+          title: Endpoint Url
+        thin_client_id:
+          anyOf:
+          - type: string
+            maxLength: 36
+          - type: 'null'
+          title: Thin Client Id
+        runtime_id:
+          anyOf:
+          - type: string
+            maxLength: 160
+          - type: 'null'
+          title: Runtime Id
+        credential_binding_id:
+          anyOf:
+          - type: string
+            maxLength: 36
+          - type: 'null'
+          title: Credential Binding Id
+      additionalProperties: false
+      type: object
+      required:
+      - display_name
+      - origin
+      - transport
+      title: McpServerCreate
+    McpServerHealthOut:
+      properties:
+        server_id:
+          type: string
+          title: Server Id
+        status:
+          type: string
+          title: Status
+        trust_level:
+          type: string
+          title: Trust Level
+        catalog_generation:
+          type: integer
+          title: Catalog Generation
+        negotiated_protocol_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Negotiated Protocol Version
+        last_connected_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Connected At
+        last_catalog_refreshed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Catalog Refreshed At
+        latency_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Latency Ms
+        tool_count:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Tool Count
+        session_id_present:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Session Id Present
+        circuit_state:
+          type: string
+          enum:
+          - closed
+          - open
+          - half_open
+          title: Circuit State
+          default: closed
+        normalized_error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Normalized Error Code
+      type: object
+      required:
+      - server_id
+      - status
+      - trust_level
+      - catalog_generation
+      title: McpServerHealthOut
+    McpServerOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        origin:
+          type: string
+          title: Origin
+        thin_client_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Thin Client Id
+        runtime_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Runtime Id
+        display_name:
+          type: string
+          title: Display Name
+        normalized_slug:
+          type: string
+          title: Normalized Slug
+        transport:
+          type: string
+          title: Transport
+        endpoint_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Endpoint Url
+        credential_binding_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Credential Binding Id
+        status:
+          type: string
+          title: Status
+        trust_level:
+          type: string
+          title: Trust Level
+        quarantine_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Quarantine Reason
+        negotiated_protocol_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Negotiated Protocol Version
+        capabilities:
+          additionalProperties: true
+          type: object
+          title: Capabilities
+        catalog_generation:
+          type: integer
+          title: Catalog Generation
+        policy_generation:
+          type: integer
+          title: Policy Generation
+        version:
+          type: integer
+          title: Version
+        last_connected_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Connected At
+        last_catalog_refreshed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Catalog Refreshed At
+        disabled_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Disabled At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - origin
+      - display_name
+      - normalized_slug
+      - transport
+      - status
+      - trust_level
+      - capabilities
+      - catalog_generation
+      - policy_generation
+      - version
+      - created_at
+      - updated_at
+      title: McpServerOut
+    McpServerUpdate:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+        display_name:
+          anyOf:
+          - type: string
+            maxLength: 180
+            minLength: 1
+          - type: 'null'
+          title: Display Name
+        credential_binding_id:
+          anyOf:
+          - type: string
+            maxLength: 36
+          - type: 'null'
+          title: Credential Binding Id
+        enabled:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Enabled
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      title: McpServerUpdate
+    McpToolExposureOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          type: string
+          title: Server Id
+        tool_id:
+          type: string
+          title: Tool Id
+        revision_id:
+          type: string
+          title: Revision Id
+        mode:
+          type: string
+          title: Mode
+        projected_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Projected Name
+        enabled:
+          type: boolean
+          title: Enabled
+        required_role:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Required Role
+        required_scope:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Required Scope
+        approval_class:
+          type: string
+          title: Approval Class
+        projection_generation:
+          type: integer
+          title: Projection Generation
+        policy_generation:
+          type: integer
+          title: Policy Generation
+        version:
+          type: integer
+          title: Version
+        reviewed_by_subject:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reviewed By Subject
+        reviewed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Reviewed At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - server_id
+      - tool_id
+      - revision_id
+      - mode
+      - enabled
+      - approval_class
+      - projection_generation
+      - policy_generation
+      - version
+      - created_at
+      - updated_at
+      title: McpToolExposureOut
+    McpToolExposureUpdate:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 0.0
+          title: Expected Version
+        revision_id:
+          type: string
+          maxLength: 36
+          title: Revision Id
+        mode:
+          type: string
+          enum:
+          - hidden
+          - catalog_only
+          - native_projected
+          title: Mode
+        enabled:
+          type: boolean
+          title: Enabled
+        projected_name:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: Projected Name
+        required_role:
+          anyOf:
+          - type: string
+            maxLength: 120
+          - type: 'null'
+          title: Required Role
+        required_scope:
+          anyOf:
+          - type: string
+            maxLength: 160
+          - type: 'null'
+          title: Required Scope
+        approval_class:
+          type: string
+          enum:
+          - none
+          - operator
+          - quorum
+          - production
+          title: Approval Class
+        projection_generation:
+          type: integer
+          minimum: 0.0
+          title: Projection Generation
+          default: 0
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      - revision_id
+      - mode
+      - enabled
+      - approval_class
+      title: McpToolExposureUpdate
+    McpToolOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          type: string
+          title: Server Id
+        upstream_name:
+          type: string
+          title: Upstream Name
+        normalized_name:
+          type: string
+          title: Normalized Name
+        lifecycle_state:
+          type: string
+          title: Lifecycle State
+        current_revision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Current Revision Id
+        version:
+          type: integer
+          title: Version
+        first_observed_at:
+          type: string
+          format: date-time
+          title: First Observed At
+        last_observed_at:
+          type: string
+          format: date-time
+          title: Last Observed At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - server_id
+      - upstream_name
+      - normalized_name
+      - lifecycle_state
+      - version
+      - first_observed_at
+      - last_observed_at
+      - created_at
+      - updated_at
+      title: McpToolOut
+    McpToolRevisionClassification:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+        action_class:
+          type: string
+          enum:
+          - read
+          - write
+          - destructive
+          - production
+          title: Action Class
+        read_only_status:
+          type: string
+          enum:
+          - unverified
+          - verified
+          - rejected
+          title: Read Only Status
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      - action_class
+      - read_only_status
+      title: McpToolRevisionClassification
+    McpToolRevisionOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          type: string
+          title: Server Id
+        tool_id:
+          type: string
+          title: Tool Id
+        revision_number:
+          type: integer
+          title: Revision Number
+        input_schema:
+          additionalProperties: true
+          type: object
+          title: Input Schema
+        output_schema:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Output Schema
+        sanitized_title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sanitized Title
+        sanitized_description:
+          type: string
+          title: Sanitized Description
+        annotations:
+          additionalProperties: true
+          type: object
+          title: Annotations
+        schema_hash:
+          type: string
+          title: Schema Hash
+        protocol_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Protocol Version
+        catalog_generation:
+          type: integer
+          title: Catalog Generation
+        action_class:
+          type: string
+          title: Action Class
+        read_only_status:
+          type: string
+          title: Read Only Status
+        risk_evidence:
+          additionalProperties: true
+          type: object
+          title: Risk Evidence
+        version:
+          type: integer
+          title: Version
+        classified_by_subject:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Classified By Subject
+        classified_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Classified At
+        superseded_by_revision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Superseded By Revision Id
+        discovered_at:
+          type: string
+          format: date-time
+          title: Discovered At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - server_id
+      - tool_id
+      - revision_number
+      - input_schema
+      - sanitized_description
+      - annotations
+      - schema_hash
+      - catalog_generation
+      - action_class
+      - read_only_status
+      - risk_evidence
+      - version
+      - discovered_at
+      - created_at
+      title: McpToolRevisionOut
+    McpUpstreamCallInput:
+      properties:
+        revision_id:
+          type: string
+          maxLength: 36
+          minLength: 1
+          title: Revision Id
+        arguments:
+          additionalProperties: true
+          type: object
+          title: Arguments
+        timeout_seconds:
+          type: number
+          maximum: 300.0
+          minimum: 0.1
+          title: Timeout Seconds
+          default: 30.0
+      additionalProperties: false
+      type: object
+      required:
+      - revision_id
+      title: McpUpstreamCallInput
+    McpUpstreamCallOut:
+      properties:
+        revision_id:
+          type: string
+          title: Revision Id
+        schema_hash:
+          type: string
+          title: Schema Hash
+        result:
+          additionalProperties: true
+          type: object
+          title: Result
+        truncated:
+          type: boolean
+          title: Truncated
+        serialized_bytes:
+          type: integer
+          title: Serialized Bytes
+      type: object
+      required:
+      - revision_id
+      - schema_hash
+      - result
+      - truncated
+      - serialized_bytes
+      title: McpUpstreamCallOut
     ValidationError:
       properties:
         loc:

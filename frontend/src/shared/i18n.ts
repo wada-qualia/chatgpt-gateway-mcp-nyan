@@ -13,6 +13,7 @@ const resources = {
         workspaces: 'Docker Workspaces',
         thinClients: 'Thin Clients',
         monitoring: 'Monitoring',
+        mcpConnections: 'MCP Connections',
         activity: 'Activity History',
         collaboration: 'Collaboration',
         coordination: 'Coordination',
@@ -240,6 +241,43 @@ const resources = {
           gateway: 'Gateway'
         }
       },
+      mcpConnections: {
+        title: 'MCP Connections',
+        description: 'Enroll remote Streamable HTTP MCP servers, manage authorization, test connectivity and refresh their catalogs.',
+        add: 'Add MCP server',
+        empty: 'No remote MCP servers',
+        emptyNote: 'Add a Streamable HTTP endpoint to begin discovery.',
+        oauthCompleting: 'Completing OAuth authorization…',
+        refreshCatalog: 'Refresh catalog',
+        inspectCatalog: 'Inspect catalog',
+        hideCatalog: 'Hide catalog',
+        enable: 'Enable',
+        remove: 'Remove',
+        retentionNote: 'Routing is disabled, while catalog revisions and audit evidence are retained.',
+        auth: { none: 'No authentication', bearer: 'Service account bearer token', header: 'Service account header' },
+        fields: { protocol: 'Protocol', catalog: 'Catalog generation', trust: 'Trust', lastConnected: 'Last connected', tools: 'Tools', latency: 'Latency' },
+        catalog: {
+          title: 'Discovered tools',
+          description: 'Catalog entries remain internal until risk and exposure are explicitly reviewed.',
+          empty: 'Refresh the server catalog to discover tools.',
+          noRevision: 'No recorded revision',
+          noDescription: 'No sanitized description was provided.',
+          risk: 'Risk class',
+          readOnly: 'Read-only evidence',
+          exposure: 'Exposure',
+          schemaHash: 'Schema hash',
+          inputSchema: 'Input schema',
+          exposureNote: 'New tools are hidden by default and are never published as native ChatGPT actions automatically.'
+        },
+        form: {
+          title: 'Remote MCP server',
+          note: 'Only Streamable HTTP is accepted. HTTPS and public-network resolution are enforced by default.',
+          name: 'Display name', endpoint: 'MCP endpoint', authMode: 'Authorization', scopes: 'Scopes',
+          bearerToken: 'Bearer token', headerName: 'Header name', headerValue: 'Header value',
+          authorizationEndpoint: 'Authorization endpoint', tokenEndpoint: 'Token endpoint', clientId: 'Client ID', clientSecret: 'Client secret', audience: 'OAuth resource audience',
+          submit: 'Create connection'
+        }
+      },
       access: {
         title: 'ChatGPT Access',
         empty: 'No ChatGPT access grants yet.',
@@ -303,6 +341,7 @@ const resources = {
         workspaces: 'Docker-окружения',
         thinClients: 'Тонкие клиенты',
         monitoring: 'Мониторинг',
+        mcpConnections: 'MCP-подключения',
         activity: 'История активности',
         collaboration: 'Совместная работа',
         coordination: 'Координация',
@@ -534,6 +573,43 @@ const resources = {
           docker: 'Docker',
           server: 'Сервер',
           gateway: 'Gateway'
+        }
+      },
+      mcpConnections: {
+        title: 'MCP-подключения',
+        description: 'Подключение удалённых Streamable HTTP MCP-серверов, управление авторизацией, проверка доступности и обновление каталогов.',
+        add: 'Добавить MCP-сервер',
+        empty: 'Удалённые MCP-серверы не подключены',
+        emptyNote: 'Добавьте Streamable HTTP endpoint, чтобы начать discovery.',
+        oauthCompleting: 'Завершение OAuth-авторизации…',
+        refreshCatalog: 'Обновить каталог',
+        inspectCatalog: 'Просмотреть каталог',
+        hideCatalog: 'Скрыть каталог',
+        enable: 'Включить',
+        remove: 'Удалить подключение',
+        retentionNote: 'Маршрутизация отключена, но ревизии каталога и audit evidence сохраняются.',
+        auth: { none: 'Без авторизации', bearer: 'Bearer-токен service account', header: 'Заголовок service account' },
+        fields: { protocol: 'Протокол', catalog: 'Поколение каталога', trust: 'Доверие', lastConnected: 'Последнее подключение', tools: 'Инструменты', latency: 'Задержка' },
+        catalog: {
+          title: 'Обнаруженные инструменты',
+          description: 'Элементы каталога остаются внутренними до явной проверки риска и exposure policy.',
+          empty: 'Обновите каталог сервера, чтобы обнаружить инструменты.',
+          noRevision: 'Ревизия не зарегистрирована',
+          noDescription: 'Санитизированное описание отсутствует.',
+          risk: 'Класс риска',
+          readOnly: 'Read-only evidence',
+          exposure: 'Exposure',
+          schemaHash: 'Schema hash',
+          inputSchema: 'Input schema',
+          exposureNote: 'Новые инструменты скрыты по умолчанию и никогда не публикуются как native ChatGPT actions автоматически.'
+        },
+        form: {
+          title: 'Удалённый MCP-сервер',
+          note: 'Поддерживается только Streamable HTTP. По умолчанию обязательны HTTPS и публичный сетевой адрес.',
+          name: 'Название', endpoint: 'MCP endpoint', authMode: 'Авторизация', scopes: 'Scopes',
+          bearerToken: 'Bearer-токен', headerName: 'Имя заголовка', headerValue: 'Значение заголовка',
+          authorizationEndpoint: 'Authorization endpoint', tokenEndpoint: 'Token endpoint', clientId: 'Client ID', clientSecret: 'Client secret', audience: 'OAuth resource audience',
+          submit: 'Создать подключение'
         }
       },
       access: {

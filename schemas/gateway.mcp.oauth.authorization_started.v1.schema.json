@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.mcp.oauth.authorization_started.v1",
+  "title": "McpOAuthAuthorizationStarted",
+  "type": "object",
+  "required": ["event_id", "occurred_at", "server_id", "binding_id"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "server_id": {"type": "string"},
+    "binding_id": {"type": "string"}
+  },
+  "additionalProperties": false
+}

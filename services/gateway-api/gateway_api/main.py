@@ -21,6 +21,7 @@ from .routers import (
     file_changes,
     mcp,
     mcp_federation,
+    mcp_upstream,
     monitoring,
     oauth,
     outbox,
@@ -29,6 +30,7 @@ from .routers import (
     thin_clients,
     usage_accounting,
 )
+from .mcp_upstream import UpstreamMcpManager
 from .runtime import GatewayRuntime
 from .spa import SPAStaticFiles
 
@@ -36,6 +38,20 @@ from .spa import SPAStaticFiles
 def create_app() -> FastAPI:
     settings = get_settings()
     runtime = GatewayRuntime(settings=settings, session_factory=SessionLocal)
+    upstream_mcp_manager = UpstreamMcpManager(
+        public_base_url=settings.public_base_url,
+        allow_private_networks=settings.gateway_mcp_upstream_allow_private_networks,
+        allow_insecure_http=settings.gateway_mcp_upstream_allow_insecure_http,
+        connect_timeout_seconds=settings.gateway_mcp_upstream_connect_timeout_seconds,
+        call_timeout_seconds=settings.gateway_mcp_upstream_call_timeout_seconds,
+        cancellation_grace_seconds=settings.gateway_mcp_upstream_cancellation_grace_seconds,
+        max_concurrency_per_server=settings.gateway_mcp_upstream_max_concurrency_per_server,
+        circuit_failure_threshold=settings.gateway_mcp_upstream_circuit_failure_threshold,
+        circuit_open_seconds=settings.gateway_mcp_upstream_circuit_open_seconds,
+        max_result_bytes=settings.gateway_mcp_upstream_max_result_bytes,
+        max_text_bytes=settings.gateway_mcp_upstream_max_text_bytes,
+        max_content_items=settings.gateway_mcp_upstream_max_content_items,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -45,6 +61,7 @@ def create_app() -> FastAPI:
         try:
             yield
         finally:
+            await upstream_mcp_manager.stop()
             await runtime.stop()
 
     app = FastAPI(
@@ -54,6 +71,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.state.gateway_runtime = runtime
+    app.state.upstream_mcp_manager = upstream_mcp_manager
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", settings.public_base_url.rstrip("/")],
@@ -100,6 +118,7 @@ def create_app() -> FastAPI:
     app.include_router(registry.router)
     app.include_router(usage_accounting.router)
     app.include_router(mcp_federation.router)
+    app.include_router(mcp_upstream.router)
     app.include_router(mcp.router)
 
     dist = Path(__file__).resolve().parents[3] / "frontend" / "dist"

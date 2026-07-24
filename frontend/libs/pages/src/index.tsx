@@ -47,12 +47,14 @@ import {
   CoordinationRegistryPage,
   OperationsRegistryPage,
 } from "./registryPages";
+import { McpConnectionsPage } from "./mcpConnections";
 
 export type GatewayPageId =
   | "devices"
   | "workspaces"
   | "thin"
   | "monitoring"
+  | "mcpConnections"
   | "activity"
   | "collaboration"
   | "coordination"
@@ -68,6 +70,7 @@ const pageRoutes: Record<GatewayPageId, string> = {
   workspaces: "/workspaces",
   thin: "/thin-clients",
   monitoring: "/monitoring",
+  mcpConnections: "/mcp-connections",
   activity: "/activity",
   collaboration: "/collaboration",
   coordination: "/coordination",
@@ -87,6 +90,7 @@ const pageByPath: Record<string, GatewayPageId> = {
   "/thin": "thin",
   "/monitoring": "monitoring",
   "/command-sessions": "monitoring",
+  "/mcp-connections": "mcpConnections",
   "/activity": "activity",
   "/execution-history": "activity",
   "/collaboration": "collaboration",
@@ -108,6 +112,7 @@ const navDefinitions = [
   { id: "workspaces", labelKey: "nav.workspaces", icon: Box },
   { id: "thin", labelKey: "nav.thinClients", icon: TerminalSquare },
   { id: "monitoring", labelKey: "nav.monitoring", icon: Activity },
+  { id: "mcpConnections", labelKey: "nav.mcpConnections", icon: Network },
   { id: "activity", labelKey: "nav.activity", icon: Activity },
   { id: "collaboration", labelKey: "nav.collaboration", icon: Bot },
   { id: "coordination", labelKey: "nav.coordination", icon: GitMerge },
@@ -572,6 +577,7 @@ function ActiveGatewayPage({ controller }: { controller: GatewayController }) {
     return <ThinClientsPage controller={controller} />;
   if (controller.active === "monitoring")
     return <MonitoringPage controller={controller} />;
+  if (controller.active === "mcpConnections") return <McpConnectionsPage />;
   if (controller.active === "activity") return <ActivityRegistryPage />;
   if (controller.active === "collaboration")
     return <CollaborationRegistryPage />;

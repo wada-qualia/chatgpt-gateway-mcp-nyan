@@ -980,6 +980,11 @@ class McpServerHealthOut(BaseModel):
     negotiated_protocol_version: str | None = None
     last_connected_at: datetime | None = None
     last_catalog_refreshed_at: datetime | None = None
+    latency_ms: int | None = None
+    tool_count: int | None = None
+    session_id_present: bool | None = None
+    circuit_state: Literal["closed", "open", "half_open"] = "closed"
+    normalized_error_code: str | None = None
 
 
 class McpFederationPolicyUpdate(McpStrictModel):

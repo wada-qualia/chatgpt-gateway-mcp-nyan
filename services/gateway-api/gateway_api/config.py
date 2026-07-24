@@ -35,6 +35,17 @@ class Settings(BaseSettings):
     keycloak_ca_cert_path: str | None = None
     oauth_audience: str = "chatgpt-mcp-ssh-gateway"
     oauth_supported_scopes: str = "workspace:read workspace:write workspace:exec devices:manage docker:manage audit:read"
+    gateway_mcp_upstream_allow_private_networks: bool = False
+    gateway_mcp_upstream_allow_insecure_http: bool = False
+    gateway_mcp_upstream_connect_timeout_seconds: float = 10.0
+    gateway_mcp_upstream_call_timeout_seconds: float = 30.0
+    gateway_mcp_upstream_cancellation_grace_seconds: float = 3.0
+    gateway_mcp_upstream_max_concurrency_per_server: int = 4
+    gateway_mcp_upstream_circuit_failure_threshold: int = 3
+    gateway_mcp_upstream_circuit_open_seconds: float = 30.0
+    gateway_mcp_upstream_max_result_bytes: int = 1000000
+    gateway_mcp_upstream_max_text_bytes: int = 512000
+    gateway_mcp_upstream_max_content_items: int = 16
     gateway_lup_enabled: bool = False
     gateway_lup_endpoint: str = "stage"
     gateway_lup_timeout_seconds: float = 5.0

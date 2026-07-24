@@ -326,3 +326,403 @@
     grid-template-columns: minmax(220px, 1fr) minmax(180px, 1fr);
   }
 }
+
+.mcp-connections-page {
+  display: grid;
+  gap: 20px;
+}
+
+.mcp-connections-heading h1,
+.mcp-connections-heading p,
+.mcp-connection-form h2,
+.mcp-connection-form p,
+.mcp-server-card h2 {
+  margin: 0;
+}
+
+.mcp-connections-heading p,
+.mcp-form-intro p,
+.mcp-empty span {
+  color: #667085;
+  margin-top: 6px;
+}
+
+.mcp-connection-form,
+.mcp-server-card,
+.mcp-empty,
+.mcp-oauth-banner {
+  background: #fff;
+  border: 1px solid #dfe4ea;
+  border-radius: 12px;
+}
+
+.mcp-connection-form {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+}
+
+.mcp-form-intro {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+}
+
+.mcp-form-grid,
+.mcp-oauth-fields {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mcp-oauth-fields {
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.mcp-connection-form label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.mcp-connection-form label > span {
+  color: #344054;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mcp-connection-form input,
+.mcp-connection-form select {
+  background: #fff;
+  border: 1px solid #cfd6df;
+  border-radius: 8px;
+  box-sizing: border-box;
+  font: inherit;
+  min-height: 42px;
+  padding: 9px 11px;
+  width: 100%;
+}
+
+.mcp-secret-field {
+  max-width: 720px;
+}
+
+.mcp-form-actions,
+.mcp-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.mcp-server-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+}
+
+.mcp-server-card {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  padding: 20px;
+}
+
+.mcp-server-card-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.mcp-server-card-head > div {
+  min-width: 0;
+}
+
+.mcp-server-card code {
+  color: #475467;
+  display: block;
+  font-size: 12px;
+  margin-top: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-status {
+  align-items: center;
+  background: #f2f4f7;
+  border-radius: 999px;
+  color: #344054;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 5px;
+  padding: 5px 9px;
+  text-transform: capitalize;
+}
+
+.mcp-status-online {
+  background: #ecfdf3;
+  color: #067647;
+}
+
+.mcp-status-offline,
+.mcp-status-auth_required,
+.mcp-status-quarantined,
+.mcp-status-schema_invalid {
+  background: #fff1f3;
+  color: #c01048;
+}
+
+.mcp-status-discovering,
+.mcp-status-authorizing {
+  background: #fffaeb;
+  color: #b54708;
+}
+
+.mcp-server-meta {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.mcp-server-meta div {
+  background: #f8fafc;
+  border-radius: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.mcp-server-meta dt {
+  color: #667085;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.mcp-server-meta dd {
+  color: #101828;
+  font-size: 13px;
+  margin: 4px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mcp-empty {
+  align-items: center;
+  color: #475467;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+  min-height: 220px;
+  padding: 30px;
+  text-align: center;
+}
+
+.mcp-oauth-banner {
+  align-items: center;
+  background: #f0f9ff;
+  color: #026aa2;
+  display: flex;
+  gap: 9px;
+  padding: 12px 14px;
+}
+
+.spin {
+  animation: mcp-spin 0.9s linear infinite;
+}
+
+@keyframes mcp-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 760px) {
+  .mcp-form-grid,
+  .mcp-oauth-fields,
+  .mcp-server-meta,
+  .mcp-server-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mcp-server-card-head,
+  .mcp-connections-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mcp-form-actions,
+  .mcp-card-actions {
+    justify-content: stretch;
+  }
+
+  .mcp-form-actions button,
+  .mcp-card-actions button {
+    flex: 1;
+  }
+}
+
+.mcp-catalog-panel {
+  border-top: 1px solid #e4e7ec;
+  display: grid;
+  gap: 12px;
+  padding-top: 18px;
+}
+
+.mcp-catalog-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.mcp-catalog-heading h3,
+.mcp-catalog-heading p,
+.mcp-tool-description,
+.mcp-exposure-note,
+.mcp-retention-note {
+  margin: 0;
+}
+
+.mcp-catalog-heading p,
+.mcp-exposure-note,
+.mcp-retention-note {
+  color: #667085;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.mcp-catalog-heading > span {
+  background: #eef4ff;
+  border-radius: 999px;
+  color: #3538cd;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 9px;
+}
+
+.mcp-catalog-loading {
+  align-items: center;
+  color: #667085;
+  display: flex;
+  gap: 8px;
+  min-height: 52px;
+}
+
+.mcp-tool-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mcp-tool-row {
+  border: 1px solid #e4e7ec;
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.mcp-tool-toggle {
+  align-items: center;
+  background: #fff;
+  border: 0;
+  color: #101828;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.mcp-tool-toggle:hover {
+  background: #f8fafc;
+}
+
+.mcp-tool-toggle > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mcp-tool-toggle strong,
+.mcp-tool-toggle small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-tool-toggle small {
+  color: #667085;
+  font-size: 11px;
+}
+
+.mcp-tool-details {
+  background: #f8fafc;
+  border-top: 1px solid #e4e7ec;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.mcp-tool-meta {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.mcp-tool-meta div {
+  background: #fff;
+  border-radius: 7px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.mcp-tool-meta dt {
+  color: #667085;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.mcp-tool-meta dd {
+  margin: 4px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mcp-tool-meta code {
+  font-size: 10px;
+}
+
+.mcp-schema-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mcp-schema-details pre {
+  background: #101828;
+  border-radius: 7px;
+  color: #f2f4f7;
+  font-size: 11px;
+  margin: 10px 0 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.mcp-retention-note {
+  border-left: 3px solid #f79009;
+  padding-left: 10px;
+}
+
+@media (max-width: 760px) {
+  .mcp-tool-meta {
+    grid-template-columns: 1fr;
+  }
+}

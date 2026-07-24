@@ -1164,6 +1164,51 @@ class McpRuntimeConnection(Base):
     )
 
 
+class McpOAuthAuthorizationState(Base):
+    __tablename__ = "mcp_oauth_authorization_states"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "state_sha256",
+            name="uq_mcp_oauth_authorization_owner_state",
+        ),
+        UniqueConstraint(
+            "owner_subject",
+            "server_id",
+            "idempotency_key",
+            name="uq_mcp_oauth_authorization_owner_server_key",
+        ),
+        Index(
+            "ix_mcp_oauth_authorization_server_expires",
+            "server_id",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    binding_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_credential_bindings.id"), index=True
+    )
+    state_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    secret_blob_id: Mapped[str] = mapped_column(ForeignKey("secret_blobs.id"), index=True)
+    redirect_uri: Mapped[str] = mapped_column(Text)
+    authorization_endpoint: Mapped[str] = mapped_column(Text)
+    token_endpoint: Mapped[str] = mapped_column(Text)
+    audience: Mapped[str] = mapped_column(Text)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
 class McpMutationReceipt(Base):
     __tablename__ = "mcp_mutation_receipts"
     __table_args__ = (

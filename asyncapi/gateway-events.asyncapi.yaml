@@ -212,6 +212,22 @@ channels:
     publish:
       message:
         $ref: '#/components/messages/McpCredential_bindingCreated'
+  gateway.mcp.credential_binding.rotated.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpCredentialBindingRotated'
+  gateway.mcp.credential_binding.revoked.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpCredentialBindingRevoked'
+  gateway.mcp.oauth.authorization_started.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpOAuthAuthorizationStarted'
+  gateway.mcp.oauth.authorization_completed.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpOAuthAuthorizationCompleted'
   gateway.mcp.server.created.v1:
     publish:
       message:
@@ -278,6 +294,22 @@ components:
       name: gateway.mcp.credential_binding.created.v1
       payload:
         $ref: ../schemas/gateway.mcp.credential_binding.created.v1.schema.json
+    McpCredentialBindingRotated:
+      name: gateway.mcp.credential_binding.rotated.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.credential_binding.rotated.v1.schema.json
+    McpCredentialBindingRevoked:
+      name: gateway.mcp.credential_binding.revoked.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.credential_binding.revoked.v1.schema.json
+    McpOAuthAuthorizationStarted:
+      name: gateway.mcp.oauth.authorization_started.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.oauth.authorization_started.v1.schema.json
+    McpOAuthAuthorizationCompleted:
+      name: gateway.mcp.oauth.authorization_completed.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.oauth.authorization_completed.v1.schema.json
     McpServerCreated:
       name: gateway.mcp.server.created.v1
       payload:

@@ -501,7 +501,7 @@ def test_phase_one_machine_readable_contracts() -> None:
         path for path in create_app().openapi()["paths"] if path.startswith("/api/mcp/")
     }
     assert set(openapi["paths"]) == dynamic_paths
-    assert len(dynamic_paths) == 13
+    assert len(dynamic_paths) == 19
 
     asyncapi = yaml.safe_load(
         (root / "asyncapi" / "gateway-events.asyncapi.yaml").read_text()
@@ -511,7 +511,7 @@ def test_phase_one_machine_readable_contracts() -> None:
         for name, channel in asyncapi["channels"].items()
         if name.startswith("gateway.mcp.")
     }
-    assert len(mcp_channels) == 16
+    assert len(mcp_channels) == 20
     for event_type, channel in mcp_channels.items():
         message_ref = channel["publish"]["message"]["$ref"]
         message = asyncapi["components"]["messages"][message_ref.rsplit("/", 1)[-1]]

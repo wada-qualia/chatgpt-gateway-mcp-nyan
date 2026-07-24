@@ -761,3 +761,146 @@ test('settings language dropdown switches and persists Russian UI', async () => 
     );
   });
 });
+
+test('MCP connections page creates a service-account backed remote server', async () => {
+  let servers: Array<Record<string, unknown>> = [];
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === '/auth/me') {
+      return jsonResponse({ subject: 'dev:local', username: 'darius', email: 'dev@k-lab.local', roles: ['gateway-admin'], provider: 'keycloak' });
+    }
+    if (url === '/api/docker/images') return jsonResponse({ images: ['ubuntu:24.04'] });
+    if (url === '/api/mcp/servers' && init?.method === 'POST') {
+      const payload = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+      const server = {
+        id: 'mcp-server-1',
+        owner_subject: 'dev:local',
+        stable_slug: 'remote-build-mcp',
+        display_name: payload.display_name,
+        origin: 'gateway',
+        transport: 'streamable_http',
+        endpoint_url: payload.endpoint_url,
+        credential_binding_id: payload.credential_binding_id,
+        status: 'draft',
+        trust_level: 'unreviewed',
+        negotiated_protocol_version: null,
+        capabilities: {},
+        catalog_generation: 0,
+        last_connected_at: null,
+        last_catalog_refreshed_at: null,
+        version: 1,
+        created_at: '2026-07-24T00:00:00Z',
+        updated_at: '2026-07-24T00:00:00Z'
+      };
+      servers = [server];
+      return jsonResponse(server);
+    }
+    if (url === '/api/mcp/credential-bindings/material' && init?.method === 'POST') {
+      return jsonResponse({
+        id: 'binding-1', owner_subject: 'dev:local', binding_type: 'service_account',
+        provider: null, secret_blob_id: 'opaque-backend-reference', audience: null, scopes: [],
+        status: 'active', version: 1, meta: { mode: 'header', backend_reference: true },
+        rotated_at: null, revoked_at: null, created_at: '2026-07-24T00:00:00Z', updated_at: '2026-07-24T00:00:00Z'
+      });
+    }
+    if (url === '/api/mcp/servers') return jsonResponse(servers);
+    if (
+      url === '/api/devices' || url === '/api/docker/workspaces' || url === '/api/thin-clients' ||
+      url === '/api/command-sessions' || url === '/api/access/grants' || url === '/api/audit/events' ||
+      url.startsWith('/api/file-changes')
+    ) return jsonResponse([]);
+    return jsonResponse({});
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  renderWithQuery(<App />, '/mcp-connections');
+  expect(await screen.findByRole('heading', { name: 'MCP Connections' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /add MCP server/i }));
+  fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Remote Build MCP' } });
+  fireEvent.change(screen.getByLabelText('MCP endpoint'), { target: { value: 'https://mcp.example.test/mcp' } });
+  fireEvent.change(screen.getByLabelText('Authorization'), { target: { value: 'header' } });
+  fireEvent.change(screen.getByLabelText('Header value'), { target: { value: 'test-secret-value' } });
+  fireEvent.click(screen.getByRole('button', { name: /create connection/i }));
+
+  expect(await screen.findByText('Remote Build MCP')).toBeInTheDocument();
+  expect(screen.queryByText('test-secret-value')).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/mcp/credential-bindings/material',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('test-secret-value')
+      })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/mcp/servers',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('binding-1')
+      })
+    );
+  });
+});
+
+test('MCP connections page inspects revisions and soft-removes with optimistic headers', async () => {
+  const server = {
+    id: 'server-1', owner_subject: 'dev:local', normalized_slug: 'remote-mcp',
+    display_name: 'Remote MCP', origin: 'gateway', transport: 'streamable_http',
+    endpoint_url: 'https://mcp.example.test/mcp', credential_binding_id: null,
+    status: 'online', trust_level: 'unreviewed', quarantine_reason: null,
+    negotiated_protocol_version: '2025-11-25', capabilities: {}, catalog_generation: 1,
+    policy_generation: 1, version: 4, last_connected_at: '2026-07-24T00:00:00Z',
+    last_catalog_refreshed_at: '2026-07-24T00:00:00Z', disabled_at: null,
+    created_at: '2026-07-24T00:00:00Z', updated_at: '2026-07-24T00:00:00Z'
+  };
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === '/auth/me') return jsonResponse({ subject: 'dev:local', username: 'darius', email: 'dev@k-lab.local', roles: ['gateway-admin'], provider: 'keycloak' });
+    if (url === '/api/docker/images') return jsonResponse({ images: ['ubuntu:24.04'] });
+    if (url === '/api/mcp/servers') return jsonResponse([server]);
+    if (url === '/api/mcp/servers/server-1/tools') return jsonResponse([{
+      id: 'tool-1', owner_subject: 'dev:local', server_id: 'server-1', upstream_name: 'get_build_log',
+      normalized_name: 'get_build_log', lifecycle_state: 'active', current_revision_id: 'revision-1', version: 1,
+      first_observed_at: '2026-07-24T00:00:00Z', last_observed_at: '2026-07-24T00:00:00Z',
+      created_at: '2026-07-24T00:00:00Z', updated_at: '2026-07-24T00:00:00Z'
+    }]);
+    if (url === '/api/mcp/tools/tool-1/revisions') return jsonResponse([{
+      id: 'revision-1', owner_subject: 'dev:local', server_id: 'server-1', tool_id: 'tool-1', revision_number: 1,
+      input_schema: { type: 'object', properties: { build: { type: 'integer' } } }, output_schema: null,
+      sanitized_title: 'Get build log', sanitized_description: 'Reads a bounded build log.', annotations: {},
+      schema_hash: 'a'.repeat(64), protocol_version: '2025-11-25', catalog_generation: 1,
+      action_class: 'read', read_only_status: 'verified', risk_evidence: {}, version: 1,
+      classified_by_subject: 'dev:local', classified_at: '2026-07-24T00:00:00Z', superseded_by_revision_id: null,
+      discovered_at: '2026-07-24T00:00:00Z', created_at: '2026-07-24T00:00:00Z'
+    }]);
+    if (url === '/api/mcp/tools/tool-1/exposure') return jsonResponse({
+      id: 'exposure-1', owner_subject: 'dev:local', server_id: 'server-1', tool_id: 'tool-1', revision_id: 'revision-1',
+      mode: 'catalog_only', projected_name: null, enabled: true, required_role: null, required_scope: null,
+      approval_class: 'none', projection_generation: 0, policy_generation: 1, version: 1,
+      reviewed_by_subject: 'dev:local', reviewed_at: '2026-07-24T00:00:00Z',
+      created_at: '2026-07-24T00:00:00Z', updated_at: '2026-07-24T00:00:00Z'
+    });
+    if (url === '/api/mcp/servers/server-1' && init?.method === 'DELETE') return jsonResponse({ ...server, status: 'disabled', version: 5, disabled_at: '2026-07-24T00:01:00Z' });
+    if (
+      url === '/api/devices' || url === '/api/docker/workspaces' || url === '/api/thin-clients' ||
+      url === '/api/command-sessions' || url === '/api/access/grants' || url === '/api/audit/events' ||
+      url.startsWith('/api/file-changes')
+    ) return jsonResponse([]);
+    return jsonResponse({});
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  renderWithQuery(<App />, '/mcp-connections');
+  expect(await screen.findByText('Remote MCP')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /inspect catalog/i }));
+  fireEvent.click(await screen.findByRole('button', { name: /get_build_log/i }));
+  expect(await screen.findByText('catalog_only / enabled')).toBeInTheDocument();
+  expect(screen.getByText('verified')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith('/api/mcp/servers/server-1', expect.objectContaining({
+      method: 'DELETE',
+      headers: expect.objectContaining({ 'If-Match': '4' })
+    }));
+  });
+});

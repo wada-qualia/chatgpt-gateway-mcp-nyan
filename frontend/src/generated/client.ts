@@ -182,6 +182,133 @@ export type FileChangeSet = {
   created_at: string;
 };
 
+
+export type McpCredentialBinding = {
+  id: string;
+  owner_subject: string;
+  binding_type: 'oauth' | 'service_account' | 'thin_client_local';
+  provider: string | null;
+  secret_blob_id: string | null;
+  audience: string | null;
+  scopes: string[];
+  status: string;
+  version: number;
+  meta: Record<string, unknown>;
+  rotated_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type McpServer = {
+  id: string;
+  owner_subject: string;
+  normalized_slug: string;
+  display_name: string;
+  origin: 'gateway' | 'thin_client';
+  transport: string;
+  endpoint_url: string | null;
+  credential_binding_id: string | null;
+  status: string;
+  trust_level: string;
+  negotiated_protocol_version: string | null;
+  capabilities: Record<string, unknown>;
+  catalog_generation: number;
+  policy_generation: number;
+  last_connected_at: string | null;
+  last_catalog_refreshed_at: string | null;
+  disabled_at: string | null;
+  quarantine_reason: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type McpServerHealth = {
+  server_id: string;
+  status: string;
+  trust_level: string;
+  catalog_generation: number;
+  negotiated_protocol_version: string | null;
+  last_connected_at: string | null;
+  last_catalog_refreshed_at: string | null;
+  latency_ms: number | null;
+  tool_count: number | null;
+  session_id_present: boolean | null;
+  circuit_state: 'closed' | 'open' | 'half_open';
+  normalized_error_code: string | null;
+};
+
+export type McpOAuthAuthorizationStarted = {
+  server_id: string;
+  binding_id: string;
+  authorization_url: string;
+  state: string;
+  expires_at: string;
+};
+
+
+export type McpTool = {
+  id: string;
+  owner_subject: string;
+  server_id: string;
+  upstream_name: string;
+  normalized_name: string;
+  lifecycle_state: string;
+  current_revision_id: string | null;
+  version: number;
+  first_observed_at: string;
+  last_observed_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type McpToolRevision = {
+  id: string;
+  owner_subject: string;
+  server_id: string;
+  tool_id: string;
+  revision_number: number;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown> | null;
+  sanitized_title: string | null;
+  sanitized_description: string;
+  annotations: Record<string, unknown>;
+  schema_hash: string;
+  protocol_version: string | null;
+  catalog_generation: number;
+  action_class: string;
+  read_only_status: string;
+  risk_evidence: Record<string, unknown>;
+  version: number;
+  classified_by_subject: string | null;
+  classified_at: string | null;
+  superseded_by_revision_id: string | null;
+  discovered_at: string;
+  created_at: string;
+};
+
+export type McpToolExposure = {
+  id: string;
+  owner_subject: string;
+  server_id: string;
+  tool_id: string;
+  revision_id: string;
+  mode: 'hidden' | 'catalog_only' | 'native_projected';
+  projected_name: string | null;
+  enabled: boolean;
+  required_role: string | null;
+  required_scope: string | null;
+  approval_class: string;
+  projection_generation: number;
+  policy_generation: number;
+  version: number;
+  reviewed_by_subject: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     credentials: 'include',
@@ -261,5 +388,83 @@ export const api = {
   commandSessionToolCalls: (sessionId: string) =>
     request<AgentToolCall[]>(`/api/command-sessions/${sessionId}/tool-calls`),
   grants: () => request<AccessGrant[]>('/api/access/grants'),
+  mcpServers: () => request<McpServer[]>('/api/mcp/servers'),
+  mcpCredentialBindings: () => request<McpCredentialBinding[]>('/api/mcp/credential-bindings'),
+  createMcpCredentialMaterial: (payload: {
+    binding_type: 'service_account';
+    mode: 'bearer' | 'header';
+    provider?: string | null;
+    access_token?: string;
+    header_name?: string;
+    header_value?: string;
+    scopes?: string[];
+  }, idempotencyKey: string) =>
+    request<McpCredentialBinding>('/api/mcp/credential-bindings/material', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload)
+    }),
+  createMcpServer: (payload: {
+    display_name: string;
+    origin: 'gateway';
+    transport: 'streamable_http';
+    endpoint_url: string;
+    thin_client_id: null;
+    runtime_id: null;
+    credential_binding_id: string | null;
+  }, idempotencyKey: string) =>
+    request<McpServer>('/api/mcp/servers', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload)
+    }),
+  testMcpServer: (serverId: string) =>
+    request<McpServerHealth>(`/api/mcp/servers/${serverId}/test`, { method: 'POST', body: '{}' }),
+  refreshMcpServer: (server: Pick<McpServer, 'id' | 'version'>, idempotencyKey: string) =>
+    request<McpServer>(`/api/mcp/servers/${server.id}/refresh`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ expected_version: server.version })
+    }),
+  disableMcpServer: (server: Pick<McpServer, 'id' | 'version'>, idempotencyKey: string) =>
+    request<McpServer>(`/api/mcp/servers/${server.id}`, {
+      method: 'DELETE',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+        'If-Match': String(server.version)
+      }
+    }),
+  enableMcpServer: (server: Pick<McpServer, 'id' | 'version'>, idempotencyKey: string) =>
+    request<McpServer>(`/api/mcp/servers/${server.id}`, {
+      method: 'PATCH',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ expected_version: server.version, enabled: true })
+    }),
+  mcpServerTools: (serverId: string) =>
+    request<McpTool[]>(`/api/mcp/servers/${serverId}/tools`),
+  mcpToolRevisions: (toolId: string) =>
+    request<McpToolRevision[]>(`/api/mcp/tools/${toolId}/revisions`),
+  mcpToolExposure: (toolId: string) =>
+    request<McpToolExposure | null>(`/api/mcp/tools/${toolId}/exposure`),
+  startMcpOAuth: (server: Pick<McpServer, 'id' | 'version'>, payload: {
+    authorization_endpoint: string;
+    token_endpoint: string;
+    client_id: string;
+    client_secret?: string;
+    redirect_uri: string;
+    scopes: string[];
+    audience: string;
+    extra_authorization_parameters?: Record<string, string>;
+  }, idempotencyKey: string) =>
+    request<McpOAuthAuthorizationStarted>(`/api/mcp/servers/${server.id}/oauth/start`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ expected_version: server.version, ...payload })
+    }),
+  completeMcpOAuth: (state: string, code: string) =>
+    request<McpCredentialBinding>('/api/mcp/oauth/complete', {
+      method: 'POST',
+      body: JSON.stringify({ state, code })
+    }),
   audit: () => request<AuditEvent[]>('/api/audit/events')
 };

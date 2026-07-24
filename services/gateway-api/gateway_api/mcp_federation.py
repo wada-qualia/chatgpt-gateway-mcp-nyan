@@ -982,6 +982,24 @@ def list_revisions(
     )
 
 
+
+def get_current_exposure(
+    db: Session, *, owner_subject: str, tool_id: str
+) -> McpToolExposure | None:
+    get_tool(db, owner_subject=owner_subject, tool_id=tool_id)
+    return (
+        db.query(McpToolExposure)
+        .filter(
+            McpToolExposure.owner_subject == owner_subject,
+            McpToolExposure.tool_id == tool_id,
+        )
+        .order_by(
+            McpToolExposure.projection_generation.desc(),
+            McpToolExposure.version.desc(),
+        )
+        .first()
+    )
+
 def upsert_exposure(
     db: Session,
     *,

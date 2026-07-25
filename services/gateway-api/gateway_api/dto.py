@@ -671,6 +671,42 @@ class LupTaskStartCreate(BaseModel):
         return normalized
 
 
+class LupCorrelationMetadataOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gatewaytaskusageid: str
+    gatewaycorrelationid: str
+    gatewaysessionref: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    gatewayrequestref: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    gatewaytoolcallref: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    gatewaycommandsessionref: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+
+
+class LupCorrelationOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    trace_id: str = Field(min_length=32, max_length=32, pattern=r"^[0-9a-f]{32}$")
+    session_id: str = Field(
+        min_length=72, max_length=72, pattern=r"^gateway-[0-9a-f]{64}$"
+    )
+    request_ref: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    tool_call_ref: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    command_session_ref: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    metadata: LupCorrelationMetadataOut
+
+
 class LupTaskStartOut(BaseModel):
     task_usage_id: str
     correlation_id: str
@@ -678,6 +714,7 @@ class LupTaskStartOut(BaseModel):
     source_message_id: str
     session_id: str
     trace_id: str | None = None
+    correlation: LupCorrelationOut
     receipt_status: Literal["accepted", "duplicate"]
     receipt_id: str | None = None
     accepted_at: datetime | None = None
@@ -833,6 +870,8 @@ class LupToolCallOut(BaseModel):
     callback_event_id: str
     task_usage_id: str
     correlation_id: str
+    trace_id: str
+    correlation: LupCorrelationOut
     source_message_id: str
     session_id: str
     callback_id: str
@@ -873,6 +912,8 @@ class LupToolPhaseSealOut(BaseModel):
     seal_event_id: str
     task_usage_id: str
     correlation_id: str
+    trace_id: str
+    correlation: LupCorrelationOut
     source_message_id: str
     session_id: str
     last_observation_event_id: str | None = None
@@ -1002,6 +1043,8 @@ class LupTaskTerminalOut(BaseModel):
     terminal_event_id: str
     task_usage_id: str
     correlation_id: str
+    trace_id: str
+    correlation: LupCorrelationOut
     source_message_id: str
     session_id: str
     callback_id: str

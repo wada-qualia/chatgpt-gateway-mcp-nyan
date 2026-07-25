@@ -18,8 +18,10 @@ from ..dto import (
     LupToolPhaseSealOut,
 )
 from ..usage_accounting import LUP_SDK_VERSION
+from ..usage_correlation import LangfuseCorrelationAdapter
 
 router = APIRouter(prefix="/api/host/usage/tasks", tags=["usage-accounting"])
+correlation_adapter = LangfuseCorrelationAdapter()
 
 
 @router.post(
@@ -47,17 +49,32 @@ async def start_host_task(
 ) -> dict:
     require_role(principal.user, "gateway-user")
     runtime = request.app.state.gateway_runtime
+    active_traceparent = getattr(request.state, "traceparent", None)
+    resolved_trace_id = correlation_adapter.resolve_trace_id(
+        explicit_trace_id=payload.trace_id,
+        inbound_traceparent=request.headers.get("traceparent"),
+        active_traceparent=active_traceparent,
+    )
     result = await runtime.usage_accounting.start_task(
         db,
         owner_subject=principal.user.subject,
         principal_token=principal.token,
         source_message_id=payload.source_message_id,
         session_id=payload.session_id,
-        trace_id=payload.trace_id,
+        trace_id=resolved_trace_id,
     )
     if not result.created:
         response.status_code = status.HTTP_200_OK
     task = result.task
+    correlation = _correlation_binding(
+        task,
+        request_id=(
+            correlation_adapter.request_id_from_traceparent(
+                active_traceparent, expected_trace_id=task.trace_id
+            )
+            or task.start_event_id
+        ),
+    )
     return {
         "task_usage_id": task.task_usage_id,
         "correlation_id": task.correlation_id,
@@ -65,6 +82,7 @@ async def start_host_task(
         "source_message_id": task.source_message_id,
         "session_id": task.session_id,
         "trace_id": task.trace_id,
+        "correlation": correlation,
         "receipt_status": task.receipt_status,
         "receipt_id": task.receipt_id,
         "accepted_at": task.accepted_at,
@@ -108,10 +126,18 @@ async def record_host_tool_call(
     if not result.created:
         response.status_code = status.HTTP_200_OK
     call = result.call
+    correlation = _correlation_binding(
+        result.task,
+        request_id=call.request_id or call.callback_id,
+        tool_call_id=call.tool_call_id,
+        command_session_id=call.command_session_id,
+    )
     return {
         "callback_event_id": call.callback_event_id,
         "task_usage_id": call.task_usage_id,
         "correlation_id": result.task.correlation_id,
+        "trace_id": result.task.trace_id,
+        "correlation": correlation,
         "source_message_id": call.source_message_id,
         "session_id": call.session_id,
         "callback_id": call.callback_id,
@@ -160,10 +186,13 @@ async def seal_host_tool_phase(
     if not result.created:
         response.status_code = status.HTTP_200_OK
     seal = result.seal
+    correlation = _correlation_binding(result.task, request_id=seal.seal_event_id)
     return {
         "seal_event_id": seal.seal_event_id,
         "task_usage_id": seal.task_usage_id,
         "correlation_id": result.task.correlation_id,
+        "trace_id": result.task.trace_id,
+        "correlation": correlation,
         "source_message_id": seal.source_message_id,
         "session_id": seal.session_id,
         "last_observation_event_id": seal.last_observation_event_id,
@@ -211,7 +240,7 @@ async def complete_host_final_response(
     if not result.created:
         response.status_code = status.HTTP_200_OK
     terminal = result.terminal
-    return _terminal_response(result.task.correlation_id, terminal, result.created)
+    return _terminal_response(result.task, terminal, result.created)
 
 
 @router.post(
@@ -244,14 +273,39 @@ async def abandon_host_final_response(
     if not result.created:
         response.status_code = status.HTTP_200_OK
     terminal = result.terminal
-    return _terminal_response(result.task.correlation_id, terminal, result.created)
+    return _terminal_response(result.task, terminal, result.created)
 
 
-def _terminal_response(correlation_id: str, terminal, created: bool) -> dict:
+def _correlation_binding(
+    task,
+    *,
+    request_id: str,
+    tool_call_id: str | None = None,
+    command_session_id: str | None = None,
+) -> dict:
+    if task.trace_id is None:
+        raise ValueError("LUP task is missing the required W3C trace binding")
+    return correlation_adapter.bind(
+        trace_id=task.trace_id,
+        task_usage_id=task.task_usage_id,
+        correlation_id=task.correlation_id,
+        session_id=task.session_id,
+        request_id=request_id,
+        tool_call_id=tool_call_id,
+        command_session_id=command_session_id,
+    ).as_dict()
+
+
+def _terminal_response(task, terminal, created: bool) -> dict:
+    correlation = _correlation_binding(
+        task, request_id=terminal.request_id or terminal.callback_id
+    )
     return {
         "terminal_event_id": terminal.terminal_event_id,
         "task_usage_id": terminal.task_usage_id,
-        "correlation_id": correlation_id,
+        "correlation_id": task.correlation_id,
+        "trace_id": task.trace_id,
+        "correlation": correlation,
         "source_message_id": terminal.source_message_id,
         "session_id": terminal.session_id,
         "callback_id": terminal.callback_id,

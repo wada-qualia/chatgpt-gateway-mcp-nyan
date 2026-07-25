@@ -1243,6 +1243,7 @@ paths:
     post:
       operationId: startHostUsageTask
       summary: Durably start one LUP accounting task for one authenticated user message
+      description: Resolves one W3C trace from the explicit body identifier and inbound traceparent, rejects conflicts, and returns a bounded content-free Langfuse correlation projection.
       security:
         - bearerAuth: []
       requestBody:
@@ -1262,11 +1263,11 @@ paths:
                   maxLength: 32
                   pattern: '^[0-9a-fA-F]{32}$'
       responses:
-        '201': {description: New task start durably accepted and persisted}
+        '201': {description: New task start accepted with SDK receipt and bounded correlation projection}
         '200': {description: Existing identical source-message task binding}
         '401': {description: Missing or invalid principal bearer}
         '403': {description: Policy denied}
-        '409': {description: Source message already bound to a different session or trace}
+        '409': {description: Source message binding conflict or explicit/inbound W3C trace conflict}
         '422': {description: Invalid or forbidden request fields}
         '502': {description: LUP rejected or returned an invalid durable receipt}
         '503': {description: LUP accounting or durable acceptance unavailable}
@@ -1275,6 +1276,7 @@ paths:
     post:
       operationId: recordHostUsageToolCall
       summary: Record one authenticated host-confirmed tool callback inside an existing task
+      description: Returns the task trace and deterministic one-way request, tool-call and command-session references for content-free Langfuse joining.
       security:
         - bearerAuth: []
       requestBody:
@@ -1295,7 +1297,7 @@ paths:
                 occurred_at: {type: [string, 'null'], format: date-time}
                 usage: {type: [object, 'null']}
       responses:
-        '201': {description: New tool callback accepted}
+        '201': {description: New tool callback accepted with observation and correlation join identifiers}
         '200': {description: Existing identical callback}
         '401': {description: Missing or invalid principal bearer}
         '409': {description: Callback conflict, sealed phase or terminal task}
@@ -1306,6 +1308,7 @@ paths:
     post:
       operationId: sealHostUsageToolPhase
       summary: Seal the host-declared last tool boundary without completing the task
+      description: Returns the same task trace/correlation lineage and a bounded seal-request reference.
       security:
         - bearerAuth: []
       requestBody:
@@ -1332,7 +1335,7 @@ paths:
     post:
       operationId: completeHostFinalResponse
       summary: Complete an existing task after explicit host acceptance or delivery of the final answer
-      description: Does not accept final-response content and is never inferred from an MCP tools/call response.
+      description: Does not accept final-response content, is never inferred from an MCP tools/call response, and returns the same content-free trace/task/session/request correlation projection.
       security:
         - bearerAuth: []
       requestBody:
@@ -1383,6 +1386,7 @@ paths:
     post:
       operationId: abandonHostFinalResponse
       summary: Abandon an existing task after an explicit host cancellation or failure signal
+      description: Returns the same content-free trace/task/session/request correlation projection as completion.
       security:
         - bearerAuth: []
       requestBody:

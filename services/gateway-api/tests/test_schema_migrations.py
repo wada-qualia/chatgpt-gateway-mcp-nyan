@@ -124,6 +124,47 @@ def test_migration_graph_has_single_expected_head() -> None:
     assert migration_head() == HEAD_REVISION
 
 
+def test_postgresql_revision_guard_compares_json_as_jsonb() -> None:
+    root = Path(__file__).resolve().parents[3]
+    migration = (
+        root
+        / "database"
+        / "alembic"
+        / "versions"
+        / "20260725_0004_mcp_revision_json_guard.py"
+    ).read_text(encoding="utf-8")
+    fresh_install_sources = [
+        root / "database" / "migrations" / "002_mcp_federation_control_plane.sql",
+        root
+        / "database"
+        / "alembic"
+        / "versions"
+        / "20260725_0001_current_schema_baseline.py",
+        root
+        / "database"
+        / "alembic"
+        / "versions"
+        / "20260725_0003_startup_schema_compatibility.py",
+    ]
+
+    assert 'revision = "20260725_0004"' in migration
+    assert 'down_revision = "20260725_0003"' in migration
+    for field in ("input_schema", "output_schema", "annotations"):
+        safe_comparison = (
+            f"NEW.{field}::jsonb IS DISTINCT FROM OLD.{field}::jsonb"
+        )
+        unsafe_comparison = f"NEW.{field} IS DISTINCT FROM OLD.{field}"
+        assert safe_comparison in migration
+        assert unsafe_comparison not in migration
+        for source in fresh_install_sources:
+            source_text = source.read_text(encoding="utf-8")
+            assert safe_comparison in source_text
+            assert unsafe_comparison not in source_text
+    assert "mcp_tool_revisions are append-only" in migration
+    assert "immutable MCP tool revision payload cannot be modified" in migration
+    assert "DROP TRIGGER" not in migration.upper()
+
+
 def test_application_startup_fails_when_migrations_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -62,11 +62,11 @@ def _ensure_postgresql_mcp_revision_guards() -> None:
                OR NEW.server_id IS DISTINCT FROM OLD.server_id
                OR NEW.tool_id IS DISTINCT FROM OLD.tool_id
                OR NEW.revision_number IS DISTINCT FROM OLD.revision_number
-               OR NEW.input_schema IS DISTINCT FROM OLD.input_schema
-               OR NEW.output_schema IS DISTINCT FROM OLD.output_schema
+               OR NEW.input_schema::jsonb IS DISTINCT FROM OLD.input_schema::jsonb
+               OR NEW.output_schema::jsonb IS DISTINCT FROM OLD.output_schema::jsonb
                OR NEW.sanitized_title IS DISTINCT FROM OLD.sanitized_title
                OR NEW.sanitized_description IS DISTINCT FROM OLD.sanitized_description
-               OR NEW.annotations IS DISTINCT FROM OLD.annotations
+               OR NEW.annotations::jsonb IS DISTINCT FROM OLD.annotations::jsonb
                OR NEW.schema_hash IS DISTINCT FROM OLD.schema_hash
                OR NEW.protocol_version IS DISTINCT FROM OLD.protocol_version
                OR NEW.catalog_generation IS DISTINCT FROM OLD.catalog_generation

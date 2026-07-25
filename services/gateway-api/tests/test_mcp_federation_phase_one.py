@@ -261,6 +261,17 @@ def test_rest_control_plane_requires_idempotency_and_versions(db: Session) -> No
     )
     assert replay.status_code == 201
     assert replay.json()["id"] == server["id"]
+
+    tool, _, _ = _record_revision(
+        db,
+        server_id=server["id"],
+        input_schema={"type": "object", "properties": {}},
+        generation=1,
+    )
+    missing_exposure = client.get(f"/api/mcp/tools/{tool.id}/exposure")
+    assert missing_exposure.status_code == 200
+    assert missing_exposure.json() is None
+
     mismatched_replay = client.post(
         "/api/mcp/servers",
         json={**payload, "display_name": "Different Request"},

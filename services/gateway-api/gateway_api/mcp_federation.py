@@ -1411,6 +1411,7 @@ class McpFederationService:
     classify_revision = staticmethod(classify_revision)
     list_tools = staticmethod(list_tools)
     list_revisions = staticmethod(list_revisions)
+    get_current_exposure = staticmethod(get_current_exposure)
     upsert_exposure = staticmethod(upsert_exposure)
     list_invocations = staticmethod(list_invocations)
     list_runtime_connections = staticmethod(list_runtime_connections)

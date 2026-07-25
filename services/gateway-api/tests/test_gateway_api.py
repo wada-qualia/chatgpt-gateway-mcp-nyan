@@ -5722,7 +5722,16 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     verifier = root / "deploy" / "verify-thin-client-compatibility.py"
     automated_verifier = root / "deploy" / "verify-automated-candidate-readiness.py"
     evidence_generator = root / "scripts" / "generate-release-evidence.py"
-    for script in (deployment_script, smoke_script, submit_script, verifier, automated_verifier, evidence_generator):
+    release_evaluator = root / "scripts" / "evaluate-production-release.sh"
+    for script in (
+        deployment_script,
+        smoke_script,
+        submit_script,
+        verifier,
+        automated_verifier,
+        evidence_generator,
+        release_evaluator,
+    ):
         assert script.stat().st_mode & 0o111
     script_text = deployment_script.read_text(encoding="utf-8")
     assert "RELEASE_VERSION" in script_text
@@ -5754,6 +5763,8 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     jenkinsfile = (root / "Jenkinsfile").read_text(encoding="utf-8")
     for stage in (
         "Checkout exact GitLab prod",
+        "Release impact decision",
+        "No-op: release not required",
         "CI: tests and production image",
         "Publish exact image and release to MKS",
         "CD: prepare inactive slot",
@@ -5763,6 +5774,9 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "Post-deploy smoke",
     ):
         assert stage in jenkinsfile
+    assert "name: 'FORCE_REDEPLOY'" in jenkinsfile
+    assert "bash scripts/evaluate-production-release.sh" in jenkinsfile
+    assert jenkinsfile.count("expression { env.SKIP_RELEASE != 'true' }") == 7
     assert "docker build --platform linux/amd64 --target production" in jenkinsfile
     assert (
         '''test "$(docker image inspect "chatgpt-mcp-gateway:${GIT_COMMIT}" --format '{{.Architecture}}')" = "amd64"'''

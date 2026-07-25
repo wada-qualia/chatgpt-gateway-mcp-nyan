@@ -5776,7 +5776,12 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         assert stage in jenkinsfile
     assert "name: 'FORCE_REDEPLOY'" in jenkinsfile
     assert "bash scripts/evaluate-production-release.sh" in jenkinsfile
-    assert jenkinsfile.count("expression { env.SKIP_RELEASE != 'true' }") == 7
+    assert "writeFile file: '.release-skipped'" in jenkinsfile
+    assert "writeFile file: '.release-required'" in jenkinsfile
+    assert "expression { fileExists('.release-skipped') }" in jenkinsfile
+    assert jenkinsfile.count("expression { fileExists('.release-required') }") == 7
+    assert "SKIP_RELEASE" not in jenkinsfile
+    assert "RELEASE_DECISION" not in jenkinsfile
     assert "docker build --platform linux/amd64 --target production" in jenkinsfile
     assert (
         '''test "$(docker image inspect "chatgpt-mcp-gateway:${GIT_COMMIT}" --format '{{.Architecture}}')" = "amd64"'''

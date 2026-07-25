@@ -135,8 +135,10 @@ def main() -> int:
         },
         "deployment": {
             "pipeline": "origin/prod -> Jenkins -> MKS two-phase blue-green",
-            "candidate_requires_signed_thin_client_compatibility": True,
+            "candidate_requires_signed_thin_client_compatibility": False,
+            "candidate_requires_automated_resilience_gate": True,
             "candidate_restart_executed_by_jenkins": True,
+            "candidate_forced_restart_executed_by_jenkins": True,
             "production_router_switched": False,
         },
         "signing": {

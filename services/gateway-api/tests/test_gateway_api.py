@@ -5720,14 +5720,16 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     smoke_script = root / "deploy" / "smoke.sh"
     submit_script = root / "scripts" / "submit-thin-client-compatibility.sh"
     verifier = root / "deploy" / "verify-thin-client-compatibility.py"
+    automated_verifier = root / "deploy" / "verify-automated-candidate-readiness.py"
     evidence_generator = root / "scripts" / "generate-release-evidence.py"
-    for script in (deployment_script, smoke_script, submit_script, verifier, evidence_generator):
+    for script in (deployment_script, smoke_script, submit_script, verifier, automated_verifier, evidence_generator):
         assert script.stat().st_mode & 0o111
     script_text = deployment_script.read_text(encoding="utf-8")
     assert "RELEASE_VERSION" in script_text
     assert "chatgpt-gateway-nats" in script_text
     assert "active-slot" in script_text
     assert "prepare <git-commit>" in script_text
+    assert "verify-candidate <git-commit>" in script_text
     assert "restart-candidate <git-commit>" in script_text
     assert "verify-compatibility <git-commit>" in script_text
     assert "promote <git-commit>" in script_text
@@ -5756,8 +5758,7 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "Publish exact image and release to MKS",
         "CD: prepare inactive slot",
         "Candidate smoke",
-        "Thin-client reconnect exercise",
-        "Thin-client compatibility gate",
+        "Automated candidate resilience gate",
         "CD: promote candidate",
         "Post-deploy smoke",
     ):
@@ -5771,8 +5772,9 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert "gzip -1n" in jenkinsfile
     assert "ssh-keygen -Y sign" in jenkinsfile
     assert "Jenkins MKS credential does not match the pinned release signing key" in jenkinsfile
-    assert "restart-candidate" in jenkinsfile
-    assert "verify-compatibility" in jenkinsfile
+    assert "verify-candidate" in jenkinsfile
+    assert "restart-candidate" not in jenkinsfile
+    assert "verify-compatibility" not in jenkinsfile
     assert "cleanup-candidate" in jenkinsfile
     assert "deploy-blue-green.sh' rollback" in jenkinsfile
     assert "bash deploy/smoke.sh https://gateway.example.com" in jenkinsfile

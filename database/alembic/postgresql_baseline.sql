@@ -11,17 +11,15 @@ CREATE TABLE users (
 	PRIMARY KEY (id)
 );
 
-CREATE UNIQUE INDEX ix_users_subject ON users (subject);
-
 CREATE INDEX ix_users_username ON users (username);
+
+CREATE UNIQUE INDEX ix_users_subject ON users (subject);
 
 CREATE TABLE secret_blobs (
 	id VARCHAR(36) NOT NULL,
 	owner_subject VARCHAR(255) NOT NULL,
 	kind VARCHAR(60) NOT NULL,
 	ciphertext TEXT NOT NULL,
-	crypto_version VARCHAR(32) NOT NULL,
-	key_id VARCHAR(64),
 	created_at TIMESTAMP WITH TIME ZONE NOT NULL,
 	PRIMARY KEY (id)
 );
@@ -59,9 +57,9 @@ CREATE TABLE thin_clients (
 	PRIMARY KEY (id)
 );
 
-CREATE INDEX ix_thin_clients_agent_token_hash ON thin_clients (agent_token_hash);
-
 CREATE INDEX ix_thin_clients_owner_subject ON thin_clients (owner_subject);
+
+CREATE INDEX ix_thin_clients_agent_token_hash ON thin_clients (agent_token_hash);
 
 CREATE TABLE command_sessions (
 	id VARCHAR(36) NOT NULL,
@@ -85,13 +83,13 @@ CREATE TABLE command_sessions (
 	PRIMARY KEY (id)
 );
 
-CREATE INDEX ix_command_sessions_status ON command_sessions (status);
+CREATE INDEX ix_command_sessions_resource_id ON command_sessions (resource_id);
 
-CREATE INDEX ix_command_sessions_origin ON command_sessions (origin);
+CREATE INDEX ix_command_sessions_status ON command_sessions (status);
 
 CREATE INDEX ix_command_sessions_owner_subject ON command_sessions (owner_subject);
 
-CREATE INDEX ix_command_sessions_resource_id ON command_sessions (resource_id);
+CREATE INDEX ix_command_sessions_origin ON command_sessions (origin);
 
 CREATE TABLE agent_tool_calls (
 	id VARCHAR(36) NOT NULL,
@@ -106,13 +104,13 @@ CREATE TABLE agent_tool_calls (
 	PRIMARY KEY (id)
 );
 
-CREATE INDEX ix_agent_tool_calls_owner_subject ON agent_tool_calls (owner_subject);
-
-CREATE INDEX ix_agent_tool_calls_session_id ON agent_tool_calls (session_id);
+CREATE INDEX ix_agent_tool_calls_tool_name ON agent_tool_calls (tool_name);
 
 CREATE INDEX ix_agent_tool_calls_status ON agent_tool_calls (status);
 
-CREATE INDEX ix_agent_tool_calls_tool_name ON agent_tool_calls (tool_name);
+CREATE INDEX ix_agent_tool_calls_owner_subject ON agent_tool_calls (owner_subject);
+
+CREATE INDEX ix_agent_tool_calls_session_id ON agent_tool_calls (session_id);
 
 CREATE TABLE file_change_sets (
 	id VARCHAR(36) NOT NULL,
@@ -124,7 +122,6 @@ CREATE TABLE file_change_sets (
 	agent_id VARCHAR(36),
 	lease_id VARCHAR(36),
 	fencing_token INTEGER,
-	session_id VARCHAR(36),
 	path TEXT NOT NULL,
 	operation VARCHAR(60) NOT NULL,
 	before_sha256 VARCHAR(64),
@@ -144,50 +141,23 @@ CREATE TABLE file_change_sets (
 	PRIMARY KEY (id)
 );
 
-CREATE INDEX ix_file_change_sets_session_id ON file_change_sets (session_id);
-
-CREATE INDEX ix_file_change_sets_resource_id ON file_change_sets (resource_id);
-
 CREATE INDEX ix_file_change_sets_lease_id ON file_change_sets (lease_id);
 
-CREATE INDEX ix_file_change_sets_operation ON file_change_sets (operation);
-
 CREATE INDEX ix_file_change_sets_origin ON file_change_sets (origin);
+
+CREATE INDEX ix_file_change_sets_owner_subject ON file_change_sets (owner_subject);
 
 CREATE INDEX ix_file_change_sets_agent_id ON file_change_sets (agent_id);
 
 CREATE INDEX ix_file_change_sets_fencing_token ON file_change_sets (fencing_token);
 
-CREATE INDEX ix_file_change_sets_owner_subject ON file_change_sets (owner_subject);
-
 CREATE INDEX ix_file_change_sets_tool_call_id ON file_change_sets (tool_call_id);
 
 CREATE INDEX ix_file_change_sets_room_id ON file_change_sets (room_id);
 
-CREATE TABLE ssh_operation_confirmations (
-	id VARCHAR(36) NOT NULL,
-	owner_subject VARCHAR(255) NOT NULL,
-	device_id VARCHAR(36) NOT NULL,
-	command_digest VARCHAR(64) NOT NULL,
-	normalized_command TEXT NOT NULL,
-	reasons JSON NOT NULL,
-	status VARCHAR(40) NOT NULL,
-	expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-	approved_at TIMESTAMP WITH TIME ZONE,
-	consumed_at TIMESTAMP WITH TIME ZONE,
-	created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-	PRIMARY KEY (id)
-);
+CREATE INDEX ix_file_change_sets_operation ON file_change_sets (operation);
 
-CREATE INDEX ix_ssh_operation_confirmations_device_id ON ssh_operation_confirmations (device_id);
-
-CREATE INDEX ix_ssh_operation_confirmations_command_digest ON ssh_operation_confirmations (command_digest);
-
-CREATE INDEX ix_ssh_operation_confirmations_owner_subject ON ssh_operation_confirmations (owner_subject);
-
-CREATE INDEX ix_ssh_operation_confirmations_status ON ssh_operation_confirmations (status);
-
-CREATE INDEX ix_ssh_operation_confirmations_expires_at ON ssh_operation_confirmations (expires_at);
+CREATE INDEX ix_file_change_sets_resource_id ON file_change_sets (resource_id);
 
 CREATE TABLE oauth_clients (
 	client_id VARCHAR(255) NOT NULL,
@@ -249,9 +219,9 @@ CREATE TABLE access_grants (
 	PRIMARY KEY (id)
 );
 
-CREATE INDEX ix_access_grants_grantee_subject ON access_grants (grantee_subject);
-
 CREATE INDEX ix_access_grants_owner_subject ON access_grants (owner_subject);
+
+CREATE INDEX ix_access_grants_grantee_subject ON access_grants (grantee_subject);
 
 CREATE TABLE audit_events (
 	id VARCHAR(36) NOT NULL,
@@ -289,12 +259,6 @@ CREATE TABLE agent_instances (
 	CONSTRAINT uq_agent_instance_owner_instance UNIQUE (owner_subject, instance_id)
 );
 
-CREATE INDEX ix_agent_instances_logical_agent_id ON agent_instances (logical_agent_id);
-
-CREATE INDEX ix_agent_instances_instance_id ON agent_instances (instance_id);
-
-CREATE INDEX ix_agent_instances_expires_at ON agent_instances (expires_at);
-
 CREATE INDEX ix_agent_instances_owner_subject ON agent_instances (owner_subject);
 
 CREATE INDEX ix_agent_instances_current_work_item_id ON agent_instances (current_work_item_id);
@@ -302,6 +266,12 @@ CREATE INDEX ix_agent_instances_current_work_item_id ON agent_instances (current
 CREATE INDEX ix_agent_instances_status ON agent_instances (status);
 
 CREATE INDEX ix_agent_instances_current_room_id ON agent_instances (current_room_id);
+
+CREATE INDEX ix_agent_instances_logical_agent_id ON agent_instances (logical_agent_id);
+
+CREATE INDEX ix_agent_instances_instance_id ON agent_instances (instance_id);
+
+CREATE INDEX ix_agent_instances_expires_at ON agent_instances (expires_at);
 
 CREATE TABLE collaboration_rooms (
 	id VARCHAR(36) NOT NULL,
@@ -352,10 +322,6 @@ CREATE TABLE agent_work_items (
 	CONSTRAINT uq_agent_work_item_owner_idempotency UNIQUE (owner_subject, idempotency_key)
 );
 
-CREATE INDEX ix_agent_work_items_parent_id ON agent_work_items (parent_id);
-
-CREATE INDEX ix_agent_work_items_status ON agent_work_items (status);
-
 CREATE INDEX ix_agent_work_items_priority ON agent_work_items (priority);
 
 CREATE INDEX ix_agent_work_items_room_id ON agent_work_items (room_id);
@@ -365,6 +331,10 @@ CREATE INDEX ix_agent_work_items_owner_subject ON agent_work_items (owner_subjec
 CREATE INDEX ix_agent_work_items_assigned_agent_id ON agent_work_items (assigned_agent_id);
 
 CREATE INDEX ix_agent_work_items_created_at ON agent_work_items (created_at);
+
+CREATE INDEX ix_agent_work_items_parent_id ON agent_work_items (parent_id);
+
+CREATE INDEX ix_agent_work_items_status ON agent_work_items (status);
 
 CREATE TABLE autonomy_control_states (
 	id VARCHAR(36) NOT NULL,
@@ -382,15 +352,15 @@ CREATE TABLE autonomy_control_states (
 	CONSTRAINT uq_autonomy_control_scope UNIQUE (owner_subject, scope_type, scope_id)
 );
 
+CREATE INDEX ix_autonomy_control_states_state ON autonomy_control_states (state);
+
+CREATE INDEX ix_autonomy_control_states_expires_at ON autonomy_control_states (expires_at);
+
 CREATE INDEX ix_autonomy_control_states_scope_type ON autonomy_control_states (scope_type);
 
 CREATE INDEX ix_autonomy_control_states_scope_id ON autonomy_control_states (scope_id);
 
 CREATE INDEX ix_autonomy_control_states_owner_subject ON autonomy_control_states (owner_subject);
-
-CREATE INDEX ix_autonomy_control_states_state ON autonomy_control_states (state);
-
-CREATE INDEX ix_autonomy_control_states_expires_at ON autonomy_control_states (expires_at);
 
 CREATE TABLE autonomy_overrides (
 	id VARCHAR(36) NOT NULL,
@@ -407,10 +377,6 @@ CREATE TABLE autonomy_overrides (
 	PRIMARY KEY (id)
 );
 
-CREATE INDEX ix_autonomy_overrides_scope_type ON autonomy_overrides (scope_type);
-
-CREATE INDEX ix_autonomy_overrides_scope_id ON autonomy_overrides (scope_id);
-
 CREATE INDEX ix_autonomy_overrides_owner_subject ON autonomy_overrides (owner_subject);
 
 CREATE INDEX ix_autonomy_overrides_created_at ON autonomy_overrides (created_at);
@@ -418,6 +384,10 @@ CREATE INDEX ix_autonomy_overrides_created_at ON autonomy_overrides (created_at)
 CREATE INDEX ix_autonomy_overrides_action ON autonomy_overrides (action);
 
 CREATE INDEX ix_autonomy_overrides_actor_subject ON autonomy_overrides (actor_subject);
+
+CREATE INDEX ix_autonomy_overrides_scope_type ON autonomy_overrides (scope_type);
+
+CREATE INDEX ix_autonomy_overrides_scope_id ON autonomy_overrides (scope_id);
 
 CREATE TABLE processed_broker_messages (
 	message_id VARCHAR(160) NOT NULL,
@@ -473,8 +443,6 @@ CREATE TABLE realtime_routes (
 	CONSTRAINT uq_realtime_route_connection UNIQUE (owner_subject, target_kind, target_id, connection_id)
 );
 
-CREATE INDEX ix_realtime_routes_replica_id ON realtime_routes (replica_id);
-
 CREATE INDEX ix_realtime_routes_target_kind ON realtime_routes (target_kind);
 
 CREATE INDEX ix_realtime_routes_target_id ON realtime_routes (target_id);
@@ -486,6 +454,8 @@ CREATE INDEX ix_realtime_routes_owner_subject ON realtime_routes (owner_subject)
 CREATE INDEX ix_realtime_routes_status ON realtime_routes (status);
 
 CREATE INDEX ix_realtime_routes_connection_id ON realtime_routes (connection_id);
+
+CREATE INDEX ix_realtime_routes_replica_id ON realtime_routes (replica_id);
 
 CREATE TABLE mcp_tools (
 	id VARCHAR(36) NOT NULL,
@@ -504,10 +474,6 @@ CREATE TABLE mcp_tools (
 	CONSTRAINT uq_mcp_tool_server_name UNIQUE (server_id, upstream_name)
 );
 
-CREATE INDEX ix_mcp_tool_server_current_revision ON mcp_tools (server_id, current_revision_id);
-
-CREATE INDEX ix_mcp_tools_owner_subject ON mcp_tools (owner_subject);
-
 CREATE INDEX ix_mcp_tools_normalized_name ON mcp_tools (normalized_name);
 
 CREATE INDEX ix_mcp_tools_current_revision_id ON mcp_tools (current_revision_id);
@@ -517,6 +483,10 @@ CREATE INDEX ix_mcp_tool_owner_state ON mcp_tools (owner_subject, lifecycle_stat
 CREATE INDEX ix_mcp_tools_server_id ON mcp_tools (server_id);
 
 CREATE INDEX ix_mcp_tools_lifecycle_state ON mcp_tools (lifecycle_state);
+
+CREATE INDEX ix_mcp_tool_server_current_revision ON mcp_tools (server_id, current_revision_id);
+
+CREATE INDEX ix_mcp_tools_owner_subject ON mcp_tools (owner_subject);
 
 CREATE TABLE mcp_tool_revisions (
 	id VARCHAR(36) NOT NULL,
@@ -549,12 +519,6 @@ CREATE TABLE mcp_tool_revisions (
 	CONSTRAINT ck_mcp_tool_revision_read_only_status CHECK (read_only_status in ('unverified', 'verified', 'rejected'))
 );
 
-CREATE INDEX ix_mcp_tool_revisions_owner_subject ON mcp_tool_revisions (owner_subject);
-
-CREATE INDEX ix_mcp_tool_revisions_read_only_status ON mcp_tool_revisions (read_only_status);
-
-CREATE INDEX ix_mcp_tool_revision_owner_hash ON mcp_tool_revisions (owner_subject, schema_hash);
-
 CREATE INDEX ix_mcp_tool_revisions_tool_id ON mcp_tool_revisions (tool_id);
 
 CREATE INDEX ix_mcp_tool_revisions_schema_hash ON mcp_tool_revisions (schema_hash);
@@ -566,6 +530,12 @@ CREATE INDEX ix_mcp_tool_revisions_action_class ON mcp_tool_revisions (action_cl
 CREATE INDEX ix_mcp_tool_revisions_server_id ON mcp_tool_revisions (server_id);
 
 CREATE INDEX ix_mcp_tool_revisions_superseded_by_revision_id ON mcp_tool_revisions (superseded_by_revision_id);
+
+CREATE INDEX ix_mcp_tool_revisions_owner_subject ON mcp_tool_revisions (owner_subject);
+
+CREATE INDEX ix_mcp_tool_revisions_read_only_status ON mcp_tool_revisions (read_only_status);
+
+CREATE INDEX ix_mcp_tool_revision_owner_hash ON mcp_tool_revisions (owner_subject, schema_hash);
 
 CREATE TABLE mcp_projection_generations (
 	id VARCHAR(36) NOT NULL,
@@ -593,19 +563,19 @@ CREATE TABLE mcp_projection_generations (
 	FOREIGN KEY(previous_generation_id) REFERENCES mcp_projection_generations (id)
 );
 
-CREATE INDEX ix_mcp_projection_generations_profile_id ON mcp_projection_generations (profile_id);
-
-CREATE INDEX ix_mcp_projection_generations_status ON mcp_projection_generations (status);
+CREATE INDEX ix_mcp_projection_owner_profile_status ON mcp_projection_generations (owner_subject, profile_id, status);
 
 CREATE INDEX ix_mcp_projection_generations_owner_subject ON mcp_projection_generations (owner_subject);
 
 CREATE INDEX ix_mcp_projection_generations_content_hash ON mcp_projection_generations (content_hash);
 
-CREATE INDEX ix_mcp_projection_owner_profile_status ON mcp_projection_generations (owner_subject, profile_id, status);
-
 CREATE INDEX ix_mcp_projection_generations_previous_generation_id ON mcp_projection_generations (previous_generation_id);
 
 CREATE INDEX ix_mcp_projection_generations_schema_hash ON mcp_projection_generations (schema_hash);
+
+CREATE INDEX ix_mcp_projection_generations_profile_id ON mcp_projection_generations (profile_id);
+
+CREATE INDEX ix_mcp_projection_generations_status ON mcp_projection_generations (status);
 
 CREATE TABLE mcp_mutation_receipts (
 	id VARCHAR(36) NOT NULL,
@@ -658,10 +628,6 @@ CREATE TABLE lup_task_starts (
 	UNIQUE (receipt_id)
 );
 
-CREATE INDEX ix_lup_task_starts_owner_subject ON lup_task_starts (owner_subject);
-
-CREATE UNIQUE INDEX ix_lup_task_starts_correlation_id ON lup_task_starts (correlation_id);
-
 CREATE INDEX ix_lup_task_starts_session_id ON lup_task_starts (session_id);
 
 CREATE INDEX ix_lup_task_starts_trace_id ON lup_task_starts (trace_id);
@@ -669,6 +635,10 @@ CREATE INDEX ix_lup_task_starts_trace_id ON lup_task_starts (trace_id);
 CREATE INDEX ix_lup_task_starts_source_message_id ON lup_task_starts (source_message_id);
 
 CREATE UNIQUE INDEX ix_lup_task_starts_start_event_id ON lup_task_starts (start_event_id);
+
+CREATE INDEX ix_lup_task_starts_owner_subject ON lup_task_starts (owner_subject);
+
+CREATE UNIQUE INDEX ix_lup_task_starts_correlation_id ON lup_task_starts (correlation_id);
 
 CREATE TABLE devices (
 	id VARCHAR(36) NOT NULL,
@@ -703,40 +673,13 @@ CREATE TABLE command_session_deliveries (
 	FOREIGN KEY(session_id) REFERENCES command_sessions (id)
 );
 
-CREATE INDEX ix_command_session_deliveries_reason ON command_session_deliveries (reason);
+CREATE INDEX ix_command_session_deliveries_session_id ON command_session_deliveries (session_id);
 
 CREATE INDEX ix_command_session_deliveries_tool_call_id ON command_session_deliveries (tool_call_id);
 
 CREATE INDEX ix_command_session_deliveries_owner_subject ON command_session_deliveries (owner_subject);
 
-CREATE INDEX ix_command_session_deliveries_session_id ON command_session_deliveries (session_id);
-
-CREATE TABLE ssh_secure_prompts (
-	id VARCHAR(36) NOT NULL,
-	owner_subject VARCHAR(255) NOT NULL,
-	device_id VARCHAR(36) NOT NULL,
-	command_digest VARCHAR(64) NOT NULL,
-	normalized_command TEXT NOT NULL,
-	purpose VARCHAR(60) NOT NULL,
-	status VARCHAR(40) NOT NULL,
-	secret_blob_id VARCHAR(36),
-	expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-	ready_at TIMESTAMP WITH TIME ZONE,
-	consumed_at TIMESTAMP WITH TIME ZONE,
-	created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-	PRIMARY KEY (id),
-	FOREIGN KEY(secret_blob_id) REFERENCES secret_blobs (id)
-);
-
-CREATE INDEX ix_ssh_secure_prompts_command_digest ON ssh_secure_prompts (command_digest);
-
-CREATE INDEX ix_ssh_secure_prompts_owner_subject ON ssh_secure_prompts (owner_subject);
-
-CREATE INDEX ix_ssh_secure_prompts_expires_at ON ssh_secure_prompts (expires_at);
-
-CREATE INDEX ix_ssh_secure_prompts_device_id ON ssh_secure_prompts (device_id);
-
-CREATE INDEX ix_ssh_secure_prompts_status ON ssh_secure_prompts (status);
+CREATE INDEX ix_command_session_deliveries_reason ON command_session_deliveries (reason);
 
 CREATE TABLE agent_messages (
 	id VARCHAR(36) NOT NULL,
@@ -763,10 +706,6 @@ CREATE TABLE agent_messages (
 	FOREIGN KEY(recipient_agent_id) REFERENCES agent_instances (id)
 );
 
-CREATE INDEX ix_agent_messages_causation_id ON agent_messages (causation_id);
-
-CREATE INDEX ix_agent_messages_room_id ON agent_messages (room_id);
-
 CREATE INDEX ix_agent_messages_sender_agent_id ON agent_messages (sender_agent_id);
 
 CREATE INDEX ix_agent_messages_priority ON agent_messages (priority);
@@ -784,6 +723,10 @@ CREATE INDEX ix_agent_messages_created_at ON agent_messages (created_at);
 CREATE INDEX ix_agent_messages_kind ON agent_messages (kind);
 
 CREATE INDEX ix_agent_messages_recipient_selector ON agent_messages (recipient_selector);
+
+CREATE INDEX ix_agent_messages_causation_id ON agent_messages (causation_id);
+
+CREATE INDEX ix_agent_messages_room_id ON agent_messages (room_id);
 
 CREATE TABLE agent_commands (
 	id VARCHAR(36) NOT NULL,
@@ -819,8 +762,6 @@ CREATE TABLE agent_commands (
 	FOREIGN KEY(target_agent_id) REFERENCES agent_instances (id)
 );
 
-CREATE INDEX ix_agent_commands_correlation_id ON agent_commands (correlation_id);
-
 CREATE INDEX ix_agent_commands_issuer_agent_id ON agent_commands (issuer_agent_id);
 
 CREATE INDEX ix_agent_commands_target_agent_id ON agent_commands (target_agent_id);
@@ -838,6 +779,8 @@ CREATE INDEX ix_agent_commands_created_at ON agent_commands (created_at);
 CREATE INDEX ix_agent_commands_owner_subject ON agent_commands (owner_subject);
 
 CREATE INDEX ix_agent_commands_kind ON agent_commands (kind);
+
+CREATE INDEX ix_agent_commands_correlation_id ON agent_commands (correlation_id);
 
 CREATE TABLE resource_leases (
 	id VARCHAR(36) NOT NULL,
@@ -877,7 +820,7 @@ CREATE INDEX ix_resource_leases_origin ON resource_leases (origin);
 
 CREATE INDEX ix_resource_leases_fencing_token ON resource_leases (fencing_token);
 
-CREATE INDEX ix_resource_leases_branch_name ON resource_leases (branch_name);
+CREATE INDEX ix_resource_leases_expires_at ON resource_leases (expires_at);
 
 CREATE INDEX ix_resource_leases_holder_agent_id ON resource_leases (holder_agent_id);
 
@@ -885,13 +828,13 @@ CREATE INDEX ix_resource_leases_work_item_id ON resource_leases (work_item_id);
 
 CREATE INDEX ix_resource_leases_status ON resource_leases (status);
 
-CREATE INDEX ix_resource_leases_expires_at ON resource_leases (expires_at);
-
 CREATE INDEX ix_resource_leases_room_id ON resource_leases (room_id);
 
 CREATE INDEX ix_resource_leases_resource_id ON resource_leases (resource_id);
 
 CREATE INDEX ix_resource_leases_mode ON resource_leases (mode);
+
+CREATE INDEX ix_resource_leases_branch_name ON resource_leases (branch_name);
 
 CREATE TABLE agent_integration_records (
 	id VARCHAR(36) NOT NULL,
@@ -918,13 +861,13 @@ CREATE TABLE agent_integration_records (
 	FOREIGN KEY(coordinator_agent_id) REFERENCES agent_instances (id)
 );
 
-CREATE INDEX ix_agent_integration_records_coordinator_agent_id ON agent_integration_records (coordinator_agent_id);
-
 CREATE INDEX ix_agent_integration_records_status ON agent_integration_records (status);
 
 CREATE INDEX ix_agent_integration_records_owner_subject ON agent_integration_records (owner_subject);
 
 CREATE INDEX ix_agent_integration_records_room_id ON agent_integration_records (room_id);
+
+CREATE INDEX ix_agent_integration_records_coordinator_agent_id ON agent_integration_records (coordinator_agent_id);
 
 CREATE TABLE autonomy_policies (
 	id VARCHAR(36) NOT NULL,
@@ -952,15 +895,15 @@ CREATE TABLE autonomy_policies (
 	FOREIGN KEY(coordinator_agent_id) REFERENCES agent_instances (id)
 );
 
-CREATE INDEX ix_autonomy_policies_assignment_mode ON autonomy_policies (assignment_mode);
-
-CREATE INDEX ix_autonomy_policies_owner_subject ON autonomy_policies (owner_subject);
-
 CREATE INDEX ix_autonomy_policies_status ON autonomy_policies (status);
 
 CREATE INDEX ix_autonomy_policies_coordinator_agent_id ON autonomy_policies (coordinator_agent_id);
 
 CREATE INDEX ix_autonomy_policies_room_id ON autonomy_policies (room_id);
+
+CREATE INDEX ix_autonomy_policies_assignment_mode ON autonomy_policies (assignment_mode);
+
+CREATE INDEX ix_autonomy_policies_owner_subject ON autonomy_policies (owner_subject);
 
 CREATE TABLE outbox_events (
 	id VARCHAR(36) NOT NULL,
@@ -990,13 +933,7 @@ CREATE TABLE outbox_events (
 	FOREIGN KEY(audit_event_id) REFERENCES audit_events (id)
 );
 
-CREATE INDEX ix_outbox_events_owner_subject ON outbox_events (owner_subject);
-
-CREATE INDEX ix_outbox_events_subject ON outbox_events (subject);
-
-CREATE INDEX ix_outbox_events_lock_token ON outbox_events (lock_token);
-
-CREATE INDEX ix_outbox_events_created_at ON outbox_events (created_at);
+CREATE UNIQUE INDEX ix_outbox_events_audit_event_id ON outbox_events (audit_event_id);
 
 CREATE INDEX ix_outbox_events_event_type ON outbox_events (event_type);
 
@@ -1004,13 +941,19 @@ CREATE INDEX ix_outbox_events_available_at ON outbox_events (available_at);
 
 CREATE INDEX ix_outbox_events_published_at ON outbox_events (published_at);
 
-CREATE UNIQUE INDEX ix_outbox_events_audit_event_id ON outbox_events (audit_event_id);
+CREATE INDEX ix_outbox_events_owner_subject ON outbox_events (owner_subject);
 
-CREATE INDEX ix_outbox_events_status ON outbox_events (status);
+CREATE INDEX ix_outbox_events_subject ON outbox_events (subject);
 
 CREATE INDEX ix_outbox_events_locked_by ON outbox_events (locked_by);
 
 CREATE INDEX ix_outbox_events_replayed_from_id ON outbox_events (replayed_from_id);
+
+CREATE INDEX ix_outbox_events_status ON outbox_events (status);
+
+CREATE INDEX ix_outbox_events_lock_token ON outbox_events (lock_token);
+
+CREATE INDEX ix_outbox_events_created_at ON outbox_events (created_at);
 
 CREATE TABLE mcp_credential_bindings (
 	id VARCHAR(36) NOT NULL,
@@ -1034,15 +977,15 @@ CREATE TABLE mcp_credential_bindings (
 	FOREIGN KEY(secret_blob_id) REFERENCES secret_blobs (id)
 );
 
-CREATE INDEX ix_mcp_credential_bindings_owner_subject ON mcp_credential_bindings (owner_subject);
-
-CREATE INDEX ix_mcp_credential_bindings_status ON mcp_credential_bindings (status);
-
 CREATE INDEX ix_mcp_credential_bindings_secret_blob_id ON mcp_credential_bindings (secret_blob_id);
+
+CREATE INDEX ix_mcp_credential_binding_owner_status ON mcp_credential_bindings (owner_subject, status);
 
 CREATE INDEX ix_mcp_credential_bindings_binding_type ON mcp_credential_bindings (binding_type);
 
-CREATE INDEX ix_mcp_credential_binding_owner_status ON mcp_credential_bindings (owner_subject, status);
+CREATE INDEX ix_mcp_credential_bindings_owner_subject ON mcp_credential_bindings (owner_subject);
+
+CREATE INDEX ix_mcp_credential_bindings_status ON mcp_credential_bindings (status);
 
 CREATE TABLE mcp_projection_verifications (
 	id VARCHAR(36) NOT NULL,
@@ -1097,8 +1040,6 @@ CREATE TABLE lup_tool_calls (
 	UNIQUE (receipt_id)
 );
 
-CREATE INDEX ix_lup_tool_calls_request_id ON lup_tool_calls (request_id);
-
 CREATE INDEX ix_lup_tool_calls_owner_subject ON lup_tool_calls (owner_subject);
 
 CREATE INDEX ix_lup_tool_calls_session_id ON lup_tool_calls (session_id);
@@ -1112,6 +1053,8 @@ CREATE INDEX ix_lup_tool_calls_command_session_id ON lup_tool_calls (command_ses
 CREATE INDEX ix_lup_tool_calls_task_usage_id ON lup_tool_calls (task_usage_id);
 
 CREATE INDEX ix_lup_tool_calls_tool_call_id ON lup_tool_calls (tool_call_id);
+
+CREATE INDEX ix_lup_tool_calls_request_id ON lup_tool_calls (request_id);
 
 CREATE TABLE lup_tool_phase_seals (
 	task_usage_id VARCHAR(36) NOT NULL,
@@ -1135,15 +1078,15 @@ CREATE TABLE lup_tool_phase_seals (
 	UNIQUE (receipt_id)
 );
 
-CREATE UNIQUE INDEX ix_lup_tool_phase_seals_seal_event_id ON lup_tool_phase_seals (seal_event_id);
-
-CREATE INDEX ix_lup_tool_phase_seals_source_message_id ON lup_tool_phase_seals (source_message_id);
-
 CREATE INDEX ix_lup_tool_phase_seals_owner_subject ON lup_tool_phase_seals (owner_subject);
 
 CREATE INDEX ix_lup_tool_phase_seals_session_id ON lup_tool_phase_seals (session_id);
 
 CREATE INDEX ix_lup_tool_phase_seals_created_at ON lup_tool_phase_seals (created_at);
+
+CREATE UNIQUE INDEX ix_lup_tool_phase_seals_seal_event_id ON lup_tool_phase_seals (seal_event_id);
+
+CREATE INDEX ix_lup_tool_phase_seals_source_message_id ON lup_tool_phase_seals (source_message_id);
 
 CREATE TABLE lup_task_terminals (
 	task_usage_id VARCHAR(36) NOT NULL,
@@ -1185,15 +1128,17 @@ CREATE TABLE lup_task_terminals (
 	UNIQUE (terminal_receipt_id)
 );
 
-CREATE INDEX ix_lup_task_terminals_owner_subject ON lup_task_terminals (owner_subject);
-
-CREATE INDEX ix_lup_task_terminals_session_id ON lup_task_terminals (session_id);
-
-CREATE INDEX ix_lup_task_terminals_request_id ON lup_task_terminals (request_id);
-
 CREATE UNIQUE INDEX ix_lup_task_terminals_terminal_event_id ON lup_task_terminals (terminal_event_id);
 
 CREATE INDEX ix_lup_task_terminals_source_message_id ON lup_task_terminals (source_message_id);
+
+CREATE INDEX ix_lup_task_terminals_owner_subject ON lup_task_terminals (owner_subject);
+
+CREATE INDEX ix_lup_task_terminals_request_id ON lup_task_terminals (request_id);
+
+CREATE INDEX ix_lup_task_terminals_created_at ON lup_task_terminals (created_at);
+
+CREATE INDEX ix_lup_task_terminals_session_id ON lup_task_terminals (session_id);
 
 CREATE INDEX ix_lup_task_terminals_terminal_kind ON lup_task_terminals (terminal_kind);
 
@@ -1215,15 +1160,15 @@ CREATE TABLE agent_message_deliveries (
 	FOREIGN KEY(recipient_agent_id) REFERENCES agent_instances (id)
 );
 
-CREATE INDEX ix_agent_message_deliveries_recipient_agent_id ON agent_message_deliveries (recipient_agent_id);
-
-CREATE INDEX ix_agent_message_deliveries_status ON agent_message_deliveries (status);
-
 CREATE INDEX ix_agent_message_deliveries_message_id ON agent_message_deliveries (message_id);
 
 CREATE INDEX ix_agent_message_deliveries_created_at ON agent_message_deliveries (created_at);
 
 CREATE INDEX ix_agent_message_deliveries_owner_subject ON agent_message_deliveries (owner_subject);
+
+CREATE INDEX ix_agent_message_deliveries_recipient_agent_id ON agent_message_deliveries (recipient_agent_id);
+
+CREATE INDEX ix_agent_message_deliveries_status ON agent_message_deliveries (status);
 
 CREATE TABLE agent_handoff_barriers (
 	id VARCHAR(36) NOT NULL,
@@ -1252,6 +1197,8 @@ CREATE TABLE agent_handoff_barriers (
 	FOREIGN KEY(lease_id) REFERENCES resource_leases (id)
 );
 
+CREATE INDEX ix_agent_handoff_barriers_owner_subject ON agent_handoff_barriers (owner_subject);
+
 CREATE INDEX ix_agent_handoff_barriers_room_id ON agent_handoff_barriers (room_id);
 
 CREATE INDEX ix_agent_handoff_barriers_lease_id ON agent_handoff_barriers (lease_id);
@@ -1261,8 +1208,6 @@ CREATE INDEX ix_agent_handoff_barriers_source_agent_id ON agent_handoff_barriers
 CREATE INDEX ix_agent_handoff_barriers_status ON agent_handoff_barriers (status);
 
 CREATE INDEX ix_agent_handoff_barriers_target_agent_id ON agent_handoff_barriers (target_agent_id);
-
-CREATE INDEX ix_agent_handoff_barriers_owner_subject ON agent_handoff_barriers (owner_subject);
 
 CREATE TABLE autonomy_assignments (
 	id VARCHAR(36) NOT NULL,
@@ -1292,17 +1237,17 @@ CREATE TABLE autonomy_assignments (
 
 CREATE INDEX ix_autonomy_assignments_owner_subject ON autonomy_assignments (owner_subject);
 
+CREATE INDEX ix_autonomy_assignments_work_item_id ON autonomy_assignments (work_item_id);
+
 CREATE INDEX ix_autonomy_assignments_created_at ON autonomy_assignments (created_at);
 
-CREATE INDEX ix_autonomy_assignments_status ON autonomy_assignments (status);
-
-CREATE INDEX ix_autonomy_assignments_policy_id ON autonomy_assignments (policy_id);
-
-CREATE INDEX ix_autonomy_assignments_work_item_id ON autonomy_assignments (work_item_id);
+CREATE INDEX ix_autonomy_assignments_selected_agent_id ON autonomy_assignments (selected_agent_id);
 
 CREATE INDEX ix_autonomy_assignments_room_id ON autonomy_assignments (room_id);
 
-CREATE INDEX ix_autonomy_assignments_selected_agent_id ON autonomy_assignments (selected_agent_id);
+CREATE INDEX ix_autonomy_assignments_policy_id ON autonomy_assignments (policy_id);
+
+CREATE INDEX ix_autonomy_assignments_status ON autonomy_assignments (status);
 
 CREATE TABLE approval_requests (
 	id VARCHAR(36) NOT NULL,
@@ -1345,11 +1290,27 @@ CREATE TABLE approval_requests (
 	FOREIGN KEY(executor_agent_id) REFERENCES agent_instances (id)
 );
 
+CREATE INDEX ix_approval_requests_work_item_id ON approval_requests (work_item_id);
+
+CREATE INDEX ix_approval_requests_proposer_agent_id ON approval_requests (proposer_agent_id);
+
+CREATE INDEX ix_approval_requests_tool ON approval_requests (tool);
+
+CREATE INDEX ix_approval_requests_status ON approval_requests (status);
+
+CREATE INDEX ix_approval_requests_expires_at ON approval_requests (expires_at);
+
+CREATE INDEX ix_approval_requests_policy_id ON approval_requests (policy_id);
+
+CREATE INDEX ix_approval_requests_command_id ON approval_requests (command_id);
+
 CREATE INDEX ix_approval_requests_executor_agent_id ON approval_requests (executor_agent_id);
 
 CREATE INDEX ix_approval_requests_command_profile ON approval_requests (command_profile);
 
 CREATE INDEX ix_approval_requests_created_by_subject ON approval_requests (created_by_subject);
+
+CREATE INDEX ix_approval_requests_created_at ON approval_requests (created_at);
 
 CREATE INDEX ix_approval_requests_room_id ON approval_requests (room_id);
 
@@ -1361,23 +1322,7 @@ CREATE INDEX ix_approval_requests_action_kind ON approval_requests (action_kind)
 
 CREATE INDEX ix_approval_requests_payload_hash ON approval_requests (payload_hash);
 
-CREATE INDEX ix_approval_requests_expires_at ON approval_requests (expires_at);
-
 CREATE INDEX ix_approval_requests_owner_subject ON approval_requests (owner_subject);
-
-CREATE INDEX ix_approval_requests_work_item_id ON approval_requests (work_item_id);
-
-CREATE INDEX ix_approval_requests_proposer_agent_id ON approval_requests (proposer_agent_id);
-
-CREATE INDEX ix_approval_requests_tool ON approval_requests (tool);
-
-CREATE INDEX ix_approval_requests_status ON approval_requests (status);
-
-CREATE INDEX ix_approval_requests_created_at ON approval_requests (created_at);
-
-CREATE INDEX ix_approval_requests_policy_id ON approval_requests (policy_id);
-
-CREATE INDEX ix_approval_requests_command_id ON approval_requests (command_id);
 
 CREATE TABLE recovery_loops (
 	id VARCHAR(36) NOT NULL,
@@ -1410,25 +1355,25 @@ CREATE TABLE recovery_loops (
 	FOREIGN KEY(last_command_id) REFERENCES agent_commands (id)
 );
 
-CREATE INDEX ix_recovery_loops_policy_id ON recovery_loops (policy_id);
-
-CREATE INDEX ix_recovery_loops_next_attempt_at ON recovery_loops (next_attempt_at);
-
-CREATE INDEX ix_recovery_loops_owner_subject ON recovery_loops (owner_subject);
-
 CREATE INDEX ix_recovery_loops_room_id ON recovery_loops (room_id);
-
-CREATE INDEX ix_recovery_loops_source_type ON recovery_loops (source_type);
-
-CREATE INDEX ix_recovery_loops_status ON recovery_loops (status);
-
-CREATE INDEX ix_recovery_loops_created_at ON recovery_loops (created_at);
-
-CREATE INDEX ix_recovery_loops_source_id ON recovery_loops (source_id);
 
 CREATE INDEX ix_recovery_loops_target_agent_id ON recovery_loops (target_agent_id);
 
 CREATE INDEX ix_recovery_loops_last_command_id ON recovery_loops (last_command_id);
+
+CREATE INDEX ix_recovery_loops_owner_subject ON recovery_loops (owner_subject);
+
+CREATE INDEX ix_recovery_loops_source_type ON recovery_loops (source_type);
+
+CREATE INDEX ix_recovery_loops_next_attempt_at ON recovery_loops (next_attempt_at);
+
+CREATE INDEX ix_recovery_loops_source_id ON recovery_loops (source_id);
+
+CREATE INDEX ix_recovery_loops_policy_id ON recovery_loops (policy_id);
+
+CREATE INDEX ix_recovery_loops_status ON recovery_loops (status);
+
+CREATE INDEX ix_recovery_loops_created_at ON recovery_loops (created_at);
 
 CREATE TABLE outbox_delivery_attempts (
 	id VARCHAR(36) NOT NULL,
@@ -1472,23 +1417,23 @@ CREATE TABLE realtime_notifications (
 	FOREIGN KEY(outbox_event_id) REFERENCES outbox_events (id)
 );
 
-CREATE INDEX ix_realtime_notifications_owner_subject ON realtime_notifications (owner_subject);
-
 CREATE INDEX ix_realtime_notifications_event_type ON realtime_notifications (event_type);
-
-CREATE INDEX ix_realtime_notifications_outbox_event_id ON realtime_notifications (outbox_event_id);
-
-CREATE INDEX ix_realtime_notifications_target_kind ON realtime_notifications (target_kind);
 
 CREATE INDEX ix_realtime_notifications_status ON realtime_notifications (status);
 
-CREATE INDEX ix_realtime_notifications_created_at ON realtime_notifications (created_at);
+CREATE INDEX ix_realtime_notifications_expires_at ON realtime_notifications (expires_at);
+
+CREATE INDEX ix_realtime_notifications_target_kind ON realtime_notifications (target_kind);
 
 CREATE INDEX ix_realtime_notifications_target_id ON realtime_notifications (target_id);
 
+CREATE INDEX ix_realtime_notifications_outbox_event_id ON realtime_notifications (outbox_event_id);
+
+CREATE INDEX ix_realtime_notifications_owner_subject ON realtime_notifications (owner_subject);
+
 CREATE INDEX ix_realtime_notifications_replica_id ON realtime_notifications (replica_id);
 
-CREATE INDEX ix_realtime_notifications_expires_at ON realtime_notifications (expires_at);
+CREATE INDEX ix_realtime_notifications_created_at ON realtime_notifications (created_at);
 
 CREATE TABLE mcp_servers (
 	id VARCHAR(36) NOT NULL,
@@ -1526,8 +1471,6 @@ CREATE TABLE mcp_servers (
 	FOREIGN KEY(credential_binding_id) REFERENCES mcp_credential_bindings (id)
 );
 
-CREATE INDEX ix_mcp_servers_origin ON mcp_servers (origin);
-
 CREATE INDEX ix_mcp_servers_thin_client_id ON mcp_servers (thin_client_id);
 
 CREATE INDEX ix_mcp_servers_credential_binding_id ON mcp_servers (credential_binding_id);
@@ -1548,6 +1491,8 @@ CREATE INDEX ix_mcp_servers_runtime_id ON mcp_servers (runtime_id);
 
 CREATE INDEX ix_mcp_servers_status ON mcp_servers (status);
 
+CREATE INDEX ix_mcp_servers_origin ON mcp_servers (origin);
+
 CREATE TABLE approval_votes (
 	id VARCHAR(36) NOT NULL,
 	owner_subject VARCHAR(255) NOT NULL,
@@ -1562,8 +1507,6 @@ CREATE TABLE approval_votes (
 	FOREIGN KEY(request_id) REFERENCES approval_requests (id)
 );
 
-CREATE INDEX ix_approval_votes_owner_subject ON approval_votes (owner_subject);
-
 CREATE INDEX ix_approval_votes_voter_subject ON approval_votes (voter_subject);
 
 CREATE INDEX ix_approval_votes_created_at ON approval_votes (created_at);
@@ -1571,6 +1514,8 @@ CREATE INDEX ix_approval_votes_created_at ON approval_votes (created_at);
 CREATE INDEX ix_approval_votes_request_id ON approval_votes (request_id);
 
 CREATE INDEX ix_approval_votes_decision ON approval_votes (decision);
+
+CREATE INDEX ix_approval_votes_owner_subject ON approval_votes (owner_subject);
 
 CREATE TABLE execution_permits (
 	id VARCHAR(36) NOT NULL,
@@ -1606,12 +1551,6 @@ CREATE TABLE execution_permits (
 	FOREIGN KEY(executor_agent_id) REFERENCES agent_instances (id)
 );
 
-CREATE INDEX ix_execution_permits_policy_id ON execution_permits (policy_id);
-
-CREATE INDEX ix_execution_permits_command_id ON execution_permits (command_id);
-
-CREATE INDEX ix_execution_permits_payload_hash ON execution_permits (payload_hash);
-
 CREATE UNIQUE INDEX ix_execution_permits_approval_request_id ON execution_permits (approval_request_id);
 
 CREATE INDEX ix_execution_permits_tool ON execution_permits (tool);
@@ -1627,6 +1566,12 @@ CREATE INDEX ix_execution_permits_executor_agent_id ON execution_permits (execut
 CREATE INDEX ix_execution_permits_command_profile ON execution_permits (command_profile);
 
 CREATE INDEX ix_execution_permits_expires_at ON execution_permits (expires_at);
+
+CREATE INDEX ix_execution_permits_policy_id ON execution_permits (policy_id);
+
+CREATE INDEX ix_execution_permits_command_id ON execution_permits (command_id);
+
+CREATE INDEX ix_execution_permits_payload_hash ON execution_permits (payload_hash);
 
 CREATE TABLE mcp_tool_exposures (
 	id VARCHAR(36) NOT NULL,
@@ -1656,23 +1601,23 @@ CREATE TABLE mcp_tool_exposures (
 	FOREIGN KEY(revision_id) REFERENCES mcp_tool_revisions (id)
 );
 
+CREATE INDEX ix_mcp_tool_exposures_enabled ON mcp_tool_exposures (enabled);
+
+CREATE INDEX ix_mcp_tool_exposure_owner_enabled ON mcp_tool_exposures (owner_subject, enabled);
+
+CREATE INDEX ix_mcp_tool_exposures_owner_subject ON mcp_tool_exposures (owner_subject);
+
+CREATE INDEX ix_mcp_tool_exposures_mode ON mcp_tool_exposures (mode);
+
 CREATE INDEX ix_mcp_tool_exposure_tool_mode ON mcp_tool_exposures (tool_id, mode);
 
 CREATE INDEX ix_mcp_tool_exposures_tool_id ON mcp_tool_exposures (tool_id);
 
 CREATE INDEX ix_mcp_tool_exposures_revision_id ON mcp_tool_exposures (revision_id);
 
-CREATE INDEX ix_mcp_tool_exposure_owner_enabled ON mcp_tool_exposures (owner_subject, enabled);
-
 CREATE INDEX ix_mcp_tool_exposures_server_id ON mcp_tool_exposures (server_id);
 
 CREATE INDEX ix_mcp_tool_exposures_projected_name ON mcp_tool_exposures (projected_name);
-
-CREATE INDEX ix_mcp_tool_exposures_enabled ON mcp_tool_exposures (enabled);
-
-CREATE INDEX ix_mcp_tool_exposures_owner_subject ON mcp_tool_exposures (owner_subject);
-
-CREATE INDEX ix_mcp_tool_exposures_mode ON mcp_tool_exposures (mode);
 
 CREATE TABLE mcp_federation_policies (
 	id VARCHAR(36) NOT NULL,
@@ -1700,8 +1645,6 @@ CREATE TABLE mcp_federation_policies (
 	FOREIGN KEY(server_id) REFERENCES mcp_servers (id)
 );
 
-CREATE INDEX ix_mcp_federation_policies_owner_subject ON mcp_federation_policies (owner_subject);
-
 CREATE INDEX ix_mcp_federation_policies_trust_level ON mcp_federation_policies (trust_level);
 
 CREATE INDEX ix_mcp_federation_policies_server_id ON mcp_federation_policies (server_id);
@@ -1709,6 +1652,8 @@ CREATE INDEX ix_mcp_federation_policies_server_id ON mcp_federation_policies (se
 CREATE INDEX ix_mcp_federation_policies_status ON mcp_federation_policies (status);
 
 CREATE INDEX ix_mcp_federation_policy_owner_status ON mcp_federation_policies (owner_subject, status);
+
+CREATE INDEX ix_mcp_federation_policies_owner_subject ON mcp_federation_policies (owner_subject);
 
 CREATE TABLE mcp_runtime_connections (
 	id VARCHAR(36) NOT NULL,
@@ -1731,6 +1676,14 @@ CREATE TABLE mcp_runtime_connections (
 	FOREIGN KEY(thin_client_id) REFERENCES thin_clients (id)
 );
 
+CREATE INDEX ix_mcp_runtime_connections_runtime_id ON mcp_runtime_connections (runtime_id);
+
+CREATE INDEX ix_mcp_runtime_connection_server_state ON mcp_runtime_connections (server_id, state);
+
+CREATE INDEX ix_mcp_runtime_connections_connection_instance_id ON mcp_runtime_connections (connection_instance_id);
+
+CREATE INDEX ix_mcp_runtime_connections_thin_client_id ON mcp_runtime_connections (thin_client_id);
+
 CREATE INDEX ix_mcp_runtime_connection_owner_seen ON mcp_runtime_connections (owner_subject, last_seen_at);
 
 CREATE INDEX ix_mcp_runtime_connections_owner_subject ON mcp_runtime_connections (owner_subject);
@@ -1738,14 +1691,6 @@ CREATE INDEX ix_mcp_runtime_connections_owner_subject ON mcp_runtime_connections
 CREATE INDEX ix_mcp_runtime_connections_server_id ON mcp_runtime_connections (server_id);
 
 CREATE INDEX ix_mcp_runtime_connections_state ON mcp_runtime_connections (state);
-
-CREATE INDEX ix_mcp_runtime_connection_server_state ON mcp_runtime_connections (server_id, state);
-
-CREATE INDEX ix_mcp_runtime_connections_runtime_id ON mcp_runtime_connections (runtime_id);
-
-CREATE INDEX ix_mcp_runtime_connections_connection_instance_id ON mcp_runtime_connections (connection_instance_id);
-
-CREATE INDEX ix_mcp_runtime_connections_thin_client_id ON mcp_runtime_connections (thin_client_id);
 
 CREATE TABLE mcp_oauth_authorization_states (
 	id VARCHAR(36) NOT NULL,
@@ -1772,21 +1717,21 @@ CREATE TABLE mcp_oauth_authorization_states (
 	FOREIGN KEY(secret_blob_id) REFERENCES secret_blobs (id)
 );
 
-CREATE INDEX ix_mcp_oauth_authorization_server_expires ON mcp_oauth_authorization_states (server_id, expires_at);
-
-CREATE INDEX ix_mcp_oauth_authorization_states_binding_id ON mcp_oauth_authorization_states (binding_id);
-
-CREATE INDEX ix_mcp_oauth_authorization_states_status ON mcp_oauth_authorization_states (status);
-
 CREATE INDEX ix_mcp_oauth_authorization_states_secret_blob_id ON mcp_oauth_authorization_states (secret_blob_id);
 
 CREATE INDEX ix_mcp_oauth_authorization_states_state_sha256 ON mcp_oauth_authorization_states (state_sha256);
+
+CREATE INDEX ix_mcp_oauth_authorization_server_expires ON mcp_oauth_authorization_states (server_id, expires_at);
 
 CREATE INDEX ix_mcp_oauth_authorization_states_owner_subject ON mcp_oauth_authorization_states (owner_subject);
 
 CREATE INDEX ix_mcp_oauth_authorization_states_server_id ON mcp_oauth_authorization_states (server_id);
 
 CREATE INDEX ix_mcp_oauth_authorization_states_expires_at ON mcp_oauth_authorization_states (expires_at);
+
+CREATE INDEX ix_mcp_oauth_authorization_states_binding_id ON mcp_oauth_authorization_states (binding_id);
+
+CREATE INDEX ix_mcp_oauth_authorization_states_status ON mcp_oauth_authorization_states (status);
 
 CREATE TABLE mcp_invocations (
 	id VARCHAR(36) NOT NULL,
@@ -1825,27 +1770,19 @@ CREATE TABLE mcp_invocations (
 	FOREIGN KEY(revision_id) REFERENCES mcp_tool_revisions (id)
 );
 
-CREATE INDEX ix_mcp_invocation_server_started ON mcp_invocations (server_id, started_at);
-
-CREATE INDEX ix_mcp_invocations_actor_subject ON mcp_invocations (actor_subject);
-
-CREATE INDEX ix_mcp_invocations_connection_instance_id ON mcp_invocations (connection_instance_id);
+CREATE INDEX ix_mcp_invocations_thin_client_request_id ON mcp_invocations (thin_client_request_id);
 
 CREATE INDEX ix_mcp_invocation_owner_started ON mcp_invocations (owner_subject, started_at);
 
 CREATE INDEX ix_mcp_invocations_gateway_tool_call_id ON mcp_invocations (gateway_tool_call_id);
 
-CREATE INDEX ix_mcp_invocations_thin_client_request_id ON mcp_invocations (thin_client_request_id);
+CREATE INDEX ix_mcp_invocations_outcome ON mcp_invocations (outcome);
 
 CREATE INDEX ix_mcp_invocation_outcome_started ON mcp_invocations (outcome, started_at);
 
-CREATE INDEX ix_mcp_invocations_correlation_id ON mcp_invocations (correlation_id);
-
-CREATE INDEX ix_mcp_invocations_outcome ON mcp_invocations (outcome);
+CREATE INDEX ix_mcp_invocations_action_class ON mcp_invocations (action_class);
 
 CREATE INDEX ix_mcp_invocations_server_id ON mcp_invocations (server_id);
-
-CREATE INDEX ix_mcp_invocations_action_class ON mcp_invocations (action_class);
 
 CREATE INDEX ix_mcp_invocations_tool_id ON mcp_invocations (tool_id);
 
@@ -1857,11 +1794,19 @@ CREATE INDEX ix_mcp_invocations_preparation_id ON mcp_invocations (preparation_i
 
 CREATE INDEX ix_mcp_invocations_approval_request_id ON mcp_invocations (approval_request_id);
 
-CREATE INDEX ix_mcp_invocations_owner_subject ON mcp_invocations (owner_subject);
-
 CREATE INDEX ix_mcp_invocations_execution_permit_id ON mcp_invocations (execution_permit_id);
 
+CREATE INDEX ix_mcp_invocations_actor_subject ON mcp_invocations (actor_subject);
+
 CREATE INDEX ix_mcp_invocations_runtime_connection_id ON mcp_invocations (runtime_connection_id);
+
+CREATE INDEX ix_mcp_invocations_owner_subject ON mcp_invocations (owner_subject);
+
+CREATE INDEX ix_mcp_invocations_connection_instance_id ON mcp_invocations (connection_instance_id);
+
+CREATE INDEX ix_mcp_invocation_server_started ON mcp_invocations (server_id, started_at);
+
+CREATE INDEX ix_mcp_invocations_correlation_id ON mcp_invocations (correlation_id);
 
 CREATE TABLE action_receipts (
 	id VARCHAR(36) NOT NULL,
@@ -1944,12 +1889,6 @@ CREATE TABLE mcp_projection_tools (
 	FOREIGN KEY(revision_id) REFERENCES mcp_tool_revisions (id)
 );
 
-CREATE INDEX ix_mcp_projection_tools_public_name ON mcp_projection_tools (public_name);
-
-CREATE INDEX ix_mcp_projection_tools_revision_id ON mcp_projection_tools (revision_id);
-
-CREATE INDEX ix_mcp_projection_tool_generation_position ON mcp_projection_tools (generation_id, position);
-
 CREATE INDEX ix_mcp_projection_tools_generation_id ON mcp_projection_tools (generation_id);
 
 CREATE INDEX ix_mcp_projection_tools_server_id ON mcp_projection_tools (server_id);
@@ -1967,6 +1906,12 @@ CREATE INDEX ix_mcp_projection_tools_change_classification ON mcp_projection_too
 CREATE INDEX ix_mcp_projection_tool_revision ON mcp_projection_tools (revision_id);
 
 CREATE INDEX ix_mcp_projection_tools_source_exposure_id ON mcp_projection_tools (source_exposure_id);
+
+CREATE INDEX ix_mcp_projection_tools_public_name ON mcp_projection_tools (public_name);
+
+CREATE INDEX ix_mcp_projection_tools_revision_id ON mcp_projection_tools (revision_id);
+
+CREATE INDEX ix_mcp_projection_tool_generation_position ON mcp_projection_tools (generation_id, position);
 
 CREATE TABLE mcp_action_preparations (
 	id VARCHAR(36) NOT NULL,
@@ -2010,8 +1955,6 @@ CREATE TABLE mcp_action_preparations (
 	FOREIGN KEY(federation_policy_id) REFERENCES mcp_federation_policies (id)
 );
 
-CREATE INDEX ix_mcp_action_preparations_federation_policy_id ON mcp_action_preparations (federation_policy_id);
-
 CREATE INDEX ix_mcp_action_preparations_actor_subject ON mcp_action_preparations (actor_subject);
 
 CREATE INDEX ix_mcp_action_preparations_autonomy_policy_id ON mcp_action_preparations (autonomy_policy_id);
@@ -2050,7 +1993,19 @@ CREATE INDEX ix_mcp_action_preparations_arguments_sha256 ON mcp_action_preparati
 
 CREATE INDEX ix_mcp_action_preparations_command_id ON mcp_action_preparations (command_id);
 
-ALTER TABLE agent_work_items ADD FOREIGN KEY(parent_id) REFERENCES agent_work_items (id);
+CREATE INDEX ix_mcp_action_preparations_federation_policy_id ON mcp_action_preparations (federation_policy_id);
+
+ALTER TABLE agent_instances ADD FOREIGN KEY(current_room_id) REFERENCES collaboration_rooms (id);
+
+ALTER TABLE mcp_tool_revisions ADD FOREIGN KEY(tool_id) REFERENCES mcp_tools (id);
+
+ALTER TABLE agent_work_items ADD FOREIGN KEY(assigned_agent_id) REFERENCES agent_instances (id);
+
+ALTER TABLE mcp_tools ADD FOREIGN KEY(server_id) REFERENCES mcp_servers (id);
+
+ALTER TABLE agent_work_items ADD FOREIGN KEY(room_id) REFERENCES collaboration_rooms (id);
+
+ALTER TABLE agent_instances ADD FOREIGN KEY(current_work_item_id) REFERENCES agent_work_items (id);
 
 ALTER TABLE mcp_tool_revisions ADD FOREIGN KEY(superseded_by_revision_id) REFERENCES mcp_tool_revisions (id);
 
@@ -2058,16 +2013,6 @@ ALTER TABLE mcp_tools ADD FOREIGN KEY(current_revision_id) REFERENCES mcp_tool_r
 
 ALTER TABLE mcp_tool_revisions ADD FOREIGN KEY(server_id) REFERENCES mcp_servers (id);
 
-ALTER TABLE agent_work_items ADD FOREIGN KEY(assigned_agent_id) REFERENCES agent_instances (id);
-
-ALTER TABLE agent_instances ADD FOREIGN KEY(current_work_item_id) REFERENCES agent_work_items (id);
-
-ALTER TABLE agent_work_items ADD FOREIGN KEY(room_id) REFERENCES collaboration_rooms (id);
-
-ALTER TABLE mcp_tool_revisions ADD FOREIGN KEY(tool_id) REFERENCES mcp_tools (id);
-
-ALTER TABLE mcp_tools ADD FOREIGN KEY(server_id) REFERENCES mcp_servers (id);
-
-ALTER TABLE agent_instances ADD FOREIGN KEY(current_room_id) REFERENCES collaboration_rooms (id);
+ALTER TABLE agent_work_items ADD FOREIGN KEY(parent_id) REFERENCES agent_work_items (id);
 
 ALTER TABLE collaboration_rooms ADD FOREIGN KEY(created_by_agent_id) REFERENCES agent_instances (id);

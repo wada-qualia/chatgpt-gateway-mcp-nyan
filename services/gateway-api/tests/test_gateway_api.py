@@ -3462,7 +3462,6 @@ def test_phase_two_additive_file_change_schema_upgrade(
         "base_commit",
         "branch_name",
         "worktree_path",
-        "session_id",
     )
     legacy_inspector = inspect(upgrade_engine)
     additive_indexes = [
@@ -3492,7 +3491,6 @@ def test_phase_two_additive_file_change_schema_upgrade(
         "base_commit",
         "branch_name",
         "worktree_path",
-        "session_id",
     }.issubset(columns)
     assert {
         "ix_file_change_sets_room_id",

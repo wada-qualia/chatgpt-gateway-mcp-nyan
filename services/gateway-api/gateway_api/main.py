@@ -40,9 +40,7 @@ from .routers import (
 )
 from .runtime import GatewayRuntime
 from .schema_migrations import get_migration_status, run_schema_migrations
-from .secret_store import validate_secret_store
 from .spa import SPAStaticFiles
-from .ssh_sessions import ssh_remote_session_manager
 
 
 def create_app() -> FastAPI:
@@ -92,8 +90,6 @@ def create_app() -> FastAPI:
             app.state.database_head = migration_status.head_revision
             app.state.database_at_head = migration_status.at_head
             app.state.initialization_status = "starting_runtime"
-            validate_secret_store()
-            ssh_remote_session_manager.reconcile()
             app.state.gateway_runtime = runtime
             await runtime.start()
             runtime_started = True

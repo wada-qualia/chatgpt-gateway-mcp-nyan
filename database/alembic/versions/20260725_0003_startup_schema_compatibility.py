@@ -33,69 +33,6 @@ def _create_index(table_name: str, index_name: str, columns: list[str]) -> None:
         op.create_index(index_name, table_name, columns)
 
 
-def _create_ssh_runtime_tables() -> None:
-    connection = op.get_bind()
-    tables = set(inspect(connection).get_table_names())
-    if "ssh_operation_confirmations" not in tables:
-        op.create_table(
-            "ssh_operation_confirmations",
-            sa.Column("id", sa.String(36), nullable=False),
-            sa.Column("owner_subject", sa.String(255), nullable=False),
-            sa.Column("device_id", sa.String(36), nullable=False),
-            sa.Column("command_digest", sa.String(64), nullable=False),
-            sa.Column("normalized_command", sa.Text(), nullable=False),
-            sa.Column("reasons", sa.JSON(), nullable=False),
-            sa.Column("status", sa.String(40), nullable=False),
-            sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
-            sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("consumed_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-            sa.PrimaryKeyConstraint("id"),
-        )
-        for column_name in (
-            "owner_subject",
-            "device_id",
-            "command_digest",
-            "status",
-            "expires_at",
-        ):
-            op.create_index(
-                f"ix_ssh_operation_confirmations_{column_name}",
-                "ssh_operation_confirmations",
-                [column_name],
-            )
-    if "ssh_secure_prompts" not in tables:
-        op.create_table(
-            "ssh_secure_prompts",
-            sa.Column("id", sa.String(36), nullable=False),
-            sa.Column("owner_subject", sa.String(255), nullable=False),
-            sa.Column("device_id", sa.String(36), nullable=False),
-            sa.Column("command_digest", sa.String(64), nullable=False),
-            sa.Column("normalized_command", sa.Text(), nullable=False),
-            sa.Column("purpose", sa.String(60), nullable=False),
-            sa.Column("status", sa.String(40), nullable=False),
-            sa.Column("secret_blob_id", sa.String(36), nullable=True),
-            sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
-            sa.Column("ready_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("consumed_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-            sa.ForeignKeyConstraint(["secret_blob_id"], ["secret_blobs.id"]),
-            sa.PrimaryKeyConstraint("id"),
-        )
-        for column_name in (
-            "owner_subject",
-            "device_id",
-            "command_digest",
-            "status",
-            "expires_at",
-        ):
-            op.create_index(
-                f"ix_ssh_secure_prompts_{column_name}",
-                "ssh_secure_prompts",
-                [column_name],
-            )
-
-
 def _ensure_postgresql_mcp_revision_guards() -> None:
     connection = op.get_bind()
     if connection.dialect.name != "postgresql":
@@ -151,7 +88,6 @@ def _ensure_postgresql_mcp_revision_guards() -> None:
 
 def upgrade() -> None:
     connection = op.get_bind()
-    _create_ssh_runtime_tables()
     _ensure_postgresql_mcp_revision_guards()
     _add_columns(
         "mcp_servers",
@@ -227,7 +163,6 @@ def upgrade() -> None:
             "base_commit": sa.Column("base_commit", sa.String(128), nullable=True),
             "branch_name": sa.Column("branch_name", sa.String(255), nullable=True),
             "worktree_path": sa.Column("worktree_path", sa.Text(), nullable=True),
-            "session_id": sa.Column("session_id", sa.String(36), nullable=True),
         },
     )
     for name in ("room_id", "agent_id", "lease_id", "fencing_token"):
@@ -246,18 +181,6 @@ def upgrade() -> None:
     _add_columns(
         "users",
         {"preferences": sa.Column("preferences", sa.JSON(), nullable=True)},
-    )
-    _add_columns(
-        "secret_blobs",
-        {
-            "crypto_version": sa.Column(
-                "crypto_version",
-                sa.String(32),
-                nullable=False,
-                server_default="fernet-v1",
-            ),
-            "key_id": sa.Column("key_id", sa.String(64), nullable=True),
-        },
     )
 
 

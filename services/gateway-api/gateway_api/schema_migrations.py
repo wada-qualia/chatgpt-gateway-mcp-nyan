@@ -95,8 +95,6 @@ def _validate_legacy_identity(connection: Connection) -> None:
         "mcp_projection_generations",
         "mcp_projection_tools",
         "mcp_projection_verifications",
-        "ssh_operation_confirmations",
-        "ssh_secure_prompts",
     }
     required_legacy_tables = (
         set(_models.Base.metadata.tables) - adoptable_missing_tables

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from ..account_settings import effective_ssh_command_profile, raw_ssh_commands_enabled
@@ -34,6 +35,13 @@ from ..mcp_federation_broker import (
     call_mcp_federation_broker_tool,
     mcp_federation_broker_tool_names,
     mcp_federation_broker_tools,
+)
+from ..mcp_federation_compat import (
+    McpProtocolAdmissionError,
+    SUPPORTED_MCP_PROTOCOL_VERSIONS,
+    gateway_public_server_capabilities,
+    negotiate_gateway_protocol_version,
+    validate_http_protocol_version,
 )
 from ..mcp_presentation import (
     PresentationContext,
@@ -1606,6 +1614,23 @@ def _session_payload(session: CommandSession) -> dict[str, Any]:
     }
 
 
+def _mcp_jsonrpc_error(
+    request_id: Any,
+    *,
+    code: int,
+    message: str,
+    status_code: int = 200,
+    data: dict[str, Any] | None = None,
+) -> JSONResponse:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if data:
+        error["data"] = data
+    return JSONResponse(
+        status_code=status_code,
+        content={"jsonrpc": "2.0", "id": request_id, "error": error},
+    )
+
+
 @router.get("/mcp")
 async def mcp_info(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     return {
@@ -1621,10 +1646,21 @@ async def mcp(
     user: User = Depends(get_bearer_or_dev_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
+) -> Any:
     body = await request.json()
     method = body.get("method")
     request_id = body.get("id")
+    if method != "initialize":
+        try:
+            validate_http_protocol_version(request.headers.get("MCP-Protocol-Version"))
+        except McpProtocolAdmissionError as exc:
+            return _mcp_jsonrpc_error(
+                request_id,
+                code=-32602,
+                message=str(exc),
+                status_code=400,
+                data={"supported": list(SUPPORTED_MCP_PROTOCOL_VERSIONS)},
+            )
     ssh_profile = effective_ssh_command_profile(user, settings)
     presentation = resolve_presentation_context(request, db, user)
     registry = _tool_registry(
@@ -1636,14 +1672,28 @@ async def mcp(
     )
     try:
         if method == "initialize":
+            params = body.get("params") if isinstance(body.get("params"), dict) else {}
+            try:
+                protocol_version = negotiate_gateway_protocol_version(
+                    params.get("protocolVersion")
+                )
+            except McpProtocolAdmissionError as exc:
+                return _mcp_jsonrpc_error(
+                    request_id,
+                    code=-32602,
+                    message=str(exc),
+                    status_code=400,
+                    data={"supported": list(SUPPORTED_MCP_PROTOCOL_VERSIONS)},
+                )
             result = {
-                "protocolVersion": "2025-03-26",
-                "capabilities": {
-                    "tools": {"listChanged": True}
-                    if presentation.supports_list_changed
-                    else {}
+                "protocolVersion": protocol_version,
+                "capabilities": gateway_public_server_capabilities(
+                    tools_list_changed=presentation.supports_list_changed
+                ),
+                "serverInfo": {
+                    "name": settings.app_name,
+                    "version": settings.gateway_release_version,
                 },
-                "serverInfo": {"name": settings.app_name, "version": "0.1.0"},
             }
         elif method == "tools/list":
             result = {"tools": registry.tools()}
@@ -1698,8 +1748,10 @@ async def mcp(
                 )
                 raise
         else:
-            raise HTTPException(
-                status_code=400, detail=f"Unsupported JSON-RPC method: {method}"
+            return _mcp_jsonrpc_error(
+                request_id,
+                code=-32601,
+                message=f"Method not found: {method}",
             )
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
     except HTTPException as exc:

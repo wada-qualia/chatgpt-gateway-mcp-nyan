@@ -6478,3 +6478,81 @@ def test_mcp_federation_phase_three_broker_tools_are_stable_and_dispatch(
     assert result["isError"] is False
     assert result["structuredContent"]["count"] == 0
     assert result["structuredContent"]["results"] == []
+
+
+def _mcp_initialize_request(protocol_version: str) -> dict[str, object]:
+    return {
+        "jsonrpc": "2.0",
+        "id": f"initialize-{protocol_version}",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": protocol_version,
+            "capabilities": {},
+            "clientInfo": {"name": "phase8-test", "version": "1"},
+        },
+    }
+
+
+def test_mcp_public_protocol_negotiation_matrix(client: TestClient) -> None:
+    for version in ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"):
+        response = client.post("/mcp", json=_mcp_initialize_request(version))
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["protocolVersion"] == version
+        assert set(result["capabilities"]) == {"tools"}
+        assert "resources" not in result["capabilities"]
+        assert "prompts" not in result["capabilities"]
+        assert "sampling" not in result["capabilities"]
+
+
+def test_mcp_public_rejects_unaccepted_protocol_versions(client: TestClient) -> None:
+    for version in ("2026-01-01", "2025-11-25-RC", "not-a-version"):
+        response = client.post("/mcp", json=_mcp_initialize_request(version))
+        assert response.status_code == 400
+        error = response.json()["error"]
+        assert error["code"] == -32602
+        assert error["data"]["supported"] == [
+            "2024-11-05",
+            "2025-03-26",
+            "2025-06-18",
+            "2025-11-25",
+        ]
+
+
+def test_mcp_public_protocol_version_header_policy(client: TestClient) -> None:
+    request = {"jsonrpc": "2.0", "id": "list", "method": "tools/list"}
+    fallback = client.post("/mcp", json=request)
+    assert fallback.status_code == 200
+    assert "result" in fallback.json()
+
+    stable = client.post(
+        "/mcp",
+        json=request,
+        headers={"MCP-Protocol-Version": "2025-11-25"},
+    )
+    assert stable.status_code == 200
+    assert "result" in stable.json()
+
+    rejected = client.post(
+        "/mcp",
+        json=request,
+        headers={"MCP-Protocol-Version": "2026-01-01"},
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["error"]["code"] == -32602
+
+
+def test_mcp_public_unsupported_method_uses_jsonrpc_method_not_found(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": "unknown", "method": "resources/list"},
+        headers={"MCP-Protocol-Version": "2025-11-25"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "jsonrpc": "2.0",
+        "id": "unknown",
+        "error": {"code": -32601, "message": "Method not found: resources/list"},
+    }

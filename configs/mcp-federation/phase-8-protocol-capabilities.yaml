@@ -1,0 +1,119 @@
+version: 1
+task: CMG-FED-810
+specification:
+  stable_protocol_version: "2025-11-25"
+  accepted_protocol_versions:
+    - "2024-11-05"
+    - "2025-03-26"
+    - "2025-06-18"
+    - "2025-11-25"
+  legacy_http_header_fallback: "2025-03-26"
+  draft_policy: reject_without_accepted_adr_and_pinned_sdk
+sdk:
+  distribution: mcp
+  requirement: "mcp>=1.28.1,<2"
+  minimum_version: "1.28.1"
+transports:
+  streamable_http_stateful: supported
+  streamable_http_stateless: supported
+  thin_client_stdio: supported
+  thin_client_loopback_streamable_http: supported
+  thin_client_private_streamable_http: policy_gated
+  legacy_http_sse: not_supported
+presentation_modes:
+  catalog_broker: production_baseline
+  deferred_native: reserved_not_enabled
+  native_projected: reviewed_generation_only
+client_capabilities_advertised_to_upstreams:
+  roots: false
+  sampling: false
+  elicitation: false
+  tasks: false
+  experimental: false
+server_capabilities:
+  tools:
+    observed: true
+    federated_end_to_end: true
+    advertised_by_gateway: true
+    methods:
+      - tools/list
+      - tools/call
+      - notifications/tools/list_changed
+  resources:
+    observed: true
+    federated_end_to_end: false
+    advertised_by_gateway: false
+    target_task: CMG-FED-900
+  prompts:
+    observed: true
+    federated_end_to_end: false
+    advertised_by_gateway: false
+    target_task: CMG-FED-910
+  completions:
+    observed: true
+    federated_end_to_end: false
+    advertised_by_gateway: false
+    target_task: CMG-FED-910
+  logging:
+    observed: true
+    federated_end_to_end: false
+    advertised_by_gateway: false
+    target_task: CMG-FED-960
+  tasks:
+    observed: true
+    federated_end_to_end: false
+    advertised_by_gateway: false
+    experimental: true
+    target_task: CMG-FED-950
+  experimental:
+    observed: true
+    federated_end_to_end: false
+    advertised_by_gateway: false
+utilities:
+  initialization: supported
+  protocol_version_header: supported
+  unsupported_method: jsonrpc_method_not_found
+  progress: supported
+  cancellation: supported
+  bounded_shutdown: supported
+  list_change_notifications: tools_only
+qualification:
+  required_levels:
+    - unit
+    - contract
+    - integration
+    - compatibility
+    - failure_injection
+  scenarios:
+    - id: matrix_contract
+      levels: [unit, contract]
+      nodeids:
+        - services/gateway-api/tests/test_mcp_federation_phase_eight.py::test_phase_eight_matrix_matches_runtime_policy
+    - id: supported_version_negotiation
+      levels: [compatibility, integration]
+      nodeids:
+        - services/gateway-api/tests/test_mcp_sdk_qualification.py::test_protocol_negotiation_matrix
+        - services/gateway-api/tests/test_gateway_api.py::test_mcp_public_protocol_negotiation_matrix
+    - id: draft_and_unknown_version_rejection
+      levels: [contract, failure_injection]
+      nodeids:
+        - services/gateway-api/tests/test_gateway_api.py::test_mcp_public_rejects_unaccepted_protocol_versions
+        - services/gateway-api/tests/test_mcp_federation_phase_eight.py::test_protocol_admission_rejects_drafts_and_malformed_versions
+    - id: protocol_version_header
+      levels: [contract, compatibility]
+      nodeids:
+        - services/gateway-api/tests/test_gateway_api.py::test_mcp_public_protocol_version_header_policy
+    - id: capability_negotiation
+      levels: [contract, integration]
+      nodeids:
+        - services/gateway-api/tests/test_mcp_federation_phase_eight.py::test_upstream_capability_admission_is_tools_only
+        - services/gateway-api/tests/test_mcp_sdk_qualification.py::test_stateful_streamable_http_features
+    - id: unsupported_method
+      levels: [contract, failure_injection]
+      nodeids:
+        - services/gateway-api/tests/test_gateway_api.py::test_mcp_public_unsupported_method_uses_jsonrpc_method_not_found
+    - id: progress_cancellation_shutdown
+      levels: [integration, compatibility]
+      nodeids:
+        - services/gateway-api/tests/test_mcp_sdk_qualification.py::test_stateful_streamable_http_features
+        - services/gateway-api/tests/test_mcp_sdk_qualification.py::test_stateless_streamable_http_features

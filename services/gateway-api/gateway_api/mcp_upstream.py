@@ -27,6 +27,10 @@ from .mcp_federation import (
     get_tool,
     reconcile_catalog_snapshot,
 )
+from .mcp_federation_compat import (
+    McpProtocolAdmissionError,
+    admit_upstream_initialize,
+)
 from .mcp_federation_policy import sha256_json
 from .mcp_federation_runtime import (
     EndpointResolution,
@@ -1289,10 +1293,22 @@ class UpstreamMcpManager:
                         ),
                     ) as session:
                         initialized = await session.initialize()
+                        try:
+                            capability_admission = admit_upstream_initialize(initialized)
+                        except McpProtocolAdmissionError as exc:
+                            raise UpstreamMcpError(
+                                "MCP_PROTOCOL_MISMATCH",
+                                str(exc),
+                                http_status=422,
+                            ) from exc
                         runtime.state = "online"
                         runtime.supported_protocol_versions = [
-                            initialized.protocolVersion
+                            capability_admission.protocol_version
                         ]
+                        runtime.meta = {
+                            **dict(runtime.meta or {}),
+                            "capability_admission": capability_admission.as_dict(),
+                        }
                         runtime.last_seen_at = utcnow()
                         emit_event(
                             db,

@@ -1375,6 +1375,54 @@ class McpOAuthAuthorizationState(Base):
     )
 
 
+class McpOAuthDiscoverySnapshot(Base):
+    __tablename__ = "mcp_oauth_discovery_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "server_id",
+            "metadata_hash",
+            name="uq_mcp_oauth_discovery_server_hash",
+        ),
+        Index(
+            "ix_mcp_oauth_discovery_owner_created",
+            "owner_subject",
+            "created_at",
+        ),
+        Index(
+            "ix_mcp_oauth_discovery_server_issuer",
+            "server_id",
+            "authorization_server",
+        ),
+        Index(
+            "ix_mcp_oauth_discovery_server_expires",
+            "server_id",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    resource: Mapped[str] = mapped_column(Text)
+    resource_metadata_url: Mapped[str] = mapped_column(Text)
+    authorization_server: Mapped[str] = mapped_column(Text)
+    authorization_server_metadata_url: Mapped[str] = mapped_column(Text)
+    discovery_mechanism: Mapped[str] = mapped_column(String(60), index=True)
+    authorization_endpoint: Mapped[str] = mapped_column(Text)
+    token_endpoint: Mapped[str] = mapped_column(Text)
+    registration_endpoint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    protected_resource_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    authorization_server_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    requested_scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    proposed_scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    metadata_hash: Mapped[str] = mapped_column(String(64), index=True)
+    created_by_subject: Mapped[str] = mapped_column(String(255))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
 class McpCapabilitySnapshot(Base):
     __tablename__ = "mcp_capability_snapshots"
     __table_args__ = (

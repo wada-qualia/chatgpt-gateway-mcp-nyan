@@ -1,10 +1,46 @@
 openapi: 3.1.0
 info:
   title: MCP Federation Capability Control Plane Contract
-  version: 1.0.0
-  description: Schema contract only; no Phase 8 capability execution routes are enabled.
-paths: {}
-x-implementation-status: storage-only-not-exposed
+  version: 1.1.0
+  description: >-
+    Versioned control-plane contract. OAuth discovery and the Gateway Client ID
+    Metadata Document are exposed; Phase 8 resources, prompts, roots, sampling,
+    elicitation, logging, completion and task execution routes remain disabled.
+paths:
+  /api/mcp/servers/{server_id}/oauth/discover:
+    post:
+      operationId: discoverUpstreamMcpOAuth
+      summary: Discover and pin upstream MCP OAuth metadata
+      parameters:
+        - name: server_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OAuthDiscoveryRequest'}
+      responses:
+        '200':
+          description: Immutable sanitized discovery snapshot
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OAuthDiscoverySnapshot'}
+        '409': {description: Optimistic conflict or issuer selection required}
+        '422': {description: Invalid resource, issuer, endpoint or scope metadata}
+  /oauth/client-metadata.json:
+    get:
+      operationId: getGatewayOAuthClientMetadata
+      summary: Return the Gateway OAuth Client ID Metadata Document
+      responses:
+        '200':
+          description: Public non-secret OAuth client metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OAuthClientMetadata'}
+x-implementation-status: oauth-discovery-control-plane-exposed
+x-capability-execution-enabled: false
 components:
   schemas:
     CapabilitySnapshot:
@@ -13,3 +49,67 @@ components:
       $ref: ./capability-entity-revision.schema.json
     CapabilityEvent:
       $ref: ./capability-event.schema.json
+    OAuthDiscoveryRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_version]
+      properties:
+        expected_version: {type: integer, minimum: 1}
+        requested_scopes:
+          type: array
+          maxItems: 100
+          items: {type: string, minLength: 1, maxLength: 200}
+        authorization_server: {type: [string, 'null'], format: uri}
+    OAuthDiscoverySnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - server_id
+        - resource
+        - resource_metadata_url
+        - authorization_server
+        - authorization_server_metadata_url
+        - discovery_mechanism
+        - authorization_endpoint
+        - token_endpoint
+        - requested_scopes
+        - proposed_scopes
+        - metadata_hash
+        - expires_at
+        - created_at
+      properties:
+        id: {type: string, format: uuid}
+        server_id: {type: string, format: uuid}
+        resource: {type: string, format: uri}
+        resource_metadata_url: {type: string, format: uri}
+        authorization_server: {type: string, format: uri}
+        authorization_server_metadata_url: {type: string, format: uri}
+        discovery_mechanism: {enum: [rfc8414, openid_connect]}
+        authorization_endpoint: {type: string, format: uri}
+        token_endpoint: {type: string, format: uri}
+        registration_endpoint: {type: [string, 'null'], format: uri}
+        requested_scopes: {type: array, items: {type: string}}
+        proposed_scopes: {type: array, items: {type: string}}
+        metadata_hash: {type: string, pattern: '^[0-9a-f]{64}$'}
+        expires_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    OAuthClientMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - client_id
+        - client_name
+        - client_uri
+        - redirect_uris
+        - grant_types
+        - response_types
+        - token_endpoint_auth_method
+      properties:
+        client_id: {type: string, format: uri}
+        client_name: {type: string}
+        client_uri: {type: string, format: uri}
+        redirect_uris: {type: array, items: {type: string, format: uri}}
+        grant_types: {type: array, items: {type: string}}
+        response_types: {type: array, items: {type: string}}
+        token_endpoint_auth_method: {const: none}

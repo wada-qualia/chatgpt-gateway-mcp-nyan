@@ -1062,6 +1062,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/servers/{server_id}/oauth/discover:
+    post:
+      tags:
+      - mcp-upstream
+      summary: Oauth Discover
+      operationId: oauth_discover_api_mcp_servers__server_id__oauth_discover_post
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpOAuthDiscoveryRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpOAuthDiscoveryOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     HTTPValidationError:
@@ -1691,17 +1723,27 @@ components:
           type: integer
           minimum: 1.0
           title: Expected Version
+        discovery_snapshot_id:
+          anyOf:
+          - type: string
+            maxLength: 36
+          - type: 'null'
+          title: Discovery Snapshot Id
         authorization_endpoint:
-          type: string
-          maxLength: 2083
-          minLength: 1
-          format: uri
+          anyOf:
+          - type: string
+            maxLength: 2083
+            minLength: 1
+            format: uri
+          - type: 'null'
           title: Authorization Endpoint
         token_endpoint:
-          type: string
-          maxLength: 2083
-          minLength: 1
-          format: uri
+          anyOf:
+          - type: string
+            maxLength: 2083
+            minLength: 1
+            format: uri
+          - type: 'null'
           title: Token Endpoint
         client_id:
           type: string
@@ -1728,10 +1770,12 @@ components:
           maxItems: 100
           title: Scopes
         audience:
-          type: string
-          maxLength: 2083
-          minLength: 1
-          format: uri
+          anyOf:
+          - type: string
+            maxLength: 2083
+            minLength: 1
+            format: uri
+          - type: 'null'
           title: Audience
         extra_authorization_parameters:
           additionalProperties:
@@ -1742,11 +1786,8 @@ components:
       type: object
       required:
       - expected_version
-      - authorization_endpoint
-      - token_endpoint
       - client_id
       - redirect_uri
-      - audience
       title: McpOAuthAuthorizationStart
     McpOAuthAuthorizationStarted:
       properties:
@@ -2597,3 +2638,100 @@ components:
       - msg
       - type
       title: ValidationError
+    McpOAuthDiscoveryRequest:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+        requested_scopes:
+          items:
+            type: string
+          type: array
+          maxItems: 100
+          title: Requested Scopes
+        authorization_server:
+          anyOf:
+          - type: string
+            maxLength: 2083
+            minLength: 1
+            format: uri
+          - type: 'null'
+          title: Authorization Server
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      title: McpOAuthDiscoveryRequest
+    McpOAuthDiscoveryOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        server_id:
+          type: string
+          title: Server Id
+        resource:
+          type: string
+          title: Resource
+        resource_metadata_url:
+          type: string
+          title: Resource Metadata Url
+        authorization_server:
+          type: string
+          title: Authorization Server
+        authorization_server_metadata_url:
+          type: string
+          title: Authorization Server Metadata Url
+        discovery_mechanism:
+          type: string
+          title: Discovery Mechanism
+        authorization_endpoint:
+          type: string
+          title: Authorization Endpoint
+        token_endpoint:
+          type: string
+          title: Token Endpoint
+        registration_endpoint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Registration Endpoint
+        requested_scopes:
+          items:
+            type: string
+          type: array
+          title: Requested Scopes
+        proposed_scopes:
+          items:
+            type: string
+          type: array
+          title: Proposed Scopes
+        metadata_hash:
+          type: string
+          title: Metadata Hash
+        expires_at:
+          type: string
+          format: date-time
+          title: Expires At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - server_id
+      - resource
+      - resource_metadata_url
+      - authorization_server
+      - authorization_server_metadata_url
+      - discovery_mechanism
+      - authorization_endpoint
+      - token_endpoint
+      - requested_scopes
+      - proposed_scopes
+      - metadata_hash
+      - expires_at
+      - created_at
+      title: McpOAuthDiscoveryOut

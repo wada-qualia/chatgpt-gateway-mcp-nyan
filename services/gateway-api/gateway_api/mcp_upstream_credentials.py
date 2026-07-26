@@ -24,6 +24,7 @@ from .mcp_upstream import (
 from .models import (
     McpCredentialBinding,
     McpOAuthAuthorizationState,
+    McpOAuthDiscoverySnapshot,
     SecretBlob,
     utcnow,
 )
@@ -180,13 +181,93 @@ async def start_oauth_authorization(
     payload: Any,
 ) -> dict[str, Any]:
     server = get_server(db, owner_subject=owner_subject, server_id=server_id)
+    discovery_snapshot: McpOAuthDiscoverySnapshot | None = None
+    if payload.discovery_snapshot_id is not None:
+        discovery_snapshot = db.get(
+            McpOAuthDiscoverySnapshot, payload.discovery_snapshot_id
+        )
+        if (
+            discovery_snapshot is None
+            or discovery_snapshot.owner_subject != owner_subject
+            or discovery_snapshot.server_id != server.id
+        ):
+            raise HTTPException(status_code=404, detail="OAuth discovery snapshot not found")
+        if _as_utc(discovery_snapshot.expires_at) <= utcnow():
+            raise HTTPException(
+                status_code=409,
+                detail="OAuth discovery snapshot expired; rediscovery required",
+            )
+        authorization_endpoint = discovery_snapshot.authorization_endpoint
+        token_endpoint = discovery_snapshot.token_endpoint
+        audience = discovery_snapshot.resource
+        scopes = payload.scopes or list(discovery_snapshot.proposed_scopes)
+        if not set(scopes).issubset(set(discovery_snapshot.proposed_scopes)):
+            raise HTTPException(
+                status_code=422,
+                detail="OAuth scopes exceed the immutable discovery proposal",
+            )
+        comparisons = (
+            (payload.authorization_endpoint, authorization_endpoint, "authorization endpoint"),
+            (payload.token_endpoint, token_endpoint, "token endpoint"),
+            (payload.audience, audience, "resource audience"),
+        )
+        for supplied, expected, label in comparisons:
+            if supplied is not None and str(supplied).rstrip("/") != expected.rstrip("/"):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"OAuth {label} does not match the discovery snapshot",
+                )
+        metadata_client_id = (
+            f"{manager.public_base_url.rstrip('/')}/oauth/client-metadata.json"
+        )
+        metadata_redirect_uri = (
+            f"{manager.public_base_url.rstrip('/')}/mcp-connections"
+        )
+        if payload.client_id == metadata_client_id:
+            if (
+                discovery_snapshot.authorization_server_metadata.get(
+                    "client_id_metadata_document_supported"
+                )
+                is not True
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Authorization server does not support Client ID Metadata Documents",
+                )
+            if payload.client_secret is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Client ID Metadata Document mode cannot use client_secret",
+                )
+            if str(payload.redirect_uri).rstrip("/") != metadata_redirect_uri.rstrip("/"):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Client ID Metadata Document redirect_uri mismatch",
+                )
+            registration_mode = "client_id_metadata_document"
+        else:
+            if payload.client_id.startswith(("https://", "http://")):
+                raise HTTPException(
+                    status_code=422,
+                    detail="URL client_id must use the Gateway Client ID Metadata Document",
+                )
+            registration_mode = "static_preregistered"
+    else:
+        authorization_endpoint = str(payload.authorization_endpoint)
+        token_endpoint = str(payload.token_endpoint)
+        audience = str(payload.audience)
+        scopes = list(payload.scopes)
+        registration_mode = "static_preregistered"
+
     request_document = {
-        "authorization_endpoint": str(payload.authorization_endpoint),
-        "token_endpoint": str(payload.token_endpoint),
+        "discovery_snapshot_id": payload.discovery_snapshot_id,
+        "client_registration_mode": registration_mode,
+        "authorization_endpoint": authorization_endpoint,
+        "token_endpoint": token_endpoint,
         "client_id": payload.client_id,
         "redirect_uri": str(payload.redirect_uri),
-        "scopes": payload.scopes,
-        "audience": str(payload.audience),
+        "scopes": scopes,
+        "audience": audience,
         "extra_authorization_parameters": payload.extra_authorization_parameters,
     }
     request_sha256 = hashlib.sha256(_canonical(request_document).encode()).hexdigest()
@@ -214,11 +295,9 @@ async def start_oauth_authorization(
 
     if server.version != payload.expected_version:
         raise HTTPException(status_code=409, detail="Optimistic version conflict")
-    await manager.validate_endpoint(
-        str(payload.authorization_endpoint), purpose="oauth_authorization"
-    )
-    await manager.validate_endpoint(str(payload.token_endpoint), purpose="oauth_token")
-    manager.validate_resource_audience(server.endpoint_url or "", str(payload.audience))
+    await manager.validate_endpoint(authorization_endpoint, purpose="oauth_authorization")
+    await manager.validate_endpoint(token_endpoint, purpose="oauth_token")
+    manager.validate_resource_audience(server.endpoint_url or "", audience)
     binding = None
     if server.credential_binding_id:
         binding = _binding(db, owner_subject, server.credential_binding_id)
@@ -239,11 +318,16 @@ async def start_oauth_authorization(
             binding_type="oauth",
             provider=None,
             secret_blob_id=seed_secret.id,
-            audience=str(payload.audience),
-            scopes=payload.scopes,
+            audience=audience,
+            scopes=scopes,
             status="authorizing",
             version=1,
-            meta={"mode": "oauth", "backend_reference": True},
+            meta={
+                "mode": "oauth",
+                "backend_reference": True,
+                "discovery_snapshot_id": payload.discovery_snapshot_id,
+                "client_registration_mode": registration_mode,
+            },
             created_at=utcnow(),
             updated_at=utcnow(),
         )
@@ -279,18 +363,23 @@ async def start_oauth_authorization(
         idempotency_key=idempotency_key,
         secret_blob_id=pending_secret.id,
         redirect_uri=str(payload.redirect_uri),
-        authorization_endpoint=str(payload.authorization_endpoint),
-        token_endpoint=str(payload.token_endpoint),
-        audience=str(payload.audience),
-        scopes=payload.scopes,
+        authorization_endpoint=authorization_endpoint,
+        token_endpoint=token_endpoint,
+        audience=audience,
+        scopes=scopes,
         status="pending",
         expires_at=expires_at,
         created_at=utcnow(),
     )
     db.add(flow)
-    binding.audience = str(payload.audience)
-    binding.scopes = payload.scopes
+    binding.audience = audience
+    binding.scopes = scopes
     binding.status = "authorizing"
+    binding.meta = {
+        **dict(binding.meta or {}),
+        "discovery_snapshot_id": payload.discovery_snapshot_id,
+        "client_registration_mode": registration_mode,
+    }
     binding.updated_at = utcnow()
     server.status = "authorizing"
     server.version += 1
@@ -302,7 +391,11 @@ async def start_oauth_authorization(
         action="authorizing",
         resource_type="mcp_server",
         resource_id=server.id,
-        payload={"server_id": server.id, "binding_id": binding.id},
+        payload={
+            "server_id": server.id,
+            "binding_id": binding.id,
+            "discovery_snapshot_id": payload.discovery_snapshot_id,
+        },
         commit=False,
     )
     db.commit()

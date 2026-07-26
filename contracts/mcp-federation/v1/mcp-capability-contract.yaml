@@ -39,3 +39,13 @@ ownership:
   thin_client: [local_process_definition, local_environment, local_secrets, local_transport]
   upstream_server: [raw_capability_declarations, upstream_entity_payloads, upstream_task_identity]
   chatgpt_presentation: [stable_broker_schema, reviewed_projection_generation]
+
+authorization_control_plane:
+  protected_resource_metadata: rfc9728
+  authorization_server_metadata: [rfc8414, openid_connect]
+  resource_indicator: rfc8707
+  client_registration_modes: [client_id_metadata_document, static_preregistered]
+  metadata_cache: expiry_and_issuer_pinning
+  incremental_scope_challenge: explicit_consent_required
+  credential_owner: gateway_backend
+  credential_material_client_visible: false

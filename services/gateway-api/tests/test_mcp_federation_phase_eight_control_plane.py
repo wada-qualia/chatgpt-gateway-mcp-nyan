@@ -64,11 +64,21 @@ def test_phase_eight_capability_tables_and_contracts() -> None:
 
     openapi = _load_yaml(CONTRACT_ROOT / "openapi-control-plane.yaml")
     assert openapi["openapi"] == "3.1.0"
-    assert openapi["paths"] == {}
-    assert openapi["x-implementation-status"] == "storage-only-not-exposed"
+    assert set(openapi["paths"]) == {
+        "/api/mcp/servers/{server_id}/oauth/discover",
+        "/oauth/client-metadata.json",
+    }
+    assert openapi["x-implementation-status"] == (
+        "oauth-discovery-control-plane-exposed"
+    )
+    assert openapi["x-capability-execution-enabled"] is False
     asyncapi = _load_yaml(CONTRACT_ROOT / "asyncapi.yaml")
     assert asyncapi["asyncapi"] == "3.0.0"
     assert asyncapi["x-implementation-status"] == "schema-only"
+    assert contract["authorization_control_plane"]["credential_material_client_visible"] is False
+    assert contract["authorization_control_plane"]["metadata_cache"] == (
+        "expiry_and_issuer_pinning"
+    )
 
     ownership = (ROOT / "docs/contracts/mcp-phase8-field-ownership.md").read_text(
         encoding="utf-8"

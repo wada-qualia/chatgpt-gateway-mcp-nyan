@@ -69,7 +69,9 @@ def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
         "mcp_federated_tasks",
         "mcp_capability_events",
     }
-    assert capability_tables <= set(inspect(target_engine).get_table_names())
+    table_names = set(inspect(target_engine).get_table_names())
+    assert capability_tables <= table_names
+    assert "mcp_oauth_discovery_snapshots" in table_names
 
 
 def test_legacy_database_is_adopted_and_upgraded(tmp_path: Path) -> None:
@@ -130,7 +132,9 @@ def test_legacy_database_is_adopted_and_upgraded(tmp_path: Path) -> None:
         "mcp_federated_tasks",
         "mcp_capability_events",
     }
-    assert capability_tables <= set(inspect(target_engine).get_table_names())
+    table_names = set(inspect(target_engine).get_table_names())
+    assert capability_tables <= table_names
+    assert "mcp_oauth_discovery_snapshots" in table_names
 
 
 def test_unrecognized_database_fails_closed(tmp_path: Path) -> None:

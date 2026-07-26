@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user, require_role
 from ..database import get_db
 from ..dto import McpCredentialBindingOut
+from ..mcp_oauth_discovery import discover_oauth_metadata
 from ..mcp_upstream import UpstreamMcpError, UpstreamMcpManager
 from ..mcp_upstream_credentials import (
     complete_oauth_authorization,
@@ -21,6 +22,8 @@ from ..mcp_upstream_dto import (
     McpOAuthAuthorizationComplete,
     McpOAuthAuthorizationStart,
     McpOAuthAuthorizationStarted,
+    McpOAuthDiscoveryOut,
+    McpOAuthDiscoveryRequest,
     McpUpstreamCallInput,
     McpUpstreamCallOut,
 )
@@ -105,6 +108,37 @@ async def revoke_material_binding(
         binding_id=binding_id,
         expected_version=payload.expected_version,
     )
+
+
+@router.post(
+    "/servers/{server_id}/oauth/discover",
+    response_model=McpOAuthDiscoveryOut,
+)
+async def oauth_discover(
+    server_id: str,
+    payload: McpOAuthDiscoveryRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    upstream: UpstreamMcpManager = Depends(manager),
+):
+    enforce(user, action="update", owner_subject=user.subject)
+    try:
+        return await discover_oauth_metadata(
+            db,
+            manager=upstream,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            server_id=server_id,
+            expected_version=payload.expected_version,
+            requested_scopes=payload.requested_scopes,
+            authorization_server=(
+                str(payload.authorization_server)
+                if payload.authorization_server is not None
+                else None
+            ),
+        )
+    except UpstreamMcpError as exc:
+        raise upstream_http_error(exc) from exc
 
 
 @router.post(

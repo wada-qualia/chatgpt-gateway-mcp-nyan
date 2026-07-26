@@ -72,6 +72,29 @@ _HEADER_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,119}$")
 _SECRET_KEY_PATTERN = re.compile(
     r"(?:token|secret|password|credential|authorization|cookie|private[_-]?key)", re.I
 )
+_BEARER_SCOPE_PARAMETER = re.compile(
+    r'(?:^|,)\s*scope=(?:"([^"\\]{0,2000})"|([^,\s]{1,2000}))',
+    re.I,
+)
+_SCOPE_TOKEN = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,160}$")
+
+
+def _bearer_challenge_scopes(value: str | None) -> list[str]:
+    if not value or len(value) > 4096 or not value.lstrip().lower().startswith("bearer"):
+        return []
+    match = _BEARER_SCOPE_PARAMETER.search(value)
+    if match is None:
+        return []
+    raw = match.group(1) if match.group(1) is not None else match.group(2)
+    scopes: list[str] = []
+    for scope in raw.split():
+        if not _SCOPE_TOKEN.fullmatch(scope):
+            return []
+        if scope not in scopes:
+            scopes.append(scope)
+        if len(scopes) > 100:
+            return []
+    return scopes
 
 
 @dataclass(slots=True)
@@ -110,6 +133,7 @@ class UpstreamMcpError(RuntimeError):
         retryable: bool = False,
         http_status: int = 502,
         unknown_outcome: bool = False,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -117,14 +141,18 @@ class UpstreamMcpError(RuntimeError):
         self.retryable = retryable
         self.http_status = http_status
         self.unknown_outcome = unknown_outcome
+        self.metadata = dict(metadata or {})
 
     def as_detail(self) -> dict[str, Any]:
-        return {
+        detail = {
             "code": self.code,
             "message": self.message,
             "retryable": self.retryable,
             "unknown_outcome": self.unknown_outcome,
         }
+        if self.metadata:
+            detail["metadata"] = self.metadata
+        return detail
 
 
 class UpstreamCredentialResolver:
@@ -1365,6 +1393,9 @@ class UpstreamMcpManager:
             runtime.last_seen_at = utcnow()
             db.commit()
             if exc.response.status_code in {401, 403}:
+                scope_error = self._scope_upgrade_error(db, server, exc.response)
+                if scope_error is not None:
+                    raise scope_error from exc
                 raise UpstreamMcpError(
                     "MCP_AUTH_REQUIRED",
                     "Upstream MCP authorization was rejected",
@@ -1544,6 +1575,62 @@ class UpstreamMcpManager:
                 "circuit_transition", from_state=previous, to_state=current
             )
 
+    @staticmethod
+    def _scope_upgrade_error(
+        db: Session,
+        server: McpServer,
+        response: httpx.Response,
+    ) -> UpstreamMcpError | None:
+        challenged = _bearer_challenge_scopes(
+            response.headers.get("www-authenticate")
+        )
+        if not challenged or not server.credential_binding_id:
+            return None
+        binding = (
+            db.query(McpCredentialBinding)
+            .filter(
+                McpCredentialBinding.id == server.credential_binding_id,
+                McpCredentialBinding.owner_subject == server.owner_subject,
+                McpCredentialBinding.binding_type == "oauth",
+            )
+            .one_or_none()
+        )
+        if binding is None:
+            return None
+        required = sorted(set(challenged).difference(binding.scopes or []))
+        if not required:
+            return None
+        binding.status = "auth_required"
+        binding.updated_at = utcnow()
+        server.status = "auth_required"
+        server.version += 1
+        server.updated_at = utcnow()
+        emit_event(
+            db,
+            event_type="gateway.mcp.oauth.scope_upgrade_required.v1",
+            actor_subject=server.owner_subject,
+            owner_subject=server.owner_subject,
+            action="oauth.scope_upgrade_required",
+            resource_type="mcp_credential_binding",
+            resource_id=binding.id,
+            payload={
+                "server_id": server.id,
+                "binding_id": binding.id,
+                "required_scopes": required,
+            },
+            commit=False,
+        )
+        db.commit()
+        return UpstreamMcpError(
+            "MCP_AUTH_SCOPE_UPGRADE_REQUIRED",
+            "Upstream MCP requires additional OAuth scopes",
+            http_status=401,
+            metadata={
+                "required_scopes": required,
+                "resource": binding.audience,
+            },
+        )
+
     def _mark_online(
         self,
         db: Session,
@@ -1566,7 +1653,10 @@ class UpstreamMcpManager:
     def _mark_failure(db: Session, server: McpServer, error: UpstreamMcpError) -> None:
         if error.code == "MCP_SERVER_DISABLED":
             status = "disabled"
-        elif error.code == "MCP_AUTH_REQUIRED":
+        elif error.code in {
+            "MCP_AUTH_REQUIRED",
+            "MCP_AUTH_SCOPE_UPGRADE_REQUIRED",
+        }:
             status = "auth_required"
         elif error.code == "MCP_SERVER_QUARANTINED":
             status = "quarantined"

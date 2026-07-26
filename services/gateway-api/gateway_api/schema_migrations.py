@@ -16,7 +16,7 @@ from .config import get_settings
 
 BASELINE_REVISION = "20260725_0001"
 PROJECTION_REVISION = "20260725_0002"
-HEAD_REVISION = "20260726_0006"
+HEAD_REVISION = "20260726_0007"
 LEGACY_ANCHOR_TABLES = {"users", "secret_blobs", "oauth_clients"}
 
 

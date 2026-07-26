@@ -35,7 +35,21 @@ def oauth_metadata(base_url: str, settings: Settings) -> dict[str, Any]:
         "grant_types_supported": ["authorization_code"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
+        "client_id_metadata_document_supported": True,
         "scopes_supported": settings.supported_scopes,
+    }
+
+
+def oauth_client_metadata(base_url: str, settings: Settings) -> dict[str, Any]:
+    client_id = f"{base_url}/oauth/client-metadata.json"
+    return {
+        "client_id": client_id,
+        "client_name": settings.app_name,
+        "client_uri": base_url,
+        "redirect_uris": [f"{base_url}/mcp-connections"],
+        "grant_types": ["authorization_code"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
     }
 
 
@@ -91,6 +105,13 @@ async def well_known_openid(
     metadata["subject_types_supported"] = ["public"]
     metadata["id_token_signing_alg_values_supported"] = ["HS256"]
     return metadata
+
+
+@router.get("/oauth/client-metadata.json")
+async def client_metadata_document(
+    request: Request, settings: Settings = Depends(get_settings)
+) -> dict[str, Any]:
+    return oauth_client_metadata(_base(request, settings), settings)
 
 
 @router.post("/oauth/register", status_code=201)

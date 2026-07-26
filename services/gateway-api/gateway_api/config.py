@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     gateway_lup_application_client_secret: SecretStr = SecretStr("")
     gateway_lup_application_scope: str = ""
     gateway_lup_project_atlas_project_key: str | None = (
-        "products/chatgpt-mcp-ssh-gateway"
+        "urn:atlas:catalog:entity:products/chatgpt-mcp-ssh-gateway"
     )
     gateway_lup_project_atlas_entity_id: str | None = None
     gateway_lup_project_git_branch: str | None = None

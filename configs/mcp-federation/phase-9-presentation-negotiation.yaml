@@ -16,11 +16,15 @@ modes:
       - mcp_action_prepare
       - mcp_action_execute
   deferred_native:
-    status: negotiation_enabled_execution_deferred_to_CMG-FED-860
+    status: policy_filtered_tool_search_implemented_by_CMG-FED-860
     required_capabilities:
       - deferred_loading
       - tool_search
     public_surface:
+      - gateway_owned_server_description
+      - server_derived_allowed_tools
+      - server_derived_approval_policy
+      - policy_filtered_exact_read_tools
       - mcp_catalog_search
       - mcp_tool_describe
       - mcp_call_read
@@ -81,7 +85,7 @@ invariants:
   - upstream_catalog_changes_never_mutate_active_native_generation
   - external_refresh_is_never_inferred_from_gateway_state
   - exact_schema_hash_must_match_before_publication_verification
-  - deferred_native_does_not_load_exact_schemas_before_CMG-FED-860
+  - deferred_native_loads_exact_schemas_only_after_policy_filtered_tool_search
 qualification:
   nodeids:
     - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_negotiation_selects_smallest_safe_surface
@@ -90,3 +94,6 @@ qualification:
     - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_legacy_token_without_capability_claims_falls_back_to_broker
     - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_enterprise_refresh_requires_exact_external_evidence
     - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_business_republish_and_frozen_snapshot_are_distinct
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_deferred_profile_is_server_derived_and_revision_bound
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_deferred_dispatch_rejects_stale_policy_binding
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_deferred_native_keeps_approval_actions_on_broker

@@ -512,7 +512,7 @@ def test_phase_one_machine_readable_contracts() -> None:
         path for path in create_app().openapi()["paths"] if path.startswith("/api/mcp/")
     }
     assert set(openapi["paths"]) == dynamic_paths
-    assert len(dynamic_paths) == 28
+    assert len(dynamic_paths) == 29
 
     asyncapi = yaml.safe_load(
         (root / "asyncapi" / "gateway-events.asyncapi.yaml").read_text()

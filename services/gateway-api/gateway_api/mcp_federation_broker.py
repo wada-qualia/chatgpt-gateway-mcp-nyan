@@ -428,6 +428,23 @@ def _resolve_authorized(
     )
 
 
+def resolve_authorized_revision(
+    db: Session,
+    *,
+    user: User,
+    tool_ref: str,
+    schema_hash: str,
+    require_available: bool,
+) -> AuthorizedRevision:
+    return _resolve_authorized(
+        db,
+        user=user,
+        tool_ref=tool_ref,
+        schema_hash=schema_hash,
+        require_available=require_available,
+    )
+
+
 def _summary(item: AuthorizedRevision) -> dict[str, Any]:
     revision = item.revision
     return {

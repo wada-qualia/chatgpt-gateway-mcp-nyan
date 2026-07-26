@@ -6562,3 +6562,205 @@ def test_mcp_public_unsupported_method_uses_jsonrpc_method_not_found(
         "id": "unknown",
         "error": {"code": -32601, "message": "Method not found: resources/list"},
     }
+
+
+def test_deferred_native_profile_dev_identity_falls_back_to_broker(
+    client: TestClient,
+) -> None:
+    response = client.get("/api/mcp/deferred-native/profile")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["vary"] == "Authorization"
+    payload = response.json()
+    assert payload["effective_mode"] == "catalog_broker"
+    assert payload["direct_tool_count"] == 0
+    assert payload["broker_tool_count"] == 5
+    tools = payload["responses_api"]["tools"]
+    assert len(tools) == 1
+    assert tools[0]["type"] == "mcp"
+    assert tools[0]["server_url"] == "http://testserver/mcp"
+    assert tools[0]["defer_loading"] is False
+    assert payload["authorization"] == {
+        "required": True,
+        "included": False,
+        "source": "caller_supplied_oauth_access_token",
+    }
+
+
+def test_deferred_native_oauth_profile_and_tools_list(client: TestClient) -> None:
+    from gateway_api.auth import create_jwt
+    from gateway_api.database import SessionLocal
+    from gateway_api.mcp_federation import (
+        classify_revision,
+        create_server,
+        reconcile_catalog_snapshot,
+        upsert_exposure,
+        upsert_policy,
+    )
+    from gateway_api.mcp_federation_broker import mcp_federation_broker_tool_names
+    from gateway_api.models import McpTool, McpToolRevision, OAuthClient, User
+
+    with SessionLocal() as db:
+        user = User(
+            subject="keycloak:deferred-user",
+            username="deferred-user",
+            email="deferred@example.test",
+            roles=["gateway-user"],
+            preferences={},
+            provider="test",
+        )
+        db.add(user)
+        server = create_server(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            idempotency_key="deferred-route-server",
+            data={
+                "display_name": "Untrusted server instructions",
+                "origin": "gateway",
+                "transport": "streamable_http",
+                "endpoint_url": "https://deferred.example.test/mcp",
+                "thin_client_id": None,
+                "runtime_id": None,
+                "credential_binding_id": None,
+            },
+        )
+        server.trust_level = "approved"
+        server.status = "online"
+        db.commit()
+        reconcile_catalog_snapshot(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            server_id=server.id,
+            catalog_generation=1,
+            protocol_version="2025-11-25",
+            max_tools=20,
+            tools_list_changed_seen=False,
+            tools=[
+                {
+                    "upstream_name": "lookup_record",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"record_id": {"type": "string"}},
+                        "required": ["record_id"],
+                        "additionalProperties": False,
+                    },
+                    "output_schema": {
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}},
+                        "required": ["value"],
+                        "additionalProperties": False,
+                    },
+                    "title": "Lookup record",
+                    "description": "Read one reviewed record.",
+                    "annotations": {"readOnlyHint": True},
+                }
+            ],
+        )
+        tool = db.query(McpTool).filter(McpTool.server_id == server.id).one()
+        revision = db.get(McpToolRevision, tool.current_revision_id)
+        revision = classify_revision(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            revision_id=revision.id,
+            idempotency_key="deferred-route-classification",
+            expected_version=revision.version,
+            action_class="read",
+            read_only_status="verified",
+        )
+        upsert_exposure(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            tool_id=tool.id,
+            idempotency_key="deferred-route-exposure",
+            expected_version=0,
+            data={
+                "revision_id": revision.id,
+                "mode": "catalog_only",
+                "enabled": True,
+                "projected_name": "deferred_lookup_record",
+                "required_role": None,
+                "required_scope": None,
+                "approval_class": "none",
+                "projection_generation": 0,
+            },
+        )
+        upsert_policy(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            server_id=server.id,
+            idempotency_key="deferred-route-policy",
+            expected_version=0,
+            data={
+                "trust_level": "approved",
+                "allowed_action_classes": ["read"],
+                "required_roles": [],
+                "required_scopes": [],
+                "approval_mapping": {"read": "none"},
+                "tool_allowlist": [],
+                "tool_denylist": [],
+                "status": "active",
+            },
+        )
+        oauth_client = OAuthClient(
+            client_id="deferred-route-client",
+            client_name="Deferred route client",
+            redirect_uris=["https://example.test/callback"],
+            scope="mcp:read",
+            presentation_profile="developer-dynamic",
+            presentation_policy_generation=1,
+            presentation_mode="deferred_native",
+            presentation_capabilities=["deferred_loading", "tool_search"],
+        )
+        db.add(oauth_client)
+        db.commit()
+        expected_name = (
+            f"deferred_lookup_record_{revision.id.replace('-', '')[:12]}_"
+            f"{revision.schema_hash[:16]}"
+        )
+
+    token = create_jwt(
+        subject=user.subject,
+        username=user.username,
+        roles=user.roles,
+        scopes=["mcp:read"],
+        token_type="access",
+        ttl_seconds=300,
+        extra={
+            "client_id": oauth_client.client_id,
+            "presentation_profile": oauth_client.presentation_profile,
+            "presentation_policy_generation": 1,
+            "presentation_mode": "deferred_native",
+            "presentation_capabilities": ["deferred_loading", "tool_search"],
+            "allowed_tool_names": [],
+        },
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    profile = client.get("/api/mcp/deferred-native/profile", headers=headers)
+    assert profile.status_code == 200
+    assert profile.headers["cache-control"] == "no-store"
+    assert profile.headers["vary"] == "Authorization"
+    profile_payload = profile.json()
+    assert profile_payload["effective_mode"] == "deferred_native"
+    assert profile_payload["direct_tool_count"] == 1
+    response_tools = profile_payload["responses_api"]["tools"]
+    assert response_tools[0]["defer_loading"] is True
+    assert response_tools[1] == {"type": "tool_search", "execution": "server"}
+    assert expected_name in response_tools[0]["allowed_tools"]
+    assert "Untrusted server instructions" not in response_tools[0]["server_description"]
+
+    listed = client.post(
+        "/mcp",
+        headers=headers,
+        json={"jsonrpc": "2.0", "id": 8601, "method": "tools/list"},
+    )
+    assert listed.status_code == 200
+    tools = {item["name"]: item for item in listed.json()["result"]["tools"]}
+    assert expected_name in tools
+    assert tools[expected_name]["inputSchema"]["required"] == ["record_id"]
+    assert tools[expected_name]["outputSchema"]["required"] == ["value"]
+    assert set(mcp_federation_broker_tool_names()).issubset(tools)

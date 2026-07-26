@@ -31,6 +31,12 @@ from ..agent_collaboration_tools import (
     agent_collaboration_tools,
     call_agent_collaboration_tool,
 )
+from ..mcp_deferred_native import (
+    deferred_entries_for_context,
+    deferred_native_dispatch_target,
+    deferred_native_tool_definition,
+    resolve_deferred_dispatch,
+)
 from ..mcp_federation_broker import (
     call_mcp_federation_broker_tool,
     mcp_federation_broker_tool_names,
@@ -1288,6 +1294,30 @@ def _tool_registry(
             start_order=len(legacy) + 1000,
             targets=native_targets,
         )
+    if (
+        db is not None
+        and user is not None
+        and presentation is not None
+        and presentation.selected_mode == "deferred_native"
+    ):
+        deferred_entries = deferred_entries_for_context(
+            db,
+            user=user,
+            context=presentation,
+        )
+        deferred_tools = [
+            deferred_native_tool_definition(entry) for entry in deferred_entries
+        ]
+        deferred_targets = {
+            entry.public_name: deferred_native_dispatch_target(entry)
+            for entry in deferred_entries
+        }
+        registry.register(
+            "deferred_native",
+            deferred_tools,
+            start_order=len(legacy) + 2000,
+            targets=deferred_targets,
+        )
     allowed_names = None
     if presentation is not None and presentation.allowed_tool_names is not None:
         allowed_names = set(presentation.allowed_tool_names) | broker_names
@@ -1846,6 +1876,38 @@ async def _call_native_projection(
     return dict(call.payload)
 
 
+async def _call_deferred_native(
+    target: ToolDispatchTarget,
+    args: dict[str, Any],
+    user: User,
+    db: Session,
+    upstream: UpstreamMcpManager,
+    presentation: PresentationContext,
+    *,
+    tool_call_id: str | None,
+) -> dict[str, Any]:
+    item = resolve_deferred_dispatch(
+        db,
+        user=user,
+        context=presentation,
+        target=target,
+    )
+    try:
+        call = await upstream.call_exact_revision(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            revision_id=item.revision.id,
+            arguments=args,
+            gateway_tool_call_id=tool_call_id,
+        )
+    except UpstreamMcpError as exc:
+        raise HTTPException(
+            status_code=exc.http_status, detail=exc.as_detail()
+        ) from exc
+    return dict(call.payload)
+
+
 async def _call_tool(
     name: str,
     args: dict[str, Any],
@@ -1862,6 +1924,18 @@ async def _call_tool(
         if presentation is None:
             raise HTTPException(status_code=409, detail="Presentation context is required")
         return await _call_native_projection(
+            dispatch_target,
+            args,
+            user,
+            db,
+            upstream,
+            presentation,
+            tool_call_id=tool_call_id,
+        )
+    if dispatch_target is not None and dispatch_target.provider == "deferred_native":
+        if presentation is None:
+            raise HTTPException(status_code=409, detail="Presentation context is required")
+        return await _call_deferred_native(
             dispatch_target,
             args,
             user,

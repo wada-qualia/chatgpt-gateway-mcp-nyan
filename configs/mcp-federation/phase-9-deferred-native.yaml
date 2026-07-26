@@ -1,0 +1,60 @@
+version: 1
+task: CMG-FED-860
+profile:
+  mode: deferred_native
+  required_capabilities:
+    - deferred_loading
+    - tool_search
+  responses_api:
+    mcp_tool:
+      defer_loading: true
+      server_label: gateway_federation
+      allowed_tools_source: gateway_policy
+      require_approval_source: gateway_policy
+    tool_search:
+      execution: server
+selection:
+  tenant_filtering_before_disclosure: required
+  exact_revision_binding: required
+  exact_schema_hash_binding: required
+  maximum_direct_tools: 500
+  public_name_suffix: revision_id_prefix_12_and_schema_hash_prefix_16
+  caller_supplied_allowed_tools: forbidden
+  caller_supplied_approval_policy: forbidden
+execution:
+  direct_action_classes:
+    - read
+  direct_approval_classes:
+    - none
+  broker_only_action_classes:
+    - unknown
+    - write
+    - destructive
+    - production
+  broker_tools:
+    - mcp_catalog_search
+    - mcp_tool_describe
+    - mcp_call_read
+    - mcp_action_prepare
+    - mcp_action_execute
+fallback:
+  missing_deferred_loading: catalog_broker
+  missing_tool_search: catalog_broker
+  stale_policy_generation: reauthorization_required
+  stale_revision_or_schema: reject
+  unavailable_upstream: reject
+invariants:
+  - only_gateway_owned_namespace_descriptions_are_initially_model_visible
+  - exact_tool_schemas_are_loaded_only_after_policy_filtered_tool_search
+  - every_direct_call_revalidates_revision_schema_exposure_and_policy_generation
+  - approval_required_actions_never_gain_a_direct_deferred_execution_path
+  - broker_tools_remain_available_in_every_deferred_profile
+  - oauth_authorization_material_is_never_included_in_profile_payloads
+qualification:
+  nodeids:
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_registry_preserves_broker_fallback_for_all_modes
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_deferred_profile_is_server_derived_and_revision_bound
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_deferred_dispatch_rejects_stale_policy_binding
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_deferred_native_keeps_approval_actions_on_broker
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_deferred_profile_falls_back_without_tool_search
+    - services/gateway-api/tests/test_gateway_api.py::test_deferred_native_profile_dev_identity_falls_back_to_broker

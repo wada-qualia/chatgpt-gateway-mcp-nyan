@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from ..account_settings import effective_ssh_command_profile
-from ..auth import get_current_user, require_role
+from ..auth import get_bearer_or_dev_user, get_current_user, require_role
 from ..config import Settings, get_settings
 from ..database import get_db
 from ..dto import (
@@ -28,6 +28,10 @@ from ..dto import (
     McpToolRevisionClassification,
     McpToolRevisionOut,
 )
+from ..mcp_deferred_native import (
+    deferred_entries_for_context,
+    deferred_native_profile_payload,
+)
 from ..mcp_federation import mcp_federation_service
 from ..mcp_presentation import (
     PRESENTATION_PROFILES,
@@ -39,6 +43,7 @@ from ..mcp_presentation import (
     presentation_profile_payload,
     publish_generation,
     record_projection_verification,
+    resolve_presentation_context,
     rollback_generation,
     update_oauth_client_profile,
 )
@@ -410,6 +415,26 @@ async def list_presentation_profiles(
     return [
         presentation_profile_payload(profile_id) for profile_id in PRESENTATION_PROFILES
     ]
+
+
+@router.get("/deferred-native/profile")
+async def get_deferred_native_profile(
+    request: Request,
+    response: Response,
+    user: User = Depends(get_bearer_or_dev_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    enforce(user, action="read")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Vary"] = "Authorization"
+    context = resolve_presentation_context(request, db, user)
+    entries = deferred_entries_for_context(db, user=user, context=context)
+    return deferred_native_profile_payload(
+        context=context,
+        public_base_url=settings.public_base_url,
+        entries=entries,
+    )
 
 
 @router.get("/oauth-clients/presentation")

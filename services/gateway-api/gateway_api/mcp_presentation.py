@@ -36,7 +36,7 @@ PRESENTATION_MODES: dict[str, dict[str, Any]] = {
     },
     "deferred_native": {
         "label": "Deferred native",
-        "description": "Negotiated deferred mode; the broker remains public until CMG-FED-860 qualifies exact schema loading.",
+        "description": "Policy-filtered deferred loading with Tool Search, exact read-only revision binding and broker-gated approval actions.",
         "required_capabilities": ["deferred_loading", "tool_search"],
     },
     "native_projected": {

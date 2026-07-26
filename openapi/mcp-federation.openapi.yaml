@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: ChatGPT Gateway MCP Federation Control Plane
-  version: 2.1.0
+  version: 2.2.0
   description: Machine-readable MCP federation, presentation-profile and immutable
     projection management contract.
 paths:
@@ -646,6 +646,18 @@ paths:
       - mcp-federation
       summary: List Presentation Profiles
       operationId: list_presentation_profiles_api_mcp_presentation_profiles_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/mcp/deferred-native/profile:
+    get:
+      tags:
+      - mcp-federation
+      summary: Get Deferred Native Profile
+      operationId: get_deferred_native_profile_api_mcp_deferred_native_profile_get
       responses:
         '200':
           description: Successful Response

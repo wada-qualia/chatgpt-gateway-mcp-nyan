@@ -6,7 +6,7 @@ import json
 import re
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Callable
 from urllib.parse import urlencode, urlparse
@@ -33,6 +33,13 @@ from .mcp_federation_compat import (
     admit_upstream_initialize,
 )
 from .mcp_federation_policy import sha256_json
+from .mcp_rich_fidelity import (
+    RichFidelityError,
+    project_call_result,
+    sanitize_server_instructions,
+    sdk_tool_descriptor,
+    tool_descriptor_hash,
+)
 from .mcp_federation_runtime import (
     EndpointResolution,
     FederationBoundaryError,
@@ -80,7 +87,11 @@ _SCOPE_TOKEN = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,160}$")
 
 
 def _bearer_challenge_scopes(value: str | None) -> list[str]:
-    if not value or len(value) > 4096 or not value.lstrip().lower().startswith("bearer"):
+    if (
+        not value
+        or len(value) > 4096
+        or not value.lstrip().lower().startswith("bearer")
+    ):
         return []
     match = _BEARER_SCOPE_PARAMETER.search(value)
     if match is None:
@@ -122,6 +133,8 @@ class UpstreamCallResult:
     serialized_bytes: int
     invocation_id: str | None = None
     is_error: bool = False
+    client_meta: dict[str, Any] = field(default_factory=dict)
+    media_bytes: int = 0
 
 
 class UpstreamMcpError(RuntimeError):
@@ -492,7 +505,10 @@ class UpstreamMcpManager:
             state = self.circuit_state(server.id)
             circuit_counts[state] = circuit_counts.get(state, 0) + 1
             refreshed = server.last_catalog_refreshed_at
-            if refreshed is None or (now - refreshed).total_seconds() > self.catalog_stale_after_seconds:
+            if (
+                refreshed is None
+                or (now - refreshed).total_seconds() > self.catalog_stale_after_seconds
+            ):
                 stale_catalogs += 1
         return {
             "enabled": self.federation_enabled,
@@ -516,7 +532,7 @@ class UpstreamMcpManager:
             lines.append(f'gateway_mcp_servers{{status="{status}"}} {value}')
         for state, value in sorted(snapshot["circuits"].items()):
             lines.append(f'gateway_mcp_circuits{{state="{state}"}} {value}')
-        lines.append(f'gateway_mcp_catalogs_stale {snapshot["stale_catalogs"]}')
+        lines.append(f"gateway_mcp_catalogs_stale {snapshot['stale_catalogs']}")
         lines.extend(self.telemetry.prometheus_lines())
         return lines
 
@@ -755,21 +771,22 @@ class UpstreamMcpManager:
                         cursor = page.nextCursor
                         if not cursor:
                             break
-            snapshot = [
-                {
-                    "upstream_name": tool.name,
-                    "input_schema": dict(tool.inputSchema or {}),
-                    "output_schema": dict(tool.outputSchema)
-                    if tool.outputSchema
-                    else None,
-                    "title": tool.title,
-                    "description": tool.description or "",
-                    "annotations": _model_json(tool.annotations)
-                    if tool.annotations
-                    else {},
-                }
-                for tool in discovered
-            ]
+            snapshot = []
+            for tool in discovered:
+                descriptor = sdk_tool_descriptor(tool)
+                snapshot.append(
+                    {
+                        "upstream_name": tool.name,
+                        "input_schema": descriptor["input"],
+                        "output_schema": descriptor["output"],
+                        "title": descriptor["title"],
+                        "description": descriptor["description"],
+                        "annotations": descriptor["annotations"],
+                        "icons": descriptor["icons"],
+                        "execution": descriptor["execution"],
+                        "component_meta": descriptor["component_meta"],
+                    }
+                )
             try:
                 reconciliation = reconcile_catalog_snapshot(
                     db,
@@ -824,7 +841,9 @@ class UpstreamMcpManager:
             "destructive",
             "production",
         }:
-            self.telemetry.increment("writes_paused_rejected", outcome=revision.action_class)
+            self.telemetry.increment(
+                "writes_paused_rejected", outcome=revision.action_class
+            )
             raise UpstreamMcpError(
                 "MCP_FEDERATION_WRITES_PAUSED",
                 "MCP federation write actions are paused by the emergency control",
@@ -889,7 +908,9 @@ class UpstreamMcpManager:
             commit=False,
         )
         db.commit()
-        self.telemetry.increment("invocation_started", action_class=revision.action_class)
+        self.telemetry.increment(
+            "invocation_started", action_class=revision.action_class
+        )
         try:
             async with self._bounded(server):
                 if server.origin == "thin_client":
@@ -911,13 +932,8 @@ class UpstreamMcpManager:
                         current = await self._find_upstream_tool(
                             session, tool.upstream_name
                         )
-                        current_hash = sha256_json(
-                            {
-                                "input": dict(current.inputSchema or {}),
-                                "output": dict(current.outputSchema)
-                                if current.outputSchema
-                                else None,
-                            }
+                        current_hash = tool_descriptor_hash(
+                            sdk_tool_descriptor(current)
                         )
                         if current_hash != revision.schema_hash:
                             raise UpstreamMcpError(
@@ -947,6 +963,12 @@ class UpstreamMcpManager:
                 "truncated": limited.truncated,
                 "serialized_bytes": limited.serialized_bytes,
                 "upstream_is_error": bool(raw.isError),
+                "media_bytes": limited.media_bytes,
+                "client_meta_present": bool(limited.client_meta),
+                "client_meta_sha256": sha256_json(limited.client_meta)
+                if limited.client_meta
+                else None,
+                "client_only_meta": limited.client_meta,
             }
             invocation.response_sha256 = sha256_json(limited.payload)
             invocation.completed_at = utcnow()
@@ -1323,7 +1345,9 @@ class UpstreamMcpManager:
                     ) as session:
                         initialized = await session.initialize()
                         try:
-                            capability_admission = admit_upstream_initialize(initialized)
+                            capability_admission = admit_upstream_initialize(
+                                initialized
+                            )
                         except McpProtocolAdmissionError as exc:
                             raise UpstreamMcpError(
                                 "MCP_PROTOCOL_MISMATCH",
@@ -1498,9 +1522,7 @@ class UpstreamMcpManager:
                 http_status=429,
             )
         tenant_key = server.owner_subject
-        if not self._tenant_rate.acquire(
-            tenant_key, self.calls_per_minute_per_tenant
-        ):
+        if not self._tenant_rate.acquire(tenant_key, self.calls_per_minute_per_tenant):
             self.telemetry.increment("quota_rejected", scope="tenant")
             raise UpstreamMcpError(
                 "MCP_QUOTA_EXCEEDED",
@@ -1581,9 +1603,7 @@ class UpstreamMcpManager:
         server: McpServer,
         response: httpx.Response,
     ) -> UpstreamMcpError | None:
-        challenged = _bearer_challenge_scopes(
-            response.headers.get("www-authenticate")
-        )
+        challenged = _bearer_challenge_scopes(response.headers.get("www-authenticate"))
         if not challenged or not server.credential_binding_id:
             return None
         binding = (
@@ -1642,6 +1662,11 @@ class UpstreamMcpManager:
         server.status = "online"
         server.negotiated_protocol_version = initialized.protocolVersion
         server.capabilities = _model_json(initialized.capabilities)
+        instructions = sanitize_server_instructions(initialized.instructions)
+        server.sanitized_instructions = instructions
+        server.instructions_sha256 = (
+            sha256_json({"instructions": instructions}) if instructions else None
+        )
         server.last_connected_at = utcnow()
         server.version += 1
         server.updated_at = utcnow()
@@ -1674,49 +1699,32 @@ class UpstreamMcpManager:
 
     def _limit_result(self, result: types.CallToolResult) -> UpstreamCallResult:
         payload = sanitize_untrusted(
-            result.model_dump(mode="json", by_alias=True),
-            max_string=self.max_text_bytes,
+            result.model_dump(mode="json", by_alias=True, exclude_none=True),
+            max_string=max(self.max_text_bytes, self.max_result_bytes),
         )
-        if not isinstance(payload, dict):
+        try:
+            projection = project_call_result(
+                payload,
+                max_text_bytes=self.max_text_bytes,
+                max_result_bytes=self.max_result_bytes,
+                max_content_items=self.max_content_items,
+            )
+        except RichFidelityError as exc:
+            if exc.code in {"MCP_RESULT_TOO_LARGE", "MCP_MEDIA_TOO_LARGE"}:
+                self.telemetry.increment("result_rejected", outcome="too_large")
             raise UpstreamMcpError(
-                "MCP_PROTOCOL_MISMATCH",
-                "Upstream MCP result is not an object",
-                http_status=502,
-            )
-        content = payload.get("content")
-        truncated = False
-        if isinstance(content, list) and len(content) > self.max_content_items:
-            payload["content"] = content[: self.max_content_items]
-            truncated = True
-        text_budget = self.max_text_bytes
-        for item in payload.get("content") or []:
-            if not isinstance(item, dict) or not isinstance(item.get("text"), str):
-                continue
-            encoded = item["text"].encode("utf-8")
-            if len(encoded) <= text_budget:
-                text_budget -= len(encoded)
-                continue
-            item["text"] = encoded[: max(text_budget, 0)].decode(
-                "utf-8", errors="ignore"
-            )
-            item["_gateway_truncated"] = True
-            text_budget = 0
-            truncated = True
-        serialized = json.dumps(
-            payload, separators=(",", ":"), ensure_ascii=False
-        ).encode("utf-8")
-        if len(serialized) > self.max_result_bytes:
-            self.telemetry.increment("result_rejected", outcome="too_large")
-            raise UpstreamMcpError(
-                "MCP_RESULT_TOO_LARGE",
-                "Upstream MCP result exceeds the Gateway result limit",
-                http_status=413,
-            )
-        payload.setdefault("_gateway", {})["truncated"] = truncated
-        if truncated:
+                exc.code,
+                exc.message,
+                http_status=exc.http_status,
+            ) from exc
+        if projection.truncated:
             self.telemetry.increment("result_truncated", outcome="bounded")
         return UpstreamCallResult(
-            payload=payload, truncated=truncated, serialized_bytes=len(serialized)
+            payload=projection.model_payload,
+            truncated=projection.truncated,
+            serialized_bytes=projection.serialized_bytes,
+            client_meta=projection.client_meta,
+            media_bytes=projection.media_bytes,
         )
 
 

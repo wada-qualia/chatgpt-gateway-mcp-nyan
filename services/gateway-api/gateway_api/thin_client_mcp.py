@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from .mcp_capability_control_plane import record_capability_snapshot
 from .mcp_federation import reconcile_catalog_snapshot
 from .mcp_federation_policy import normalize_slug, sha256_json
+from .mcp_rich_fidelity import sanitize_server_instructions
 from .models import (
     McpInvocation,
     McpRuntimeConnection,
@@ -409,7 +410,12 @@ def reconcile_snapshot(
         runtime_id=runtime_id,
         connection_instance_id=connection.connection_instance_id,
     )
-    snapshot_hash = sha256_json(tools)
+    instructions = sanitize_server_instructions(message.get("server_instructions"))
+    snapshot_hash = sha256_json({"tools": tools, "server_instructions": instructions})
+    server.sanitized_instructions = instructions
+    server.instructions_sha256 = (
+        sha256_json({"instructions": instructions}) if instructions else None
+    )
     runtime_meta = dict(runtime.meta or {})
     if (
         runtime_meta.get("client_catalog_generation") == client_generation
@@ -504,6 +510,9 @@ def _current_snapshot(db: Session, server: McpServer) -> dict[str, dict[str, Any
             "title": revision.sanitized_title,
             "description": revision.sanitized_description,
             "annotations": dict(revision.annotations or {}),
+            "icons": list(revision.icons or []),
+            "execution": dict(revision.execution or {}),
+            "component_meta": dict(revision.component_meta or {}),
         }
     return items
 

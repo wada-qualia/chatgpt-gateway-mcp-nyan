@@ -549,14 +549,13 @@ def test_oversized_results_are_truncated_then_rejected_at_hard_limit() -> None:
         )
     )
     assert bounded.truncated is True
-    assert bounded.payload["content"] == [
-        {
-            "type": "text",
-            "text": "abcde",
-            "annotations": None,
-            "_meta": None,
-        }
-    ]
+    assert len(bounded.payload["content"]) == 1
+    content = bounded.payload["content"][0]
+    assert content["type"] == "text"
+    assert content["text"] == "abcde"
+    assert "annotations" not in content
+    assert "_meta" not in content
+    assert content["_gateway"]["content_id"].startswith("urn:gateway-mcp-content:")
     assert bounded.payload["_gateway"]["truncated"] is True
 
     rejecting = _manager(

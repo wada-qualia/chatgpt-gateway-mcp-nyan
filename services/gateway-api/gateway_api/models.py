@@ -930,6 +930,8 @@ class McpServer(Base):
         String(32), nullable=True
     )
     capabilities: Mapped[dict] = mapped_column(JSON, default=dict)
+    sanitized_instructions: Mapped[str] = mapped_column(Text, default="")
+    instructions_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     catalog_generation: Mapped[int] = mapped_column(Integer, default=0)
     policy_generation: Mapped[int] = mapped_column(Integer, default=1)
     version: Mapped[int] = mapped_column(Integer, default=1)
@@ -1021,6 +1023,9 @@ class McpToolRevision(Base):
     sanitized_description: Mapped[str] = mapped_column(Text, default="")
     search_text: Mapped[str] = mapped_column(Text, default="")
     annotations: Mapped[dict] = mapped_column(JSON, default=dict)
+    icons: Mapped[list] = mapped_column(JSON, default=list)
+    execution: Mapped[dict] = mapped_column(JSON, default=dict)
+    component_meta: Mapped[dict] = mapped_column(JSON, default=dict)
     schema_hash: Mapped[str] = mapped_column(String(64), index=True)
     protocol_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     catalog_generation: Mapped[int] = mapped_column(Integer)

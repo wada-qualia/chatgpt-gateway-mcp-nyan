@@ -49,3 +49,24 @@ authorization_control_plane:
   incremental_scope_challenge: explicit_consent_required
   credential_owner: gateway_backend
   credential_material_client_visible: false
+
+rich_fidelity:
+  implementation_status: locally_qualified_production_pending
+  server_instructions:
+    stored: gateway_sanitized
+    trust: untrusted_advisory
+    prompt_injection_neutralization: true
+  tool_descriptor:
+    immutable_hash: canonical_source_descriptor_sha256
+    fields: [title, description, inputSchema, outputSchema, annotations, icons, execution.taskSupport, _meta]
+    component_meta_model_visible: false
+    task_execution_enabled: false
+  result_projection:
+    structured_content: schema_validated
+    content_blocks: [text, image, audio, resource_link, embedded_resource]
+    stable_content_ids: true
+    media_validation: [mime_allowlist, strict_base64, per_item_limit, total_result_limit]
+    resource_validation: [scheme_allowlist, credential_rejection, bounded_uri]
+    client_only_meta: redacted_from_model_payload_and_retained_in_invocation_evidence
+    deterministic_truncation: true
+  transport_parity: [remote, thin_client]

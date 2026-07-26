@@ -525,6 +525,23 @@ def describe_tool(
             "input_schema": item.revision.input_schema,
             "output_schema": item.revision.output_schema,
             "annotations": item.revision.annotations,
+            "icons": item.revision.icons,
+            "execution": {
+                **dict(item.revision.execution or {}),
+                "task_execution_enabled": False,
+            },
+            "server_instructions": {
+                "text": item.server.sanitized_instructions,
+                "sha256": item.server.instructions_sha256,
+                "trust": "untrusted_advisory",
+            },
+            "client_only_meta": {
+                "present": bool(item.revision.component_meta),
+                "sha256": sha256_json(item.revision.component_meta)
+                if item.revision.component_meta
+                else None,
+                "model_visible": False,
+            },
             "risk_evidence": item.revision.risk_evidence,
             "protocol_version": item.revision.protocol_version,
             "required_role": item.exposure.required_role,

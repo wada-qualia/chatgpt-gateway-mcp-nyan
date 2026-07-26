@@ -29,6 +29,11 @@ from .mcp_federation_policy import (
     validate_credential_binding,
     validate_operator_classification,
 )
+from .mcp_rich_fidelity import (
+    RichFidelityError,
+    normalize_tool_descriptor,
+    tool_descriptor_hash,
+)
 from .models import (
     McpCredentialBinding,
     McpFederationPolicy,
@@ -841,6 +846,9 @@ def record_tool_revision(
     annotations: dict[str, Any],
     protocol_version: str | None,
     catalog_generation: int,
+    icons: list[dict[str, Any]] | None = None,
+    execution: dict[str, Any] | None = None,
+    component_meta: dict[str, Any] | None = None,
     commit: bool = True,
     emit_revision_event: bool = True,
     update_server_catalog: bool = True,
@@ -854,15 +862,36 @@ def record_tool_revision(
         raise _policy_error(
             McpPolicyViolation("MCP tool name is empty after sanitation")
         )
-    title = _sanitize_catalog_text(title, maximum=240) or None
-    description = _sanitize_catalog_text(description, maximum=4000)
-    annotations = json.loads(canonical_json(annotations or {}))
-    if len(canonical_json(annotations).encode("utf-8")) > 65536:
-        raise _policy_error(
-            McpPolicyViolation("MCP tool annotations exceed the metadata limit")
+    source_descriptor = {
+        "input": input_schema,
+        "output": output_schema,
+        "title": title,
+        "description": description,
+        "annotations": annotations or {},
+        "icons": icons or [],
+        "execution": execution or {},
+        "component_meta": component_meta or {},
+    }
+    try:
+        descriptor = normalize_tool_descriptor(
+            input_schema=input_schema,
+            output_schema=output_schema,
+            title=title,
+            description=description,
+            annotations=annotations,
+            icons=icons,
+            execution=execution,
+            component_meta=component_meta,
         )
-    schema_document = {"input": input_schema, "output": output_schema}
-    schema_hash = sha256_json(schema_document)
+    except RichFidelityError as exc:
+        raise _policy_error(McpPolicyViolation(exc.message)) from exc
+    title = descriptor["title"]
+    description = descriptor["description"]
+    annotations = descriptor["annotations"]
+    icons = descriptor["icons"]
+    execution = descriptor["execution"]
+    component_meta = descriptor["component_meta"]
+    schema_hash = tool_descriptor_hash(source_descriptor)
     tool = (
         db.query(McpTool)
         .filter(McpTool.server_id == server_id, McpTool.upstream_name == upstream_name)
@@ -936,6 +965,9 @@ def record_tool_revision(
             read_only_status="unverified",
         ),
         annotations=annotations,
+        icons=icons,
+        execution=execution,
+        component_meta=component_meta,
         schema_hash=schema_hash,
         protocol_version=protocol_version,
         catalog_generation=catalog_generation,
@@ -1027,13 +1059,12 @@ def reconcile_catalog_snapshot(
                 "upstream_name": name,
                 "input_schema": input_schema,
                 "output_schema": output_schema,
-                "title": _sanitize_catalog_text(raw.get("title"), maximum=240) or None,
-                "description": _sanitize_catalog_text(
-                    raw.get("description"), maximum=4000
-                ),
-                "annotations": json.loads(
-                    canonical_json(dict(raw.get("annotations") or {}))
-                ),
+                "title": raw.get("title"),
+                "description": raw.get("description"),
+                "annotations": dict(raw.get("annotations") or {}),
+                "icons": list(raw.get("icons") or []),
+                "execution": dict(raw.get("execution") or {}),
+                "component_meta": dict(raw.get("component_meta") or {}),
             }
         )
     created_revisions = 0
@@ -1053,6 +1084,9 @@ def reconcile_catalog_snapshot(
                 annotations=item["annotations"],
                 protocol_version=protocol_version,
                 catalog_generation=catalog_generation,
+                icons=item["icons"],
+                execution=item["execution"],
+                component_meta=item["component_meta"],
                 commit=False,
                 emit_revision_event=False,
                 update_server_catalog=False,

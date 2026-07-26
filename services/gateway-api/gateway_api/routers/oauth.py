@@ -242,6 +242,11 @@ async def token(
             "client_id": client_id,
             "presentation_profile": oauth_client.presentation_profile,
             "presentation_policy_generation": oauth_client.presentation_policy_generation,
+            "presentation_mode": oauth_client.presentation_mode,
+            "presentation_capabilities": list(
+                oauth_client.presentation_capabilities or []
+            ),
+            "workspace_plan": oauth_client.workspace_plan,
             "allowed_tool_names": list(oauth_client.allowed_tool_names or []),
         },
     )

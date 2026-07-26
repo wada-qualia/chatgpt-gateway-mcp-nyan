@@ -21,7 +21,10 @@ import {
   api,
   type McpServer,
   type McpOAuthPresentation,
+  type McpPresentationCapability,
+  type McpPresentationMode,
   type McpPresentationProfileId,
+  type McpWorkspacePlan,
   type McpProjectionGeneration,
   type McpServerHealth,
   type McpTool,
@@ -235,24 +238,60 @@ function OAuthPresentationRow({
 }: {
   client: McpOAuthPresentation;
   busy: boolean;
-  onSave: (profile: McpPresentationProfileId, allowedNames: string[]) => void;
+  onSave: (
+    profile: McpPresentationProfileId,
+    mode: McpPresentationMode,
+    capabilities: McpPresentationCapability[],
+    workspacePlan: McpWorkspacePlan,
+    allowedNames: string[],
+  ) => void;
 }) {
   const [profile, setProfile] = useState<McpPresentationProfileId>(client.presentation_profile);
+  const [mode, setMode] = useState<McpPresentationMode>(client.presentation_mode);
+  const [workspacePlan, setWorkspacePlan] = useState<McpWorkspacePlan>(client.workspace_plan);
   const [allowed, setAllowed] = useState(client.allowed_tool_names.join(", "));
   useEffect(() => {
     setProfile(client.presentation_profile);
+    setMode(client.presentation_mode);
+    setWorkspacePlan(client.workspace_plan);
     setAllowed(client.allowed_tool_names.join(", "));
   }, [client]);
+  const capabilities: McpPresentationCapability[] = mode === "deferred_native"
+    ? ["deferred_loading", "tool_search"]
+    : mode === "native_projected"
+      ? ["native_tools"]
+      : [];
   return (
     <div className="mcp-oauth-presentation-row">
-      <div><strong>{client.client_name}</strong><small>{client.client_id} · policy generation {client.presentation_policy_generation}</small></div>
-      <select value={profile} onChange={(event) => setProfile(event.target.value as McpPresentationProfileId)}>
+      <div>
+        <strong>{client.client_name}</strong>
+        <small>{client.client_id} · policy generation {client.presentation_policy_generation}</small>
+        <small>selected {client.selected_mode} · {client.selection_reason}</small>
+      </div>
+      <select value={profile} onChange={(event) => {
+        const nextProfile = event.target.value as McpPresentationProfileId;
+        setProfile(nextProfile);
+        if (nextProfile === "chatgpt-stable" && mode === "deferred_native") {
+          setMode("catalog_broker");
+        }
+      }}>
         <option value="chatgpt-stable">ChatGPT stable</option>
         <option value="developer-dynamic">Developer dynamic</option>
         <option value="agent-restricted">Agent restricted</option>
       </select>
-      {profile === "agent-restricted" ? <input aria-label="Allowed tool names" placeholder="workspace_info, mcp_catalog_search" value={allowed} onChange={(event) => setAllowed(event.target.value)} /> : null}
-      <Button disabled={busy} onClick={() => onSave(profile, allowed.split(",").map((name) => name.trim()).filter(Boolean))}>Save profile</Button>
+      <select value={mode} onChange={(event) => setMode(event.target.value as McpPresentationMode)}>
+        <option value="catalog_broker">Catalog broker</option>
+        {profile !== "chatgpt-stable" ? <option value="deferred_native">Deferred native</option> : null}
+        <option value="native_projected">Native projected</option>
+      </select>
+      <select value={workspacePlan} onChange={(event) => setWorkspacePlan(event.target.value as McpWorkspacePlan)}>
+        <option value="none">No ChatGPT workspace plan</option>
+        <option value="business">ChatGPT Business</option>
+        <option value="enterprise">ChatGPT Enterprise</option>
+        <option value="edu">ChatGPT Edu</option>
+      </select>
+      {profile === "agent-restricted" ? <input aria-label="Allowed tool names" placeholder="workspace_info, phase5_sum_values" value={allowed} onChange={(event) => setAllowed(event.target.value)} /> : null}
+      <Button disabled={busy} onClick={() => onSave(profile, mode, capabilities, workspacePlan, allowed.split(",").map((name) => name.trim()).filter(Boolean))}>Save profile</Button>
     </div>
   );
 }
@@ -287,16 +326,39 @@ function McpProjectionManager({ onError }: { onError: (message: string) => void 
   });
   const verify = useMutation({
     mutationFn: (generation: McpProjectionGeneration) => {
-      const reference = window.prompt("Enter the ChatGPT/OpenAI update evidence reference. The Gateway will verify the exact schema hash before marking refresh complete.");
+      const reference = window.prompt("Enter the external publication evidence reference. The Gateway verifies the exact schema hash before marking publication complete.");
       if (!reference) throw new Error("Verification cancelled: evidence reference is required");
-      const kind = generation.chatgpt_refresh_state === "pending" ? "chatgpt_actions" : "generic_tools_list_changed";
-      return api.verifyMcpProjectionGeneration(generation, kind, { operator_reference: reference, observed_at: new Date().toISOString() });
+      if (generation.chatgpt_refresh_state !== "pending") {
+        return api.verifyMcpProjectionGeneration(generation, "generic_tools_list_changed", { operator_reference: reference, observed_at: new Date().toISOString() });
+      }
+      const method = window.prompt("Enter publication method: frozen, enterprise, edu, or business.", "enterprise");
+      if (!method) throw new Error("Verification cancelled: publication method is required");
+      const observedAt = new Date().toISOString();
+      if (method === "frozen") {
+        const snapshotReference = window.prompt("Enter the external immutable snapshot reference.");
+        if (!snapshotReference) throw new Error("Verification cancelled: snapshot reference is required");
+        return api.verifyMcpProjectionGeneration(generation, "chatgpt_frozen_snapshot", { operator_reference: reference, snapshot_reference: snapshotReference, observed_at: observedAt });
+      }
+      if (method === "business") {
+        const appRecreated = window.confirm("Confirm that the Business app was recreated for this exact schema hash.");
+        const republished = appRecreated && window.confirm("Confirm that the recreated Business app was published.");
+        if (!appRecreated || !republished) throw new Error("Verification cancelled: recreation and publication must both be confirmed");
+        return api.verifyMcpProjectionGeneration(generation, "chatgpt_business_republish", { operator_reference: reference, workspace_plan: "business", app_recreated: true, republished: true, observed_at: observedAt });
+      }
+      if (method === "enterprise" || method === "edu") {
+        const refreshInvoked = window.confirm("Confirm that Refresh was invoked for this workspace.");
+        const diffReviewed = refreshInvoked && window.confirm("Confirm that the changed action definitions were reviewed.");
+        const newActionsDefaultDisabled = diffReviewed && window.confirm("Confirm that newly discovered actions remained disabled by default.");
+        if (!refreshInvoked || !diffReviewed || !newActionsDefaultDisabled) throw new Error("Verification cancelled: Refresh, diff review and default-disabled state must all be confirmed");
+        return api.verifyMcpProjectionGeneration(generation, "chatgpt_enterprise_refresh", { operator_reference: reference, workspace_plan: method, refresh_invoked: true, diff_reviewed: true, new_actions_default_disabled: true, observed_at: observedAt });
+      }
+      throw new Error("Unknown publication method");
     },
     onSuccess: refresh,
     onError: (error) => onError(readableError(error)),
   });
   const updateClient = useMutation({
-    mutationFn: ({ clientId, profileId, allowedNames }: { clientId: string; profileId: McpPresentationProfileId; allowedNames: string[] }) => api.updateMcpOAuthPresentation(clientId, { profile_id: profileId, allowed_tool_names: allowedNames }),
+    mutationFn: ({ clientId, profileId, mode, capabilities, workspacePlan, allowedNames }: { clientId: string; profileId: McpPresentationProfileId; mode: McpPresentationMode; capabilities: McpPresentationCapability[]; workspacePlan: McpWorkspacePlan; allowedNames: string[] }) => api.updateMcpOAuthPresentation(clientId, { profile_id: profileId, presentation_mode: mode, presentation_capabilities: capabilities, workspace_plan: workspacePlan, allowed_tool_names: allowedNames }),
     onSuccess: refresh,
     onError: (error) => onError(readableError(error)),
   });
@@ -305,7 +367,7 @@ function McpProjectionManager({ onError }: { onError: (message: string) => void 
   return (
     <section className="mcp-projection-manager">
       <div className="mcp-projection-heading">
-        <div><h2>ChatGPT presentation profiles</h2><p>Native action schemas are immutable per generation. Upstream catalog refreshes never mutate the active ChatGPT action list.</p></div>
+        <div><h2>Capability-negotiated presentation profiles</h2><p>The Gateway selects the smallest safe surface. Catalog broker remains the universal fallback; native action schemas stay immutable per generation.</p></div>
         <div className="mcp-projection-controls">
           <select value={profile} onChange={(event) => setProfile(event.target.value as McpPresentationProfileId)}>
             {profileItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
@@ -322,7 +384,7 @@ function McpProjectionManager({ onError }: { onError: (message: string) => void 
       <div className="mcp-oauth-presentation-list">
         <h3>OAuth client presentation binding</h3>
         <p>Changing a profile increments policy generation. Existing access tokens must authorize again before using the new action surface.</p>
-        {oauthClientItems.map((client) => <OAuthPresentationRow key={client.client_id} client={client} busy={busy} onSave={(profileId, allowedNames) => updateClient.mutate({ clientId: client.client_id, profileId, allowedNames })} />)}
+        {oauthClientItems.map((client) => <OAuthPresentationRow key={client.client_id} client={client} busy={busy} onSave={(profileId, mode, capabilities, workspacePlan, allowedNames) => updateClient.mutate({ clientId: client.client_id, profileId, mode, capabilities, workspacePlan, allowedNames })} />)}
       </div>
     </section>
   );

@@ -1254,7 +1254,12 @@ def _tool_registry(
         [tool for tool in legacy if str(tool["name"]) in broker_names],
         order_by_name=order_by_name,
     )
-    if db is not None and user is not None and presentation is not None:
+    if (
+        db is not None
+        and user is not None
+        and presentation is not None
+        and presentation.includes_native_projection
+    ):
         entries = projection_entries_for_context(
             db,
             owner_subject=user.subject,
@@ -1283,11 +1288,10 @@ def _tool_registry(
             start_order=len(legacy) + 1000,
             targets=native_targets,
         )
-    return registry.filtered(
-        set(presentation.allowed_tool_names)
-        if presentation is not None and presentation.allowed_tool_names is not None
-        else None
-    )
+    allowed_names = None
+    if presentation is not None and presentation.allowed_tool_names is not None:
+        allowed_names = set(presentation.allowed_tool_names) | broker_names
+    return registry.filtered(allowed_names)
 
 
 def _tools(
@@ -1693,6 +1697,18 @@ async def mcp(
                 "serverInfo": {
                     "name": settings.app_name,
                     "version": settings.gateway_release_version,
+                },
+                "_meta": {
+                    "gateway": {
+                        "presentation": {
+                            "profile_id": presentation.profile_id,
+                            "configured_mode": presentation.configured_mode,
+                            "selected_mode": presentation.selected_mode,
+                            "policy_generation": presentation.policy_generation,
+                            "capabilities": sorted(presentation.capabilities),
+                            "selection_reason": presentation.selection_reason,
+                        }
+                    }
                 },
             }
         elif method == "tools/list":

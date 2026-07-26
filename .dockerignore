@@ -6,3 +6,6 @@ auth/users.json
 auth/jwt_secret.txt
 workspace/*
 !workspace/.gitkeep
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo

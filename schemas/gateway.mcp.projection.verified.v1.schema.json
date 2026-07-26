@@ -33,7 +33,10 @@
     "verification_kind": {
       "enum": [
         "generic_tools_list_changed",
-        "chatgpt_actions"
+        "chatgpt_actions",
+        "chatgpt_frozen_snapshot",
+        "chatgpt_enterprise_refresh",
+        "chatgpt_business_republish"
       ]
     },
     "observed_schema_hash": {

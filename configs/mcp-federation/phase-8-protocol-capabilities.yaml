@@ -22,7 +22,7 @@ transports:
   legacy_http_sse: not_supported
 presentation_modes:
   catalog_broker: production_baseline
-  deferred_native: reserved_not_enabled
+  deferred_native: negotiation_enabled_execution_reserved_CMG-FED-860
   native_projected: reviewed_generation_only
 client_capabilities_advertised_to_upstreams:
   roots: false

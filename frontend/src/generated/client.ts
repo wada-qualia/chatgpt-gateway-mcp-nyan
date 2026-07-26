@@ -310,6 +310,9 @@ export type McpToolExposure = {
 };
 
 export type McpPresentationProfileId = 'chatgpt-stable' | 'developer-dynamic' | 'agent-restricted';
+export type McpPresentationMode = 'catalog_broker' | 'deferred_native' | 'native_projected';
+export type McpPresentationCapability = 'deferred_loading' | 'tool_search' | 'native_tools';
+export type McpWorkspacePlan = 'none' | 'business' | 'enterprise' | 'edu';
 
 export type McpPresentationProfile = {
   id: McpPresentationProfileId;
@@ -317,6 +320,14 @@ export type McpPresentationProfile = {
   description: string;
   supports_list_changed: boolean;
   chatgpt_refresh_required: boolean;
+  allowed_modes: McpPresentationMode[];
+  default_mode: McpPresentationMode;
+  modes: Array<{
+    id: McpPresentationMode;
+    label: string;
+    description: string;
+    required_capabilities: McpPresentationCapability[];
+  }>;
 };
 
 export type McpProjectionTool = {
@@ -361,6 +372,11 @@ export type McpOAuthPresentation = {
   client_name: string;
   presentation_profile: McpPresentationProfileId;
   presentation_policy_generation: number;
+  presentation_mode: McpPresentationMode;
+  selected_mode: McpPresentationMode;
+  selection_reason: string;
+  presentation_capabilities: McpPresentationCapability[];
+  workspace_plan: McpWorkspacePlan;
   allowed_tool_names: string[];
   updated_at: string;
 };
@@ -528,6 +544,9 @@ export const api = {
     request<McpOAuthPresentation[]>('/api/mcp/oauth-clients/presentation'),
   updateMcpOAuthPresentation: (clientId: string, payload: {
     profile_id: McpPresentationProfileId;
+    presentation_mode?: McpPresentationMode;
+    presentation_capabilities?: McpPresentationCapability[];
+    workspace_plan?: McpWorkspacePlan;
     allowed_tool_names?: string[];
   }) => request<McpOAuthPresentation>(`/api/mcp/oauth-clients/${clientId}/presentation`, {
     method: 'PATCH',
@@ -550,7 +569,7 @@ export const api = {
     request<McpProjectionGeneration>(`/api/mcp/projection-generations/${generationId}/publish`, { method: 'POST', body: '{}' }),
   rollbackMcpProjectionGeneration: (generationId: string) =>
     request<McpProjectionGeneration>(`/api/mcp/projection-generations/${generationId}/rollback`, { method: 'POST', body: '{}' }),
-  verifyMcpProjectionGeneration: (generation: Pick<McpProjectionGeneration, 'id' | 'schema_hash'>, verificationKind: 'generic_tools_list_changed' | 'chatgpt_actions', evidence: Record<string, unknown>) =>
+  verifyMcpProjectionGeneration: (generation: Pick<McpProjectionGeneration, 'id' | 'schema_hash'>, verificationKind: 'generic_tools_list_changed' | 'chatgpt_actions' | 'chatgpt_frozen_snapshot' | 'chatgpt_enterprise_refresh' | 'chatgpt_business_republish', evidence: Record<string, unknown>) =>
     request<{ generation: McpProjectionGeneration }>(`/api/mcp/projection-generations/${generation.id}/verify`, {
       method: 'POST',
       body: JSON.stringify({ verification_kind: verificationKind, observed_schema_hash: generation.schema_hash, evidence })

@@ -16,7 +16,7 @@ from .config import get_settings
 
 BASELINE_REVISION = "20260725_0001"
 PROJECTION_REVISION = "20260725_0002"
-HEAD_REVISION = "20260726_0008"
+HEAD_REVISION = "20260726_0009"
 LEGACY_ANCHOR_TABLES = {"users", "secret_blobs", "oauth_clients"}
 
 
@@ -168,6 +168,9 @@ def _validate_metadata_schema(connection: Connection) -> None:
     required_projection_columns = {
         "presentation_profile",
         "presentation_policy_generation",
+        "presentation_mode",
+        "presentation_capabilities",
+        "workspace_plan",
         "allowed_tool_names",
         "updated_at",
     }

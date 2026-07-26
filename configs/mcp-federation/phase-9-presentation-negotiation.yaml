@@ -1,0 +1,92 @@
+version: 1
+task: CMG-FED-850
+selection:
+  rule: smallest_safe_capability_complete_surface
+  universal_fallback: catalog_broker
+  policy_generation_fencing: required
+  authenticated_capability_claims: required_for_non_broker
+modes:
+  catalog_broker:
+    status: production_baseline
+    required_capabilities: []
+    public_surface:
+      - mcp_catalog_search
+      - mcp_tool_describe
+      - mcp_call_read
+      - mcp_action_prepare
+      - mcp_action_execute
+  deferred_native:
+    status: negotiation_enabled_execution_deferred_to_CMG-FED-860
+    required_capabilities:
+      - deferred_loading
+      - tool_search
+    public_surface:
+      - mcp_catalog_search
+      - mcp_tool_describe
+      - mcp_call_read
+      - mcp_action_prepare
+      - mcp_action_execute
+  native_projected:
+    status: reviewed_immutable_generation_only
+    required_capabilities:
+      - native_tools
+    public_surface:
+      - gateway_tools
+      - broker_tools
+      - active_projection_generation
+profiles:
+  chatgpt-stable:
+    allowed_modes:
+      - catalog_broker
+      - native_projected
+    default_mode: native_projected
+    external_publication_verification: required
+  developer-dynamic:
+    allowed_modes:
+      - catalog_broker
+      - deferred_native
+      - native_projected
+    default_mode: native_projected
+  agent-restricted:
+    allowed_modes:
+      - catalog_broker
+      - deferred_native
+      - native_projected
+    default_mode: native_projected
+    exact_tool_allowlist: required
+    broker_fallback_may_be_removed: false
+chatgpt_publication_evidence:
+  frozen_snapshot:
+    verification_kind: chatgpt_frozen_snapshot
+    required_fields:
+      - operator_reference
+      - snapshot_reference
+  enterprise_edu_refresh:
+    verification_kind: chatgpt_enterprise_refresh
+    required_fields:
+      - operator_reference
+      - workspace_plan
+      - refresh_invoked
+      - diff_reviewed
+      - new_actions_default_disabled
+  business_republish:
+    verification_kind: chatgpt_business_republish
+    required_fields:
+      - operator_reference
+      - workspace_plan
+      - app_recreated
+      - republished
+invariants:
+  - missing_or_stale_capability_claims_fall_back_to_catalog_broker
+  - upstream_catalog_changes_never_mutate_active_native_generation
+  - external_refresh_is_never_inferred_from_gateway_state
+  - exact_schema_hash_must_match_before_publication_verification
+  - deferred_native_does_not_load_exact_schemas_before_CMG-FED-860
+qualification:
+  nodeids:
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_negotiation_selects_smallest_safe_surface
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_registry_preserves_broker_fallback_for_all_modes
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_profile_policy_change_fences_mode_capabilities_and_plan
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_legacy_token_without_capability_claims_falls_back_to_broker
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_enterprise_refresh_requires_exact_external_evidence
+    - services/gateway-api/tests/test_mcp_federation_phase_five.py::test_phase_nine_business_republish_and_frozen_snapshot_are_distinct

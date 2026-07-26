@@ -166,14 +166,21 @@ CREATE TABLE oauth_clients (
 	scope TEXT NOT NULL,
 	presentation_profile VARCHAR(40) NOT NULL,
 	presentation_policy_generation INTEGER NOT NULL,
+	presentation_mode VARCHAR(40) NOT NULL,
+	presentation_capabilities JSON NOT NULL,
+	workspace_plan VARCHAR(24) NOT NULL,
 	allowed_tool_names JSON NOT NULL,
 	created_at TIMESTAMP WITH TIME ZONE NOT NULL,
 	updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
 	PRIMARY KEY (client_id),
-	CONSTRAINT ck_oauth_client_presentation_profile CHECK (presentation_profile in ('chatgpt-stable', 'developer-dynamic', 'agent-restricted'))
+	CONSTRAINT ck_oauth_client_presentation_profile CHECK (presentation_profile in ('chatgpt-stable', 'developer-dynamic', 'agent-restricted')),
+	CONSTRAINT ck_oauth_client_presentation_mode CHECK (presentation_mode in ('catalog_broker', 'deferred_native', 'native_projected')),
+	CONSTRAINT ck_oauth_client_workspace_plan CHECK (workspace_plan in ('none', 'business', 'enterprise', 'edu'))
 );
 
 CREATE INDEX ix_oauth_clients_presentation_profile ON oauth_clients (presentation_profile);
+CREATE INDEX ix_oauth_clients_presentation_mode ON oauth_clients (presentation_mode);
+CREATE INDEX ix_oauth_clients_workspace_plan ON oauth_clients (workspace_plan);
 
 CREATE TABLE oauth_codes (
 	code VARCHAR(160) NOT NULL,
@@ -1000,7 +1007,7 @@ CREATE TABLE mcp_projection_verifications (
 	verified_by_subject VARCHAR(255) NOT NULL,
 	verified_at TIMESTAMP WITH TIME ZONE NOT NULL,
 	PRIMARY KEY (id),
-	CONSTRAINT ck_mcp_projection_verification_kind CHECK (verification_kind in ('generic_tools_list_changed', 'chatgpt_actions')),
+	CONSTRAINT ck_mcp_projection_verification_kind CHECK (verification_kind in ('generic_tools_list_changed', 'chatgpt_actions', 'chatgpt_frozen_snapshot', 'chatgpt_enterprise_refresh', 'chatgpt_business_republish')),
 	FOREIGN KEY(generation_id) REFERENCES mcp_projection_generations (id)
 );
 

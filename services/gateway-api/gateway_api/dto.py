@@ -1321,13 +1321,26 @@ class McpProjectionCandidateCreate(McpStrictModel):
 
 
 class McpProjectionVerificationCreate(McpStrictModel):
-    verification_kind: Literal["generic_tools_list_changed", "chatgpt_actions"]
+    verification_kind: Literal[
+        "generic_tools_list_changed",
+        "chatgpt_actions",
+        "chatgpt_frozen_snapshot",
+        "chatgpt_enterprise_refresh",
+        "chatgpt_business_republish",
+    ]
     observed_schema_hash: str = Field(min_length=64, max_length=64)
     evidence: dict[str, Any] = Field(default_factory=dict)
 
 
 class McpOAuthPresentationUpdate(McpStrictModel):
     profile_id: Literal["chatgpt-stable", "developer-dynamic", "agent-restricted"]
+    presentation_mode: (
+        Literal["catalog_broker", "deferred_native", "native_projected"] | None
+    ) = None
+    presentation_capabilities: (
+        list[Literal["deferred_loading", "tool_search", "native_tools"]] | None
+    ) = Field(default=None, max_length=20)
+    workspace_plan: Literal["none", "business", "enterprise", "edu"] | None = None
     allowed_tool_names: list[str] = Field(default_factory=list, max_length=1000)
 
 

@@ -42,6 +42,9 @@ def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
     assert {
         "presentation_profile",
         "presentation_policy_generation",
+        "presentation_mode",
+        "presentation_capabilities",
+        "workspace_plan",
         "allowed_tool_names",
         "updated_at",
     } <= oauth_columns
@@ -105,6 +108,9 @@ def test_legacy_database_is_adopted_and_upgraded(tmp_path: Path) -> None:
     assert {
         "presentation_profile",
         "presentation_policy_generation",
+        "presentation_mode",
+        "presentation_capabilities",
+        "workspace_plan",
         "allowed_tool_names",
         "updated_at",
     } <= oauth_columns
@@ -135,6 +141,41 @@ def test_legacy_database_is_adopted_and_upgraded(tmp_path: Path) -> None:
     table_names = set(inspect(target_engine).get_table_names())
     assert capability_tables <= table_names
     assert "mcp_oauth_discovery_snapshots" in table_names
+
+
+def test_phase_nine_presentation_negotiation_migration_is_complete() -> None:
+    root = Path(__file__).resolve().parents[3]
+    migration = (
+        root
+        / "database"
+        / "alembic"
+        / "versions"
+        / "20260726_0009_mcp_presentation_negotiation.py"
+    ).read_text(encoding="utf-8")
+    sql = (
+        root / "database" / "migrations" / "010_mcp_presentation_negotiation.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (
+        root / "database" / "alembic" / "postgresql_baseline.sql"
+    ).read_text(encoding="utf-8")
+    assert 'revision = "20260726_0009"' in migration
+    assert 'down_revision = "20260726_0008"' in migration
+    for column in (
+        "presentation_mode",
+        "presentation_capabilities",
+        "workspace_plan",
+    ):
+        assert column in migration
+        assert column in sql
+        assert column in baseline
+    for verification_kind in (
+        "chatgpt_frozen_snapshot",
+        "chatgpt_enterprise_refresh",
+        "chatgpt_business_republish",
+    ):
+        assert verification_kind in migration
+        assert verification_kind in sql
+        assert verification_kind in baseline
 
 
 def test_unrecognized_database_fails_closed(tmp_path: Path) -> None:

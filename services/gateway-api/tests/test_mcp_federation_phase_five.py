@@ -4,11 +4,6 @@ import asyncio
 
 import pytest
 from fastapi import HTTPException
-from starlette.requests import Request
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
-
 from gateway_api.auth import create_jwt
 from gateway_api.config import get_settings
 from gateway_api.mcp_federation import (
@@ -17,10 +12,12 @@ from gateway_api.mcp_federation import (
     reconcile_catalog_snapshot,
     upsert_exposure,
 )
+from gateway_api.mcp_federation_broker import mcp_federation_broker_tool_names
 from gateway_api.mcp_presentation import (
     PresentationContext,
     create_candidate_generation,
     generation_tools,
+    negotiate_presentation_mode,
     publish_generation,
     record_projection_verification,
     resolve_presentation_context,
@@ -42,6 +39,10 @@ from gateway_api.models import (
     User,
 )
 from gateway_api.routers.mcp import _call_tool, _tool_registry
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+from starlette.requests import Request
 
 
 @pytest.fixture
@@ -244,7 +245,10 @@ def test_projection_generation_is_immutable_and_requires_evidence(db: Session) -
         generation_id=active.id,
         verification_kind="chatgpt_actions",
         observed_schema_hash=active.schema_hash,
-        evidence={"source": "operator-observed-actions"},
+        evidence={
+            "operator_reference": "legacy-actions-audit-1",
+            "snapshot_reference": "legacy-actions-snapshot-1",
+        },
     )
     assert db.get(type(active), active.id).chatgpt_refresh_state == "verified"
 
@@ -309,6 +313,51 @@ def test_stale_oauth_presentation_token_requires_reauthorization(db: Session) ->
     assert denied.value.detail["code"] == "MCP_PRESENTATION_REAUTH_REQUIRED"
 
 
+def test_legacy_token_without_capability_claims_falls_back_to_broker(
+    db: Session,
+) -> None:
+    user = _user(db)
+    client = OAuthClient(
+        client_id="legacy-presentation-client",
+        client_name="Legacy client",
+        redirect_uris=["https://example.test/callback"],
+        scope="mcp:read",
+        presentation_profile="developer-dynamic",
+        presentation_policy_generation=1,
+        presentation_mode="native_projected",
+        presentation_capabilities=["native_tools"],
+    )
+    db.add(client)
+    db.commit()
+    token = create_jwt(
+        subject=user.subject,
+        username=user.username,
+        roles=user.roles,
+        scopes=["mcp:read"],
+        token_type="access",
+        ttl_seconds=300,
+        extra={
+            "client_id": client.client_id,
+            "presentation_profile": client.presentation_profile,
+            "presentation_policy_generation": 1,
+            "presentation_mode": "native_projected",
+            "allowed_tool_names": [],
+        },
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": [(b"authorization", f"Bearer {token}".encode())],
+        }
+    )
+    context = resolve_presentation_context(request, db, user)
+    assert context.capabilities == frozenset()
+    assert context.selected_mode == "catalog_broker"
+    assert context.selection_reason == "broker_fallback:native_tools"
+
+
 def test_registry_and_dispatch_use_exact_active_projection(db: Session) -> None:
     user = _user(db)
     server, _, revision = _native_tool(db)
@@ -334,6 +383,10 @@ def test_registry_and_dispatch_use_exact_active_projection(db: Session) -> None:
         policy_generation=1,
         scopes=frozenset(),
         allowed_tool_names=None,
+        configured_mode="native_projected",
+        selected_mode="native_projected",
+        capabilities=frozenset({"native_tools"}),
+        selection_reason="immutable_native_capability_verified",
     )
     registry = _tool_registry(
         get_settings(),
@@ -381,3 +434,274 @@ def test_registry_and_dispatch_use_exact_active_projection(db: Session) -> None:
         )
     assert unavailable.value.status_code == 503
     assert unavailable.value.detail["code"] == "MCP_PROJECTED_TOOL_UNAVAILABLE"
+
+
+def test_phase_nine_negotiation_selects_smallest_safe_surface() -> None:
+    assert negotiate_presentation_mode(
+        profile_id="developer-dynamic",
+        configured_mode="native_projected",
+        capabilities=["native_tools"],
+    ) == ("native_projected", "immutable_native_capability_verified")
+    assert negotiate_presentation_mode(
+        profile_id="developer-dynamic",
+        configured_mode="native_projected",
+        capabilities=["native_tools", "deferred_loading", "tool_search"],
+    ) == ("deferred_native", "smallest_capability_complete_surface")
+    selected, reason = negotiate_presentation_mode(
+        profile_id="developer-dynamic",
+        configured_mode="deferred_native",
+        capabilities=["deferred_loading"],
+    )
+    assert selected == "catalog_broker"
+    assert reason == "broker_fallback:tool_search"
+    assert negotiate_presentation_mode(
+        profile_id="chatgpt-stable",
+        configured_mode="catalog_broker",
+        capabilities=["native_tools"],
+    ) == ("catalog_broker", "tenant_policy_requires_broker")
+
+
+def test_phase_nine_registry_preserves_broker_fallback_for_all_modes(
+    db: Session,
+) -> None:
+    user = _user(db)
+    _native_tool(db)
+    candidate = create_candidate_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        profile_id="developer-dynamic",
+        reserved_names={
+            tool["name"]
+            for tool in _tool_registry(get_settings(), "restricted").tools()
+        },
+    )
+    publish_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        generation_id=candidate.id,
+    )
+    broker_names = set(mcp_federation_broker_tool_names())
+    for mode in ("catalog_broker", "deferred_native"):
+        context = PresentationContext(
+            profile_id="developer-dynamic",
+            client_id="phase9-client",
+            policy_generation=1,
+            scopes=frozenset(),
+            allowed_tool_names=None,
+            configured_mode=mode,
+            selected_mode=mode,
+            capabilities=frozenset(
+                {"deferred_loading", "tool_search"}
+                if mode == "deferred_native"
+                else set()
+            ),
+            selection_reason="test",
+        )
+        names = set(
+            _tool_registry(
+                get_settings(),
+                "restricted",
+                db=db,
+                user=user,
+                presentation=context,
+            ).names()
+        )
+        assert broker_names.issubset(names)
+        assert "phase5_sum_values" not in names
+
+    native_context = PresentationContext(
+        profile_id="developer-dynamic",
+        client_id="phase9-client",
+        policy_generation=1,
+        scopes=frozenset(),
+        allowed_tool_names=None,
+        configured_mode="native_projected",
+        selected_mode="native_projected",
+        capabilities=frozenset({"native_tools"}),
+        selection_reason="test",
+    )
+    native_names = set(
+        _tool_registry(
+            get_settings(),
+            "restricted",
+            db=db,
+            user=user,
+            presentation=native_context,
+        ).names()
+    )
+    assert broker_names.issubset(native_names)
+    assert "phase5_sum_values" in native_names
+
+    restricted_context = PresentationContext(
+        profile_id="agent-restricted",
+        client_id="restricted-client",
+        policy_generation=1,
+        scopes=frozenset(),
+        allowed_tool_names=frozenset({"phase5_sum_values"}),
+        configured_mode="catalog_broker",
+        selected_mode="catalog_broker",
+        capabilities=frozenset(),
+        selection_reason="test",
+    )
+    restricted_names = set(
+        _tool_registry(
+            get_settings(),
+            "restricted",
+            db=db,
+            user=user,
+            presentation=restricted_context,
+        ).names()
+    )
+    assert restricted_names == broker_names
+
+
+def test_phase_nine_profile_policy_change_fences_mode_capabilities_and_plan(
+    db: Session,
+) -> None:
+    client = OAuthClient(
+        client_id="phase9-policy-client",
+        client_name="Phase 9",
+        redirect_uris=["https://example.test/callback"],
+        scope="mcp:read",
+    )
+    db.add(client)
+    db.commit()
+    updated = update_oauth_client_profile(
+        db,
+        client_id=client.client_id,
+        profile_id="developer-dynamic",
+        presentation_mode="deferred_native",
+        presentation_capabilities=["tool_search", "deferred_loading"],
+        workspace_plan="enterprise",
+        allowed_tool_names=[],
+    )
+    assert updated.presentation_policy_generation == 2
+    assert updated.presentation_mode == "deferred_native"
+    assert updated.presentation_capabilities == ["deferred_loading", "tool_search"]
+    assert updated.workspace_plan == "enterprise"
+
+
+def test_phase_nine_enterprise_refresh_requires_exact_external_evidence(
+    db: Session,
+) -> None:
+    user = _user(db)
+    _native_tool(db)
+    candidate = create_candidate_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        profile_id="chatgpt-stable",
+        reserved_names={"workspace_info", "mcp_catalog_search"},
+    )
+    active = publish_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        generation_id=candidate.id,
+    )
+    with pytest.raises(HTTPException) as incomplete:
+        record_projection_verification(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            generation_id=active.id,
+            verification_kind="chatgpt_enterprise_refresh",
+            observed_schema_hash=active.schema_hash,
+            evidence={
+                "operator_reference": "admin-audit-1",
+                "workspace_plan": "enterprise",
+                "refresh_invoked": True,
+            },
+        )
+    assert incomplete.value.status_code == 422
+    assert db.get(type(active), active.id).chatgpt_refresh_state == "pending"
+    record_projection_verification(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        generation_id=active.id,
+        verification_kind="chatgpt_enterprise_refresh",
+        observed_schema_hash=active.schema_hash,
+        evidence={
+            "operator_reference": "admin-audit-2",
+            "workspace_plan": "enterprise",
+            "refresh_invoked": True,
+            "diff_reviewed": True,
+            "new_actions_default_disabled": True,
+        },
+    )
+    assert db.get(type(active), active.id).chatgpt_refresh_state == "verified"
+
+
+def test_phase_nine_business_republish_and_frozen_snapshot_are_distinct(
+    db: Session,
+) -> None:
+    user = _user(db)
+    _native_tool(db)
+    candidate = create_candidate_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        profile_id="chatgpt-stable",
+        reserved_names={"workspace_info", "mcp_catalog_search"},
+    )
+    active = publish_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        generation_id=candidate.id,
+    )
+    with pytest.raises(HTTPException) as no_republish:
+        record_projection_verification(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            generation_id=active.id,
+            verification_kind="chatgpt_business_republish",
+            observed_schema_hash=active.schema_hash,
+            evidence={
+                "operator_reference": "business-audit-1",
+                "workspace_plan": "business",
+                "app_recreated": True,
+            },
+        )
+    assert no_republish.value.status_code == 422
+    record_projection_verification(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        generation_id=active.id,
+        verification_kind="chatgpt_business_republish",
+        observed_schema_hash=active.schema_hash,
+        evidence={
+            "operator_reference": "business-audit-2",
+            "workspace_plan": "business",
+            "app_recreated": True,
+            "republished": True,
+        },
+    )
+    with pytest.raises(HTTPException) as no_snapshot:
+        record_projection_verification(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            generation_id=active.id,
+            verification_kind="chatgpt_frozen_snapshot",
+            observed_schema_hash=active.schema_hash,
+            evidence={"operator_reference": "snapshot-audit-1"},
+        )
+    assert no_snapshot.value.status_code == 422
+    record_projection_verification(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        generation_id=active.id,
+        verification_kind="chatgpt_frozen_snapshot",
+        observed_schema_hash=active.schema_hash,
+        evidence={
+            "operator_reference": "snapshot-audit-2",
+            "snapshot_reference": "chatgpt-actions-snapshot-42",
+        },
+    )

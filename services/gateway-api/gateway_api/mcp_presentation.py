@@ -4,8 +4,9 @@ import hashlib
 import json
 import re
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from fastapi import HTTPException, Request, status
 from jsonschema import Draft202012Validator, SchemaError
@@ -27,24 +28,57 @@ from .models import (
     utcnow,
 )
 
+PRESENTATION_MODES: dict[str, dict[str, Any]] = {
+    "catalog_broker": {
+        "label": "Catalog broker",
+        "description": "Stable five-tool federation broker and universal fallback.",
+        "required_capabilities": [],
+    },
+    "deferred_native": {
+        "label": "Deferred native",
+        "description": "Negotiated deferred mode; the broker remains public until CMG-FED-860 qualifies exact schema loading.",
+        "required_capabilities": ["deferred_loading", "tool_search"],
+    },
+    "native_projected": {
+        "label": "Native projected",
+        "description": "Reviewed first-class tools from an immutable projection generation.",
+        "required_capabilities": ["native_tools"],
+    },
+}
+
+PRESENTATION_CAPABILITIES = frozenset(
+    {
+        "deferred_loading",
+        "tool_search",
+        "native_tools",
+    }
+)
+WORKSPACE_PLANS = frozenset({"none", "business", "enterprise", "edu"})
+
 PRESENTATION_PROFILES: dict[str, dict[str, Any]] = {
     "chatgpt-stable": {
         "label": "ChatGPT stable",
-        "description": "Stable reviewed native actions; publication requires explicit ChatGPT refresh verification.",
+        "description": "Stable reviewed native actions with explicit external publication verification.",
         "supports_list_changed": False,
         "chatgpt_refresh_required": True,
+        "allowed_modes": ["catalog_broker", "native_projected"],
+        "default_mode": "native_projected",
     },
     "developer-dynamic": {
         "label": "Developer dynamic",
-        "description": "Reviewed native tools with generic MCP tools.listChanged lifecycle.",
+        "description": "Capability-negotiated broker, deferred or reviewed native presentation for dynamic MCP clients.",
         "supports_list_changed": True,
         "chatgpt_refresh_required": False,
+        "allowed_modes": ["catalog_broker", "deferred_native", "native_projected"],
+        "default_mode": "native_projected",
     },
     "agent-restricted": {
         "label": "Agent restricted",
-        "description": "Allowlisted subset of built-in, broker and reviewed native tools.",
+        "description": "Policy-limited broker, deferred or reviewed native presentation with an exact allowlist.",
         "supports_list_changed": False,
         "chatgpt_refresh_required": False,
+        "allowed_modes": ["catalog_broker", "deferred_native", "native_projected"],
+        "default_mode": "native_projected",
     },
 }
 
@@ -59,10 +93,21 @@ class PresentationContext:
     policy_generation: int
     scopes: frozenset[str]
     allowed_tool_names: frozenset[str] | None
+    configured_mode: str = "catalog_broker"
+    selected_mode: str = "catalog_broker"
+    capabilities: frozenset[str] = frozenset()
+    workspace_plan: str = "none"
+    selection_reason: str = "broker_fallback"
 
     @property
     def supports_list_changed(self) -> bool:
-        return bool(PRESENTATION_PROFILES[self.profile_id]["supports_list_changed"])
+        return self.selected_mode == "native_projected" and bool(
+            PRESENTATION_PROFILES[self.profile_id]["supports_list_changed"]
+        )
+
+    @property
+    def includes_native_projection(self) -> bool:
+        return self.selected_mode == "native_projected"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,10 +145,74 @@ def public_projection_name(
     return normalized
 
 
+def presentation_mode_payload(mode_id: str) -> dict[str, Any]:
+    if mode_id not in PRESENTATION_MODES:
+        raise HTTPException(status_code=422, detail="Unknown presentation mode")
+    return {"id": mode_id, **PRESENTATION_MODES[mode_id]}
+
+
 def presentation_profile_payload(profile_id: str) -> dict[str, Any]:
     if profile_id not in PRESENTATION_PROFILES:
         raise HTTPException(status_code=422, detail="Unknown presentation profile")
-    return {"id": profile_id, **PRESENTATION_PROFILES[profile_id]}
+    profile = dict(PRESENTATION_PROFILES[profile_id])
+    profile["modes"] = [
+        presentation_mode_payload(mode_id) for mode_id in profile["allowed_modes"]
+    ]
+    return {"id": profile_id, **profile}
+
+
+def _normalize_capabilities(values: Iterable[str]) -> frozenset[str]:
+    normalized = frozenset(str(value).strip() for value in values if str(value).strip())
+    unknown = sorted(normalized - PRESENTATION_CAPABILITIES)
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "MCP_PRESENTATION_CAPABILITY_UNKNOWN",
+                "capabilities": unknown,
+            },
+        )
+    return normalized
+
+
+def negotiate_presentation_mode(
+    *,
+    profile_id: str,
+    configured_mode: str,
+    capabilities: Iterable[str],
+) -> tuple[str, str]:
+    if profile_id not in PRESENTATION_PROFILES:
+        raise HTTPException(status_code=403, detail="Invalid presentation profile")
+    profile = PRESENTATION_PROFILES[profile_id]
+    allowed_modes = tuple(str(value) for value in profile["allowed_modes"])
+    if configured_mode not in allowed_modes:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "MCP_PRESENTATION_MODE_NOT_ALLOWED",
+                "configured_mode": configured_mode,
+                "profile_id": profile_id,
+            },
+        )
+    normalized = _normalize_capabilities(capabilities)
+    if configured_mode == "catalog_broker":
+        return "catalog_broker", "tenant_policy_requires_broker"
+    deferred_required = frozenset(
+        PRESENTATION_MODES["deferred_native"]["required_capabilities"]
+    )
+    if "deferred_native" in allowed_modes and deferred_required.issubset(normalized):
+        return "deferred_native", "smallest_capability_complete_surface"
+    native_required = frozenset(
+        PRESENTATION_MODES["native_projected"]["required_capabilities"]
+    )
+    if configured_mode == "native_projected" and native_required.issubset(normalized):
+        return "native_projected", "immutable_native_capability_verified"
+    missing = sorted(
+        (deferred_required if configured_mode == "deferred_native" else native_required)
+        - normalized
+    )
+    suffix = ",".join(missing) if missing else "policy_or_capability_mismatch"
+    return "catalog_broker", f"broker_fallback:{suffix}"
 
 
 def resolve_presentation_context(
@@ -128,6 +237,11 @@ def resolve_presentation_context(
             policy_generation=1,
             scopes=scopes,
             allowed_tool_names=None,
+            configured_mode="catalog_broker",
+            selected_mode="catalog_broker",
+            capabilities=frozenset(),
+            workspace_plan="none",
+            selection_reason="unauthenticated_client_broker_fallback",
         )
     client = db.get(OAuthClient, client_id)
     if client is None:
@@ -149,6 +263,20 @@ def resolve_presentation_context(
         )
     if profile_id not in PRESENTATION_PROFILES:
         raise HTTPException(status_code=403, detail="Invalid presentation profile")
+    configured_mode = str(claims.get("presentation_mode") or client.presentation_mode)
+    claim_capabilities = claims.get("presentation_capabilities")
+    capability_source = (
+        claim_capabilities if isinstance(claim_capabilities, list) else []
+    )
+    capabilities = _normalize_capabilities(capability_source)
+    workspace_plan = str(claims.get("workspace_plan") or client.workspace_plan)
+    if workspace_plan not in WORKSPACE_PLANS:
+        raise HTTPException(status_code=403, detail="Invalid workspace plan")
+    selected_mode, selection_reason = negotiate_presentation_mode(
+        profile_id=profile_id,
+        configured_mode=configured_mode,
+        capabilities=capabilities,
+    )
     claim_allowed = claims.get("allowed_tool_names")
     allowed_source = (
         claim_allowed if isinstance(claim_allowed, list) else client.allowed_tool_names
@@ -164,6 +292,11 @@ def resolve_presentation_context(
         policy_generation=token_generation,
         scopes=scopes,
         allowed_tool_names=allowed,
+        configured_mode=configured_mode,
+        selected_mode=selected_mode,
+        capabilities=capabilities,
+        workspace_plan=workspace_plan,
+        selection_reason=selection_reason,
     )
 
 
@@ -173,12 +306,41 @@ def update_oauth_client_profile(
     client_id: str,
     profile_id: str,
     allowed_tool_names: Iterable[str],
+    presentation_mode: str | None = None,
+    presentation_capabilities: Iterable[str] | None = None,
+    workspace_plan: str | None = None,
 ) -> OAuthClient:
     if profile_id not in PRESENTATION_PROFILES:
         raise HTTPException(status_code=422, detail="Unknown presentation profile")
     client = db.get(OAuthClient, client_id)
     if client is None:
         raise HTTPException(status_code=404, detail="OAuth client not found")
+    profile = PRESENTATION_PROFILES[profile_id]
+    resolved_mode = presentation_mode
+    if resolved_mode is None:
+        resolved_mode = (
+            str(profile["default_mode"])
+            if client.presentation_profile != profile_id
+            else client.presentation_mode
+        )
+    if resolved_mode not in profile["allowed_modes"]:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "MCP_PRESENTATION_MODE_NOT_ALLOWED",
+                "profile_id": profile_id,
+                "presentation_mode": resolved_mode,
+            },
+        )
+    capability_source = (
+        presentation_capabilities
+        if presentation_capabilities is not None
+        else client.presentation_capabilities or []
+    )
+    normalized_capabilities = sorted(_normalize_capabilities(capability_source))
+    resolved_workspace_plan = workspace_plan or client.workspace_plan or "none"
+    if resolved_workspace_plan not in WORKSPACE_PLANS:
+        raise HTTPException(status_code=422, detail="Unknown workspace plan")
     normalized_allowed = sorted(
         {str(name).strip() for name in allowed_tool_names if str(name).strip()}
     )
@@ -186,9 +348,15 @@ def update_oauth_client_profile(
         normalized_allowed = []
     if (
         client.presentation_profile != profile_id
+        or client.presentation_mode != resolved_mode
+        or list(client.presentation_capabilities or []) != normalized_capabilities
+        or client.workspace_plan != resolved_workspace_plan
         or list(client.allowed_tool_names or []) != normalized_allowed
     ):
         client.presentation_profile = profile_id
+        client.presentation_mode = resolved_mode
+        client.presentation_capabilities = normalized_capabilities
+        client.workspace_plan = resolved_workspace_plan
         client.allowed_tool_names = normalized_allowed
         client.presentation_policy_generation += 1
         client.updated_at = utcnow()
@@ -635,6 +803,61 @@ def rollback_generation(
     return generation
 
 
+def _validate_publication_evidence(
+    verification_kind: str,
+    evidence: dict[str, Any],
+) -> None:
+    reference = str(evidence.get("operator_reference") or "").strip()
+    if not reference:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "MCP_PROJECTION_EVIDENCE_INCOMPLETE",
+                "missing": ["operator_reference"],
+            },
+        )
+    if verification_kind == "chatgpt_enterprise_refresh":
+        workspace_plan = str(evidence.get("workspace_plan") or "")
+        required_true = [
+            "refresh_invoked",
+            "diff_reviewed",
+            "new_actions_default_disabled",
+        ]
+        missing = [name for name in required_true if evidence.get(name) is not True]
+        if workspace_plan not in {"enterprise", "edu"}:
+            missing.append("workspace_plan:enterprise|edu")
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "MCP_PROJECTION_ENTERPRISE_REFRESH_UNVERIFIED",
+                    "missing": missing,
+                },
+            )
+    elif verification_kind == "chatgpt_business_republish":
+        required_true = ["app_recreated", "republished"]
+        missing = [name for name in required_true if evidence.get(name) is not True]
+        if str(evidence.get("workspace_plan") or "") != "business":
+            missing.append("workspace_plan:business")
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "MCP_PROJECTION_BUSINESS_REPUBLISH_UNVERIFIED",
+                    "missing": missing,
+                },
+            )
+    elif verification_kind == "chatgpt_frozen_snapshot":
+        if not str(evidence.get("snapshot_reference") or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "MCP_PROJECTION_FROZEN_SNAPSHOT_UNVERIFIED",
+                    "missing": ["snapshot_reference"],
+                },
+            )
+
+
 def record_projection_verification(
     db: Session,
     *,
@@ -661,12 +884,25 @@ def record_projection_verification(
                 "observed": observed_schema_hash,
             },
         )
-    if verification_kind == "chatgpt_actions":
+    normalized_evidence = dict(evidence or {})
+    chatgpt_kinds = {
+        "chatgpt_actions",
+        "chatgpt_frozen_snapshot",
+        "chatgpt_enterprise_refresh",
+        "chatgpt_business_republish",
+    }
+    if verification_kind in chatgpt_kinds:
         if generation.profile_id != "chatgpt-stable":
             raise HTTPException(
                 status_code=422,
                 detail="ChatGPT verification applies only to chatgpt-stable",
             )
+        evidence_kind = (
+            "chatgpt_frozen_snapshot"
+            if verification_kind == "chatgpt_actions"
+            else verification_kind
+        )
+        _validate_publication_evidence(evidence_kind, normalized_evidence)
         generation.chatgpt_refresh_state = "verified"
     elif verification_kind == "generic_tools_list_changed":
         if not PRESENTATION_PROFILES[generation.profile_id]["supports_list_changed"]:
@@ -683,7 +919,7 @@ def record_projection_verification(
         generation_id=generation.id,
         verification_kind=verification_kind,
         observed_schema_hash=observed_schema_hash,
-        evidence=dict(evidence or {}),
+        evidence=normalized_evidence,
         verified_by_subject=actor_subject,
     )
     db.add(verification)
@@ -701,7 +937,7 @@ def record_projection_verification(
             "profile_id": generation.profile_id,
             "verification_kind": verification_kind,
             "observed_schema_hash": observed_schema_hash,
-            "evidence_field_count": len(evidence or {}),
+            "evidence_field_count": len(normalized_evidence),
         },
         commit=False,
     )
@@ -806,11 +1042,21 @@ def generation_payload(
 
 
 def oauth_client_presentation_payload(client: OAuthClient) -> dict[str, Any]:
+    selected_mode, selection_reason = negotiate_presentation_mode(
+        profile_id=client.presentation_profile,
+        configured_mode=client.presentation_mode,
+        capabilities=client.presentation_capabilities or [],
+    )
     return {
         "client_id": client.client_id,
         "client_name": client.client_name,
         "presentation_profile": client.presentation_profile,
         "presentation_policy_generation": client.presentation_policy_generation,
+        "presentation_mode": client.presentation_mode,
+        "selected_mode": selected_mode,
+        "selection_reason": selection_reason,
+        "presentation_capabilities": list(client.presentation_capabilities or []),
+        "workspace_plan": client.workspace_plan,
         "allowed_tool_names": list(client.allowed_tool_names or []),
         "updated_at": client.updated_at,
     }

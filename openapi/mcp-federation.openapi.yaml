@@ -1824,6 +1824,37 @@ components:
           - developer-dynamic
           - agent-restricted
           title: Profile Id
+        presentation_mode:
+          anyOf:
+          - type: string
+            enum:
+            - catalog_broker
+            - deferred_native
+            - native_projected
+          - type: 'null'
+          title: Presentation Mode
+        presentation_capabilities:
+          anyOf:
+          - items:
+              type: string
+              enum:
+              - deferred_loading
+              - tool_search
+              - native_tools
+            type: array
+            maxItems: 20
+          - type: 'null'
+          title: Presentation Capabilities
+        workspace_plan:
+          anyOf:
+          - type: string
+            enum:
+            - none
+            - business
+            - enterprise
+            - edu
+          - type: 'null'
+          title: Workspace Plan
         allowed_tool_names:
           items:
             type: string
@@ -1864,6 +1895,9 @@ components:
           enum:
           - generic_tools_list_changed
           - chatgpt_actions
+          - chatgpt_frozen_snapshot
+          - chatgpt_enterprise_refresh
+          - chatgpt_business_republish
           title: Verification Kind
         observed_schema_hash:
           type: string

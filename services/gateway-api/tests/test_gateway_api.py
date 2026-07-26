@@ -5673,8 +5673,8 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "slot": "local",
         "initialization_status": "ready",
         "database_at_head": True,
-        "database_revision": "20260726_0008",
-        "database_head": "20260726_0008",
+        "database_revision": "20260726_0009",
+        "database_head": "20260726_0009",
     }
     ready = client.get("/ready")
     assert ready.status_code == 200
@@ -6503,6 +6503,12 @@ def test_mcp_public_protocol_negotiation_matrix(client: TestClient) -> None:
         assert "resources" not in result["capabilities"]
         assert "prompts" not in result["capabilities"]
         assert "sampling" not in result["capabilities"]
+        presentation = result["_meta"]["gateway"]["presentation"]
+        assert presentation["profile_id"] == "developer-dynamic"
+        assert presentation["configured_mode"] == "catalog_broker"
+        assert presentation["selected_mode"] == "catalog_broker"
+        assert presentation["capabilities"] == []
+        assert presentation["selection_reason"] == "unauthenticated_client_broker_fallback"
 
 
 def test_mcp_public_rejects_unaccepted_protocol_versions(client: TestClient) -> None:

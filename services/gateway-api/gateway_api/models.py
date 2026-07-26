@@ -178,6 +178,14 @@ class OAuthClient(Base):
             "presentation_profile in ('chatgpt-stable', 'developer-dynamic', 'agent-restricted')",
             name="ck_oauth_client_presentation_profile",
         ),
+        CheckConstraint(
+            "presentation_mode in ('catalog_broker', 'deferred_native', 'native_projected')",
+            name="ck_oauth_client_presentation_mode",
+        ),
+        CheckConstraint(
+            "workspace_plan in ('none', 'business', 'enterprise', 'edu')",
+            name="ck_oauth_client_workspace_plan",
+        ),
     )
 
     client_id: Mapped[str] = mapped_column(String(255), primary_key=True)
@@ -188,6 +196,13 @@ class OAuthClient(Base):
         String(40), default="chatgpt-stable", index=True
     )
     presentation_policy_generation: Mapped[int] = mapped_column(Integer, default=1)
+    presentation_mode: Mapped[str] = mapped_column(
+        String(40), default="native_projected", index=True
+    )
+    presentation_capabilities: Mapped[list[str]] = mapped_column(
+        JSON, default=lambda: ["native_tools"]
+    )
+    workspace_plan: Mapped[str] = mapped_column(String(24), default="none", index=True)
     allowed_tool_names: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -1225,7 +1240,7 @@ class McpProjectionVerification(Base):
     __tablename__ = "mcp_projection_verifications"
     __table_args__ = (
         CheckConstraint(
-            "verification_kind in ('generic_tools_list_changed', 'chatgpt_actions')",
+            "verification_kind in ('generic_tools_list_changed', 'chatgpt_actions', 'chatgpt_frozen_snapshot', 'chatgpt_enterprise_refresh', 'chatgpt_business_republish')",
             name="ck_mcp_projection_verification_kind",
         ),
         Index(

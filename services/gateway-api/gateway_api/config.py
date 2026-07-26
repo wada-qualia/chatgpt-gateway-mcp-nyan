@@ -37,7 +37,10 @@ class Settings(BaseSettings):
     keycloak_client_secret: str = ""
     keycloak_ca_cert_path: str | None = None
     oauth_audience: str = "chatgpt-mcp-ssh-gateway"
-    oauth_supported_scopes: str = "workspace:read workspace:write workspace:exec devices:manage docker:manage audit:read"
+    oauth_supported_scopes: str = (
+        "workspace:read workspace:write workspace:exec devices:manage "
+        "docker:manage audit:read usage:write usage:read"
+    )
     gateway_mcp_federation_enabled: bool = True
     gateway_mcp_federation_writes_paused: bool = False
     gateway_mcp_federation_pilot_owner_subjects: str = ""

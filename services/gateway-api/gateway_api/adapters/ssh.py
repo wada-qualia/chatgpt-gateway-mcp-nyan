@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 from dataclasses import dataclass
@@ -300,6 +301,51 @@ def _read_stream(stream: Any) -> str:
     return str(data or "")
 
 
+def _prepare_remote_command(
+    command: str,
+    credentials: SshCredentials,
+) -> tuple[str, str | None]:
+    normalized = command.strip()
+    if re.match(r"^sudo(?:\s|$)", normalized) is None:
+        return normalized, None
+    if credentials.auth_type != "password" or not credentials.secret:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Privileged SSH execution requires a password-authenticated device "
+                "or a separately configured privilege credential"
+            ),
+        )
+    if any(char in credentials.secret for char in ("\r", "\n")):
+        raise HTTPException(
+            status_code=400,
+            detail="Privilege credential cannot contain line breaks",
+        )
+    root_script = f"exec </dev/null; {normalized}"
+    wrapped = f"sudo -k -S -p '' -- sh -lc {shlex.quote(root_script)}"
+    return wrapped, credentials.secret
+
+
+def _write_privilege_credential(stdin: Any, value: str) -> None:
+    if stdin is None or not hasattr(stdin, "write"):
+        raise HTTPException(
+            status_code=502,
+            detail="SSH command channel does not accept privilege authentication input",
+        )
+    try:
+        stdin.write(value + "\n")
+        if hasattr(stdin, "flush"):
+            stdin.flush()
+        channel = getattr(stdin, "channel", None)
+        if channel is not None and hasattr(channel, "shutdown_write"):
+            channel.shutdown_write()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="SSH privilege authentication input failed",
+        ) from exc
+
+
 def run_ssh_command(
     device: Device,
     credentials: SshCredentials,
@@ -310,6 +356,10 @@ def run_ssh_command(
 ) -> SshCommandResult:
     if not command.strip():
         raise HTTPException(status_code=400, detail="SSH command must not be empty")
+    remote_command, privilege_credential = _prepare_remote_command(
+        command,
+        credentials,
+    )
     client = _ssh_client(
         device,
         credentials,
@@ -317,7 +367,12 @@ def run_ssh_command(
         client_factory=client_factory,
     )
     try:
-        _, stdout, stderr = client.exec_command(command, timeout=timeout_seconds)
+        stdin, stdout, stderr = client.exec_command(
+            remote_command,
+            timeout=timeout_seconds,
+        )
+        if privilege_credential is not None:
+            _write_privilege_credential(stdin, privilege_credential)
         stdout_text = _read_stream(stdout)
         stderr_text = _read_stream(stderr)
         exit_status = 0

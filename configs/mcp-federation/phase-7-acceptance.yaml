@@ -8,7 +8,7 @@ required_levels:
 - failure_injection
 - e2e
 legacy_surface_profile: docker-disabled-unrestricted-ssh
-legacy_surface_sha256: d19dac351a7a6998a1ef6f3d624837ed9aab8df6f9c59f41f777b76890198811
+legacy_surface_sha256: 4d82055fa378205b25089787fa02e5e9b84c2ef182aa26c57ef205913027ca7d
 legacy_tool_count: 94
 scenarios:
 - id: catalog_only_no_public_schema

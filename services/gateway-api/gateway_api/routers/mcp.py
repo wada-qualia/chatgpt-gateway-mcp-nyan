@@ -559,7 +559,7 @@ def _ssh_tools(settings: Settings, ssh_command_profile: str) -> list[dict[str, A
         tools.append(
             _tool(
                 "ssh_device_run_command",
-                "Run an arbitrary shell command on a registered SSH device when the effective account SSH command profile is filtered or unrestricted. The unrestricted profile is the deployment default.",
+                "Run an arbitrary shell command on a registered SSH device when the effective account SSH command profile is filtered or unrestricted. The unrestricted profile is the deployment default. A command beginning with sudo uses the registered password credential for backend-only privilege authentication without exposing it in tool arguments, command text, monitoring output, or audit payloads.",
                 _object_schema(
                     {
                         "device_id": _string("SSH device id."),

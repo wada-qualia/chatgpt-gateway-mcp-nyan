@@ -1296,6 +1296,7 @@ class McpRuntimeConnection(Base):
     __table_args__ = (
         UniqueConstraint(
             "owner_subject",
+            "server_id",
             "connection_instance_id",
             name="uq_mcp_runtime_connection_instance",
         ),

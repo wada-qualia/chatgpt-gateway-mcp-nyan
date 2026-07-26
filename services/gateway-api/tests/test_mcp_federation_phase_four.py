@@ -275,6 +275,58 @@ def test_runtime_registration_flushes_parent_before_runtime_fk(db: Session) -> N
     )
 
 
+
+def test_runtime_registration_allows_multiple_servers_per_connection(
+    db: Session,
+) -> None:
+    client = _client(db)
+    manager = ThinClientConnectionManager()
+    connection = asyncio.run(manager.register(client.id, FakeWebSocket()))
+    local_server_ids = {"stdio-a", "stdio-b"}
+    asyncio.run(
+        manager.register_runtime(
+            client.id,
+            connection,
+            runtime_id="runtime-a",
+            protocol_version=MCP_THIN_CLIENT_PROTOCOL_VERSION,
+            capabilities=MCP_THIN_CLIENT_CAPABILITIES,
+            local_server_ids=local_server_ids,
+        )
+    )
+    message = _registration()
+    message["servers"].append(
+        {
+            "local_server_id": "stdio-b",
+            "display_name": "Second Local Stdio MCP",
+            "transport": "stdio",
+        }
+    )
+
+    acknowledgement = register_runtime(
+        db,
+        owner_subject="tenant-a",
+        client_id=client.id,
+        connection=connection,
+        message=message,
+    )
+
+    server_ids = {item["server_id"] for item in acknowledgement["servers"]}
+    runtime_rows = (
+        db.query(McpRuntimeConnection)
+        .filter(
+            McpRuntimeConnection.owner_subject == "tenant-a",
+            McpRuntimeConnection.connection_instance_id
+            == connection.connection_instance_id,
+        )
+        .all()
+    )
+    assert len(server_ids) == 2
+    assert len(runtime_rows) == 2
+    assert {item.server_id for item in runtime_rows} == server_ids
+    assert {item.meta["local_server_id"] for item in runtime_rows} == local_server_ids
+    assert all(item.state == "online" for item in runtime_rows)
+
+
 def test_runtime_registration_reconnect_and_transactional_catalog(db: Session) -> None:
     client = _client(db)
     manager = ThinClientConnectionManager()

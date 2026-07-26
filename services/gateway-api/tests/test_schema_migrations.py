@@ -165,6 +165,46 @@ def test_postgresql_revision_guard_compares_json_as_jsonb() -> None:
     assert "DROP TRIGGER" not in migration.upper()
 
 
+
+def test_runtime_connection_identity_is_server_scoped() -> None:
+    root = Path(__file__).resolve().parents[3]
+    migration_path = (
+        root
+        / "database"
+        / "alembic"
+        / "versions"
+        / "20260726_0005_mcp_runtime_connection_cardinality.py"
+    )
+    migration = migration_path.read_text(encoding="utf-8")
+    model = (
+        root / "services" / "gateway-api" / "gateway_api" / "models.py"
+    ).read_text(encoding="utf-8")
+    fresh_install_sources = [
+        root / "database" / "migrations" / "002_mcp_federation_control_plane.sql",
+        root / "database" / "alembic" / "postgresql_baseline.sql",
+    ]
+    expected = "UNIQUE (owner_subject, server_id, connection_instance_id)"
+    legacy = "UNIQUE (owner_subject, connection_instance_id)"
+
+    assert 'revision = "20260726_0005"' in migration
+    assert 'down_revision = "20260725_0004"' in migration
+    assert "GROUP BY owner_subject, server_id, connection_instance_id" in migration
+    assert "HAVING COUNT(*) > 1" in migration
+    assert f'_LEGACY_DEFINITION = "{legacy}"' in migration
+    assert '"UNIQUE (owner_subject, server_id, connection_instance_id)"' in migration
+    assert "current_definition == _EXPECTED_DEFINITION" in migration
+    assert "current_definition != _LEGACY_DEFINITION" in migration
+    assert '["owner_subject", "server_id", "connection_instance_id"]' in migration
+    assert "downgrade is not supported" in migration
+    assert '"owner_subject",' in model
+    assert '"server_id",' in model
+    assert '"connection_instance_id",' in model
+    for source in fresh_install_sources:
+        source_text = source.read_text(encoding="utf-8")
+        assert expected in source_text
+        assert legacy not in source_text
+
+
 def test_application_startup_fails_when_migrations_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

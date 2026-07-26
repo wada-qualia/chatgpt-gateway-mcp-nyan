@@ -1671,7 +1671,7 @@ CREATE TABLE mcp_runtime_connections (
 	last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
 	disconnected_at TIMESTAMP WITH TIME ZONE,
 	PRIMARY KEY (id),
-	CONSTRAINT uq_mcp_runtime_connection_instance UNIQUE (owner_subject, connection_instance_id),
+	CONSTRAINT uq_mcp_runtime_connection_instance UNIQUE (owner_subject, server_id, connection_instance_id),
 	FOREIGN KEY(server_id) REFERENCES mcp_servers (id),
 	FOREIGN KEY(thin_client_id) REFERENCES thin_clients (id)
 );

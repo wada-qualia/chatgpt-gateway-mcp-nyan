@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gateway.example.com/contracts/mcp-federation/v1/capability-entity-revision.schema.json",
+  "title": "MCP Capability Entity Revision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "server_id", "entity_id", "entity_kind", "revision_number",
+    "descriptor", "content_metadata", "schema_hash", "protocol_version",
+    "catalog_generation", "discovered_at", "created_at"
+  ],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "server_id": {"type": "string", "format": "uuid"},
+    "entity_id": {"type": "string", "format": "uuid"},
+    "entity_kind": {"enum": ["resource", "resource_template", "prompt"]},
+    "revision_number": {"type": "integer", "minimum": 1},
+    "descriptor": {"type": "object"},
+    "argument_schema": {"type": ["object", "null"]},
+    "content_metadata": {"type": "object"},
+    "schema_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "protocol_version": {"type": "string"},
+    "catalog_generation": {"type": "integer", "minimum": 1},
+    "discovered_at": {"type": "string", "format": "date-time"},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

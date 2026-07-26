@@ -1,0 +1,15 @@
+openapi: 3.1.0
+info:
+  title: MCP Federation Capability Control Plane Contract
+  version: 1.0.0
+  description: Schema contract only; no Phase 8 capability execution routes are enabled.
+paths: {}
+x-implementation-status: storage-only-not-exposed
+components:
+  schemas:
+    CapabilitySnapshot:
+      $ref: ./capability-snapshot.schema.json
+    CapabilityEntityRevision:
+      $ref: ./capability-entity-revision.schema.json
+    CapabilityEvent:
+      $ref: ./capability-event.schema.json

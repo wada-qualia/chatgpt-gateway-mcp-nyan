@@ -59,6 +59,17 @@ def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
         "connection_instance_id",
         "thin_client_request_id",
     } <= invocation_columns
+    capability_tables = {
+        "mcp_capability_snapshots",
+        "mcp_capability_entities",
+        "mcp_capability_entity_revisions",
+        "mcp_capability_subscriptions",
+        "mcp_root_grants",
+        "mcp_interaction_consents",
+        "mcp_federated_tasks",
+        "mcp_capability_events",
+    }
+    assert capability_tables <= set(inspect(target_engine).get_table_names())
 
 
 def test_legacy_database_is_adopted_and_upgraded(tmp_path: Path) -> None:
@@ -109,6 +120,17 @@ def test_legacy_database_is_adopted_and_upgraded(tmp_path: Path) -> None:
         "connection_instance_id",
         "thin_client_request_id",
     } <= invocation_columns
+    capability_tables = {
+        "mcp_capability_snapshots",
+        "mcp_capability_entities",
+        "mcp_capability_entity_revisions",
+        "mcp_capability_subscriptions",
+        "mcp_root_grants",
+        "mcp_interaction_consents",
+        "mcp_federated_tasks",
+        "mcp_capability_events",
+    }
+    assert capability_tables <= set(inspect(target_engine).get_table_names())
 
 
 def test_unrecognized_database_fails_closed(tmp_path: Path) -> None:

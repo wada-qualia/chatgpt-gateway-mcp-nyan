@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gateway.example.com/contracts/mcp-federation/v1/capability-event.schema.json",
+  "title": "MCP Capability Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "server_id", "capability", "event_kind", "direction",
+    "payload_redacted", "payload_sha256", "created_at"
+  ],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "server_id": {"type": "string", "format": "uuid"},
+    "runtime_connection_id": {"type": ["string", "null"], "format": "uuid"},
+    "capability": {
+      "enum": ["lifecycle", "tools", "resources", "prompts", "roots", "sampling", "elicitation", "logging", "completions", "tasks"]
+    },
+    "event_kind": {"type": "string", "minLength": 1, "maxLength": 120},
+    "direction": {"enum": ["upstream_to_gateway", "gateway_to_upstream", "internal"]},
+    "correlation_id": {"type": ["string", "null"], "maxLength": 160},
+    "request_id": {"type": ["string", "null"], "maxLength": 160},
+    "task_id": {"type": ["string", "null"], "format": "uuid"},
+    "entity_id": {"type": ["string", "null"], "format": "uuid"},
+    "payload_redacted": {"type": "object"},
+    "payload_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

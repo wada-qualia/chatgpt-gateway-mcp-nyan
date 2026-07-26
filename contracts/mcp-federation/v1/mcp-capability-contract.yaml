@@ -1,0 +1,41 @@
+version: 1
+protocol_baseline: "2025-11-25"
+implementation_status: storage_and_negotiation_only
+capabilities:
+  tools:
+    methods: [tools/list, tools/call, notifications/tools/list_changed]
+    execution_status: production_read_only_pilot
+  resources:
+    methods: [resources/list, resources/templates/list, resources/read, resources/subscribe, resources/unsubscribe, notifications/resources/list_changed, notifications/resources/updated]
+    execution_status: not_enabled
+    storage_entities: [resource, resource_template, subscription]
+  prompts:
+    methods: [prompts/list, prompts/get, notifications/prompts/list_changed, completion/complete]
+    execution_status: not_enabled
+    storage_entities: [prompt]
+  roots:
+    methods: [roots/list, notifications/roots/list_changed]
+    execution_status: not_enabled
+    storage_entities: [root_grant]
+  sampling:
+    methods: [sampling/createMessage]
+    execution_status: not_enabled
+    storage_entities: [interaction_consent]
+  elicitation:
+    methods: [elicitation/create]
+    execution_status: not_enabled
+    storage_entities: [interaction_consent]
+  tasks:
+    methods: [tasks/get, tasks/list, tasks/cancel, notifications/tasks/status]
+    execution_status: not_enabled
+    experimental: true
+    storage_entities: [federated_task]
+  logging:
+    methods: [logging/setLevel, notifications/message]
+    execution_status: not_enabled
+    storage_entities: [capability_event]
+ownership:
+  gateway_backend: [protocol_admission, capability_snapshots, entity_revisions, policy_state, normalized_events, audit]
+  thin_client: [local_process_definition, local_environment, local_secrets, local_transport]
+  upstream_server: [raw_capability_declarations, upstream_entity_payloads, upstream_task_identity]
+  chatgpt_presentation: [stable_broker_schema, reviewed_projection_generation]

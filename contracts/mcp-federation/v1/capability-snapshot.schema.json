@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gateway.example.com/contracts/mcp-federation/v1/capability-snapshot.schema.json",
+  "title": "MCP Capability Snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "owner_subject", "server_id", "runtime_connection_id", "source",
+    "protocol_version", "catalog_generation", "server_capabilities",
+    "client_capabilities", "negotiated_features", "capability_hash", "created_at"
+  ],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "owner_subject": {"type": "string", "minLength": 1, "maxLength": 255, "writeOnly": true},
+    "server_id": {"type": "string", "format": "uuid"},
+    "runtime_connection_id": {"type": "string", "format": "uuid"},
+    "source": {"enum": ["remote_initialize", "thin_client_registration"]},
+    "protocol_version": {"enum": ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]},
+    "catalog_generation": {"type": "integer", "minimum": 0},
+    "server_capabilities": {"type": "object"},
+    "client_capabilities": {"type": "object"},
+    "negotiated_features": {"type": "object"},
+    "capability_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

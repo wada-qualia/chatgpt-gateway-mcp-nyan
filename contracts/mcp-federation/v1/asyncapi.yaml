@@ -1,0 +1,22 @@
+asyncapi: 3.0.0
+info:
+  title: MCP Federation Normalized Capability Events
+  version: 1.0.0
+  description: Internal event contract; publication transport is not enabled by Phase 8.
+x-implementation-status: schema-only
+channels:
+  capabilityEvents:
+    address: gateway.mcp.capability.events.v1
+    messages:
+      capabilityEvent:
+        $ref: '#/components/messages/CapabilityEvent'
+operations:
+  observeCapabilityEvent:
+    action: receive
+    channel:
+      $ref: '#/channels/capabilityEvents'
+components:
+  messages:
+    CapabilityEvent:
+      payload:
+        $ref: ./capability-event.schema.json

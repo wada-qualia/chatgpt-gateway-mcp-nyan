@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from .crypto import decrypt_text, encrypt_text
 from .events import emit_event
+from .mcp_capability_control_plane import record_capability_snapshot
 from .mcp_federation import (
     get_revision,
     get_server,
@@ -1310,6 +1311,22 @@ class UpstreamMcpManager:
                             "capability_admission": capability_admission.as_dict(),
                         }
                         runtime.last_seen_at = utcnow()
+                        record_capability_snapshot(
+                            db,
+                            owner_subject=server.owner_subject,
+                            server_id=server.id,
+                            runtime_connection_id=runtime.id,
+                            source="remote_initialize",
+                            protocol_version=capability_admission.protocol_version,
+                            catalog_generation=server.catalog_generation,
+                            server_capabilities=initialized.capabilities.model_dump(
+                                mode="json",
+                                by_alias=True,
+                                exclude_none=True,
+                            ),
+                            client_capabilities={},
+                            negotiated_features=capability_admission.as_dict(),
+                        )
                         emit_event(
                             db,
                             event_type="gateway.mcp.runtime.connected.v1",

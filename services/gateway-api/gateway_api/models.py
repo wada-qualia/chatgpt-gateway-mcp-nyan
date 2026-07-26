@@ -1375,6 +1375,382 @@ class McpOAuthAuthorizationState(Base):
     )
 
 
+class McpCapabilitySnapshot(Base):
+    __tablename__ = "mcp_capability_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "server_id",
+            "runtime_connection_id",
+            name="uq_mcp_capability_snapshot_server_runtime",
+        ),
+        Index(
+            "ix_mcp_capability_snapshot_owner_created",
+            "owner_subject",
+            "created_at",
+        ),
+        Index(
+            "ix_mcp_capability_snapshot_server_generation",
+            "server_id",
+            "catalog_generation",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    runtime_connection_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_runtime_connections.id"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(60), index=True)
+    protocol_version: Mapped[str] = mapped_column(String(32), index=True)
+    catalog_generation: Mapped[int] = mapped_column(Integer, default=0)
+    server_capabilities: Mapped[dict] = mapped_column(JSON, default=dict)
+    client_capabilities: Mapped[dict] = mapped_column(JSON, default=dict)
+    negotiated_features: Mapped[dict] = mapped_column(JSON, default=dict)
+    capability_hash: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpCapabilityEntity(Base):
+    __tablename__ = "mcp_capability_entities"
+    __table_args__ = (
+        UniqueConstraint(
+            "server_id",
+            "entity_kind",
+            "upstream_key",
+            name="uq_mcp_capability_entity_server_kind_key",
+        ),
+        CheckConstraint(
+            "entity_kind in ('resource', 'resource_template', 'prompt')",
+            name="ck_mcp_capability_entity_kind",
+        ),
+        CheckConstraint(
+            "lifecycle_state in ('active', 'missing', 'disabled')",
+            name="ck_mcp_capability_entity_lifecycle",
+        ),
+        Index(
+            "ix_mcp_capability_entity_owner_kind",
+            "owner_subject",
+            "entity_kind",
+        ),
+        Index(
+            "ix_mcp_capability_entity_server_state",
+            "server_id",
+            "lifecycle_state",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    entity_kind: Mapped[str] = mapped_column(String(40), index=True)
+    upstream_key: Mapped[str] = mapped_column(Text)
+    normalized_key: Mapped[str] = mapped_column(String(512), index=True)
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(40), default="active", index=True
+    )
+    current_revision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_capability_entity_revisions.id"), nullable=True, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    first_observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    last_observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpCapabilityEntityRevision(Base):
+    __tablename__ = "mcp_capability_entity_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "entity_id",
+            "revision_number",
+            name="uq_mcp_capability_entity_revision_number",
+        ),
+        UniqueConstraint(
+            "entity_id",
+            "schema_hash",
+            name="uq_mcp_capability_entity_revision_hash",
+        ),
+        CheckConstraint(
+            "entity_kind in ('resource', 'resource_template', 'prompt')",
+            name="ck_mcp_capability_entity_revision_kind",
+        ),
+        Index(
+            "ix_mcp_capability_entity_revision_server_generation",
+            "server_id",
+            "catalog_generation",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    entity_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_capability_entities.id"), index=True
+    )
+    entity_kind: Mapped[str] = mapped_column(String(40), index=True)
+    revision_number: Mapped[int] = mapped_column(Integer)
+    descriptor: Mapped[dict] = mapped_column(JSON, default=dict)
+    argument_schema: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    content_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    schema_hash: Mapped[str] = mapped_column(String(64), index=True)
+    protocol_version: Mapped[str] = mapped_column(String(32), index=True)
+    catalog_generation: Mapped[int] = mapped_column(Integer)
+    discovered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpCapabilitySubscription(Base):
+    __tablename__ = "mcp_capability_subscriptions"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "server_id",
+            "subscription_key",
+            name="uq_mcp_capability_subscription_owner_server_key",
+        ),
+        CheckConstraint(
+            "capability_kind in ('resource', 'resource_template')",
+            name="ck_mcp_capability_subscription_kind",
+        ),
+        CheckConstraint(
+            "status in ('active', 'paused', 'revoked')",
+            name="ck_mcp_capability_subscription_status",
+        ),
+        Index(
+            "ix_mcp_capability_subscription_server_status",
+            "server_id",
+            "status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    entity_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_capability_entities.id"), nullable=True, index=True
+    )
+    capability_kind: Mapped[str] = mapped_column(String(40), index=True)
+    subscription_key: Mapped[str] = mapped_column(String(160))
+    uri_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    uri_hint: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    list_generation: Mapped[int] = mapped_column(Integer, default=0)
+    cursor: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    last_event_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpRootGrant(Base):
+    __tablename__ = "mcp_root_grants"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "server_id",
+            "root_uri_sha256",
+            name="uq_mcp_root_grant_owner_server_uri",
+        ),
+        CheckConstraint(
+            "status in ('pending', 'approved', 'revoked', 'expired')",
+            name="ck_mcp_root_grant_status",
+        ),
+        Index("ix_mcp_root_grant_server_status", "server_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    runtime_connection_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_runtime_connections.id"), nullable=True, index=True
+    )
+    root_uri_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    root_uri_hint: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    root_name: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    grant_scope: Mapped[str] = mapped_column(String(80), default="read")
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    policy_generation: Mapped[int] = mapped_column(Integer, default=1)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    granted_by_subject: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    granted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpInteractionConsent(Base):
+    __tablename__ = "mcp_interaction_consents"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "server_id",
+            "capability",
+            "request_kind",
+            "policy_generation",
+            name="uq_mcp_interaction_consent_policy",
+        ),
+        CheckConstraint(
+            "capability in ('sampling', 'elicitation')",
+            name="ck_mcp_interaction_consent_capability",
+        ),
+        CheckConstraint(
+            "status in ('pending', 'approved', 'denied', 'expired', 'revoked')",
+            name="ck_mcp_interaction_consent_status",
+        ),
+        Index(
+            "ix_mcp_interaction_consent_server_status",
+            "server_id",
+            "status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    capability: Mapped[str] = mapped_column(String(40), index=True)
+    request_kind: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    required_role: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    required_scope: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    policy_generation: Mapped[int] = mapped_column(Integer, default=1)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    decided_by_subject: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpFederatedTask(Base):
+    __tablename__ = "mcp_federated_tasks"
+    __table_args__ = (
+        UniqueConstraint(
+            "server_id",
+            "upstream_task_id",
+            name="uq_mcp_federated_task_server_upstream",
+        ),
+        CheckConstraint(
+            "status in ('working', 'input_required', 'completed', 'failed', 'cancelled')",
+            name="ck_mcp_federated_task_status",
+        ),
+        Index("ix_mcp_federated_task_owner_status", "owner_subject", "status"),
+        Index("ix_mcp_federated_task_server_updated", "server_id", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    runtime_connection_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_runtime_connections.id"), nullable=True, index=True
+    )
+    upstream_task_id: Mapped[str] = mapped_column(String(255), index=True)
+    task_kind: Mapped[str] = mapped_column(String(120), index=True)
+    request_method: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(40), default="working", index=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    result_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpCapabilityEvent(Base):
+    __tablename__ = "mcp_capability_events"
+    __table_args__ = (
+        CheckConstraint(
+            "direction in ('upstream_to_gateway', 'gateway_to_upstream', 'internal')",
+            name="ck_mcp_capability_event_direction",
+        ),
+        Index(
+            "ix_mcp_capability_event_owner_created",
+            "owner_subject",
+            "created_at",
+        ),
+        Index(
+            "ix_mcp_capability_event_server_kind",
+            "server_id",
+            "event_kind",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    runtime_connection_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_runtime_connections.id"), nullable=True, index=True
+    )
+    capability: Mapped[str] = mapped_column(String(40), index=True)
+    event_kind: Mapped[str] = mapped_column(String(120), index=True)
+    direction: Mapped[str] = mapped_column(String(40), index=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    task_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_federated_tasks.id"), nullable=True, index=True
+    )
+    entity_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_capability_entities.id"), nullable=True, index=True
+    )
+    payload_redacted: Mapped[dict] = mapped_column(JSON, default=dict)
+    payload_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
 class McpMutationReceipt(Base):
     __tablename__ = "mcp_mutation_receipts"
     __table_args__ = (

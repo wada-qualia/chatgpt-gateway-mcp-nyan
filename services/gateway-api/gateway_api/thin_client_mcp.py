@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from .mcp_capability_control_plane import record_capability_snapshot
 from .mcp_federation import reconcile_catalog_snapshot
 from .mcp_federation_policy import normalize_slug, sha256_json
 from .models import (
@@ -288,6 +289,25 @@ def register_runtime(
             runtime.last_seen_at = now
             runtime.disconnected_at = None
 
+        db.flush([runtime])
+        record_capability_snapshot(
+            db,
+            owner_subject=owner_subject,
+            server_id=server_id,
+            runtime_connection_id=runtime.id,
+            source="thin_client_registration",
+            protocol_version=protocol_version,
+            catalog_generation=server.catalog_generation,
+            server_capabilities={"tools": {"catalog": True}},
+            client_capabilities={},
+            negotiated_features={
+                "thin_client_protocol": MCP_THIN_CLIENT_PROTOCOL_VERSION,
+                "runtime_capabilities": sorted(
+                    capabilities.intersection(MCP_THIN_CLIENT_CAPABILITIES)
+                ),
+                "transport": descriptor["transport"],
+            },
+        )
         server.last_connected_at = now
         mappings.append(
             {

@@ -5673,8 +5673,8 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "slot": "local",
         "initialization_status": "ready",
         "database_at_head": True,
-        "database_revision": "20260726_0005",
-        "database_head": "20260726_0005",
+        "database_revision": "20260726_0006",
+        "database_head": "20260726_0006",
     }
     ready = client.get("/ready")
     assert ready.status_code == 200

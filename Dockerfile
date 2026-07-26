@@ -52,6 +52,7 @@ COPY cli /app/cli
 COPY scripts /app/scripts
 COPY app /app/app
 COPY configs /app/configs
+COPY contracts /app/contracts
 COPY openapi /app/openapi
 COPY asyncapi /app/asyncapi
 COPY schemas /app/schemas

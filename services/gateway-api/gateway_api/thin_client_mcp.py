@@ -208,6 +208,11 @@ def register_runtime(
                 updated_at=now,
             )
             db.add(server)
+            # McpRuntimeConnection references this deterministic server id, but the
+            # models intentionally do not expose an ORM relationship that SQLAlchemy
+            # can use to order the inserts. Persist the parent row before creating the
+            # dependent runtime row so PostgreSQL cannot observe a transient FK gap.
+            db.flush([server])
         else:
             if server.transport != descriptor["transport"]:
                 server.trust_level = "unreviewed"

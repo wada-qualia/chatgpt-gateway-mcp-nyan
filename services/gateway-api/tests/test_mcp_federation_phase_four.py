@@ -4,7 +4,7 @@ import asyncio
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -217,6 +217,62 @@ def test_exact_connection_fencing_and_unknown_write_outcome() -> None:
         assert captured.value.retryable is False
 
     asyncio.run(scenario())
+
+
+
+def test_runtime_registration_flushes_parent_before_runtime_fk(db: Session) -> None:
+    client = _client(db)
+    manager = ThinClientConnectionManager()
+    connection = asyncio.run(manager.register(client.id, FakeWebSocket()))
+    asyncio.run(
+        manager.register_runtime(
+            client.id,
+            connection,
+            runtime_id="runtime-a",
+            protocol_version=MCP_THIN_CLIENT_PROTOCOL_VERSION,
+            capabilities=MCP_THIN_CLIENT_CAPABILITIES,
+            local_server_ids={"stdio-a"},
+        )
+    )
+    flush_batches: list[frozenset[type]] = []
+
+    def capture_flush(session: Session, *_: object) -> None:
+        flush_batches.append(frozenset(type(item) for item in session.new))
+
+    event.listen(db, "before_flush", capture_flush)
+    try:
+        acknowledgement = register_runtime(
+            db,
+            owner_subject="tenant-a",
+            client_id=client.id,
+            connection=connection,
+            message=_registration(),
+        )
+    finally:
+        event.remove(db, "before_flush", capture_flush)
+
+    server_id = acknowledgement["servers"][0]["server_id"]
+    parent_batch = next(
+        index for index, batch in enumerate(flush_batches) if McpServer in batch
+    )
+    runtime_batch = next(
+        index
+        for index, batch in enumerate(flush_batches)
+        if McpRuntimeConnection in batch
+    )
+    assert parent_batch < runtime_batch
+    assert not any(
+        McpServer in batch and McpRuntimeConnection in batch
+        for batch in flush_batches
+    )
+    assert db.get(McpServer, server_id) is not None
+    assert (
+        db.query(McpRuntimeConnection)
+        .filter(McpRuntimeConnection.server_id == server_id)
+        .one()
+        .state
+        == "online"
+    )
 
 
 def test_runtime_registration_reconnect_and_transactional_catalog(db: Session) -> None:

@@ -4122,7 +4122,7 @@ def test_phase_three_openapi_asyncapi_schema_and_persistence_contracts(
     }
     assert required_paths.issubset(dynamic_paths)
     assert required_paths.issubset(static_openapi["paths"])
-    assert events_asyncapi["info"]["version"] == "0.3.0"
+    assert events_asyncapi["info"]["version"] == "0.4.0"
     assert events_asyncapi["servers"]["jetstream"]["protocol"] == "nats"
     realtime_channel = realtime_asyncapi["channels"][
         "/api/agent-realtime/ws/{agent_id}"
@@ -5549,7 +5549,7 @@ def test_phase_four_static_contracts_event_payload_and_prometheus_metrics(
     }
     assert len(phase_four_paths) == 17
     assert phase_four_paths.issubset(static_openapi["paths"])
-    assert asyncapi["info"]["version"] == "0.3.0"
+    assert asyncapi["info"]["version"] == "0.4.0"
     channels = {
         name for name in asyncapi["channels"] if name.startswith("gateway.autonomy.")
     }
@@ -5673,8 +5673,8 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "slot": "local",
         "initialization_status": "ready",
         "database_at_head": True,
-        "database_revision": "20260726_0009",
-        "database_head": "20260726_0009",
+        "database_revision": "20260727_0010",
+        "database_head": "20260727_0010",
     }
     ready = client.get("/ready")
     assert ready.status_code == 200
@@ -6764,3 +6764,56 @@ def test_deferred_native_oauth_profile_and_tools_list(client: TestClient) -> Non
     assert tools[expected_name]["inputSchema"]["required"] == ["record_id"]
     assert tools[expected_name]["outputSchema"]["required"] == ["value"]
     assert set(mcp_federation_broker_tool_names()).issubset(tools)
+
+
+def test_mcp_catalog_index_generation_http_lifecycle(client: TestClient) -> None:
+    created = client.post(
+        "/api/mcp/catalog-index-generations",
+        json={
+            "model_key": "gateway-token-hash",
+            "model_version": "1",
+        },
+    )
+    assert created.status_code == 201
+    generation = created.json()
+    assert generation["status"] == "ready"
+    assert generation["generation"] == 1
+    assert generation["document_count"] == 0
+    assert generation["model_key"] == "gateway-token-hash"
+    assert generation["model_version"] == "1"
+
+    repeated = client.post(
+        "/api/mcp/catalog-index-generations",
+        json={
+            "model_key": "gateway-token-hash",
+            "model_version": "1",
+        },
+    )
+    assert repeated.status_code == 201
+    assert repeated.json()["id"] == generation["id"]
+
+    listed = client.get("/api/mcp/catalog-index-generations")
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [generation["id"]]
+
+    fetched = client.get(
+        f"/api/mcp/catalog-index-generations/{generation['id']}"
+    )
+    assert fetched.status_code == 200
+    assert fetched.json()["source_catalog_sha256"] == generation[
+        "source_catalog_sha256"
+    ]
+
+    activated = client.post(
+        f"/api/mcp/catalog-index-generations/{generation['id']}/activate",
+        json={"expected_version": generation["version"]},
+    )
+    assert activated.status_code == 200
+    assert activated.json()["status"] == "active"
+    assert activated.json()["version"] == generation["version"] + 1
+
+    conflict = client.post(
+        f"/api/mcp/catalog-index-generations/{generation['id']}/activate",
+        json={"expected_version": generation["version"]},
+    )
+    assert conflict.status_code == 409

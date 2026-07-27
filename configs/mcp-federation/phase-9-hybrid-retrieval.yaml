@@ -1,0 +1,45 @@
+contract_version: 1
+phase: 9
+task_id: CMG-FED-870
+status: implementation_complete_production_pending
+release_version: 0.7.0
+database_head: "20260727_0010"
+retrieval:
+  exact_structured_filters: true
+  postgresql_full_text:
+    enabled: true
+    query_function: websearch_to_tsquery
+    configuration: simple
+  embeddings:
+    optional: true
+    model_key_versioned: true
+    immutable_generations: true
+    exact_revision_binding: true
+    exact_schema_hash_binding: true
+  reranker:
+    deterministic: true
+    maximum_candidates: 200
+  lexical_fallback: required
+security:
+  tenant_key: owner_subject
+  policy_filter_before_ranking: true
+  policy_filter_after_ranking: true
+  cache_partitioned_by_tenant: true
+  query_cache:
+    maximum_tenants: 256
+    maximum_entries_per_tenant: 256
+    ttl_seconds: 60
+  vector_rows_partitioned_by_tenant: true
+  provider_errors_disclosed: false
+  raw_arguments_indexed: false
+  raw_results_indexed: false
+lifecycle:
+  maximum_retrieval_candidates: 2000
+  one_active_generation_per_tenant: true
+  optimistic_activation: true
+  deterministic_reindex: true
+  rollback_to_retired_generation: true
+control_plane:
+  collection: /api/mcp/catalog-index-generations
+  activate: /api/mcp/catalog-index-generations/{generation_id}/activate
+  rollback: /api/mcp/catalog-index-generations/{generation_id}/rollback

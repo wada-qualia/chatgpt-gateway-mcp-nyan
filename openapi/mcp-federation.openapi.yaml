@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: ChatGPT Gateway MCP Federation Control Plane
-  version: 2.2.0
-  description: Machine-readable MCP federation, presentation-profile and immutable
-    projection management contract.
+  version: 2.3.0
+  description: Machine-readable MCP federation, presentation-profile, immutable projection
+    and tenant-scoped hybrid catalog retrieval contract.
 paths:
   /api/mcp/credential-bindings:
     post:
@@ -640,6 +640,137 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/catalog-index-generations:
+    get:
+      tags:
+      - mcp-federation
+      summary: List Catalog Index Generations Endpoint
+      operationId: list_catalog_index_generations_endpoint_api_mcp_catalog_index_generations_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/McpCatalogIndexGenerationOut'
+                type: array
+                title: Response List Catalog Index Generations Endpoint Api Mcp Catalog
+                  Index Generations Get
+    post:
+      tags:
+      - mcp-federation
+      summary: Build Catalog Index Generation Endpoint
+      operationId: build_catalog_index_generation_endpoint_api_mcp_catalog_index_generations_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpCatalogIndexBuildInput'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpCatalogIndexGenerationOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/catalog-index-generations/{generation_id}:
+    get:
+      tags:
+      - mcp-federation
+      summary: Get Catalog Index Generation Endpoint
+      operationId: get_catalog_index_generation_endpoint_api_mcp_catalog_index_generations__generation_id__get
+      parameters:
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Generation Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpCatalogIndexGenerationOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/catalog-index-generations/{generation_id}/activate:
+    post:
+      tags:
+      - mcp-federation
+      summary: Activate Catalog Index Generation Endpoint
+      operationId: activate_catalog_index_generation_endpoint_api_mcp_catalog_index_generations__generation_id__activate_post
+      parameters:
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Generation Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpCatalogIndexCommand'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpCatalogIndexGenerationOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/catalog-index-generations/{generation_id}/rollback:
+    post:
+      tags:
+      - mcp-federation
+      summary: Rollback Catalog Index Generation Endpoint
+      operationId: rollback_catalog_index_generation_endpoint_api_mcp_catalog_index_generations__generation_id__rollback_post
+      parameters:
+      - name: generation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Generation Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpCatalogIndexCommand'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpCatalogIndexGenerationOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/mcp/presentation-profiles:
     get:
       tags:
@@ -969,6 +1100,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/servers/{server_id}/oauth/discover:
+    post:
+      tags:
+      - mcp-upstream
+      summary: Oauth Discover
+      operationId: oauth_discover_api_mcp_servers__server_id__oauth_discover_post
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpOAuthDiscoveryRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpOAuthDiscoveryOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/mcp/servers/{server_id}/oauth/start:
     post:
       tags:
@@ -1074,38 +1237,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /api/mcp/servers/{server_id}/oauth/discover:
-    post:
-      tags:
-      - mcp-upstream
-      summary: Oauth Discover
-      operationId: oauth_discover_api_mcp_servers__server_id__oauth_discover_post
-      parameters:
-      - name: server_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Server Id
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/McpOAuthDiscoveryRequest'
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/McpOAuthDiscoveryOut'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     HTTPValidationError:
@@ -1117,6 +1248,122 @@ components:
           title: Detail
       type: object
       title: HTTPValidationError
+    McpCatalogIndexBuildInput:
+      properties:
+        model_key:
+          type: string
+          maxLength: 120
+          minLength: 1
+          title: Model Key
+        model_version:
+          type: string
+          maxLength: 120
+          minLength: 1
+          title: Model Version
+        server_id:
+          anyOf:
+          - type: string
+            maxLength: 36
+          - type: 'null'
+          title: Server Id
+      additionalProperties: false
+      type: object
+      required:
+      - model_key
+      - model_version
+      title: McpCatalogIndexBuildInput
+    McpCatalogIndexCommand:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      title: McpCatalogIndexCommand
+    McpCatalogIndexGenerationOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        scope_server_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Scope Server Id
+        model_key:
+          type: string
+          title: Model Key
+        model_version:
+          type: string
+          title: Model Version
+        dimensions:
+          type: integer
+          title: Dimensions
+        generation:
+          type: integer
+          title: Generation
+        status:
+          type: string
+          title: Status
+        source_catalog_sha256:
+          type: string
+          title: Source Catalog Sha256
+        document_count:
+          type: integer
+          title: Document Count
+        supersedes_generation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Supersedes Generation Id
+        created_by_subject:
+          type: string
+          title: Created By Subject
+        version:
+          type: integer
+          title: Version
+        activated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Activated At
+        retired_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Retired At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - model_key
+      - model_version
+      - dimensions
+      - generation
+      - status
+      - source_catalog_sha256
+      - document_count
+      - created_by_subject
+      - version
+      - created_at
+      - updated_at
+      title: McpCatalogIndexGenerationOut
     McpCredentialBindingCreate:
       properties:
         binding_type:
@@ -1827,6 +2074,103 @@ components:
       - state
       - expires_at
       title: McpOAuthAuthorizationStarted
+    McpOAuthDiscoveryOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        server_id:
+          type: string
+          title: Server Id
+        resource:
+          type: string
+          title: Resource
+        resource_metadata_url:
+          type: string
+          title: Resource Metadata Url
+        authorization_server:
+          type: string
+          title: Authorization Server
+        authorization_server_metadata_url:
+          type: string
+          title: Authorization Server Metadata Url
+        discovery_mechanism:
+          type: string
+          title: Discovery Mechanism
+        authorization_endpoint:
+          type: string
+          title: Authorization Endpoint
+        token_endpoint:
+          type: string
+          title: Token Endpoint
+        registration_endpoint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Registration Endpoint
+        requested_scopes:
+          items:
+            type: string
+          type: array
+          title: Requested Scopes
+        proposed_scopes:
+          items:
+            type: string
+          type: array
+          title: Proposed Scopes
+        metadata_hash:
+          type: string
+          title: Metadata Hash
+        expires_at:
+          type: string
+          format: date-time
+          title: Expires At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - server_id
+      - resource
+      - resource_metadata_url
+      - authorization_server
+      - authorization_server_metadata_url
+      - discovery_mechanism
+      - authorization_endpoint
+      - token_endpoint
+      - requested_scopes
+      - proposed_scopes
+      - metadata_hash
+      - expires_at
+      - created_at
+      title: McpOAuthDiscoveryOut
+    McpOAuthDiscoveryRequest:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+        requested_scopes:
+          items:
+            type: string
+          type: array
+          maxItems: 100
+          title: Requested Scopes
+        authorization_server:
+          anyOf:
+          - type: string
+            maxLength: 2083
+            minLength: 1
+            format: uri
+          - type: 'null'
+          title: Authorization Server
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      title: McpOAuthDiscoveryRequest
     McpOAuthPresentationUpdate:
       properties:
         profile_id:
@@ -2684,100 +3028,3 @@ components:
       - msg
       - type
       title: ValidationError
-    McpOAuthDiscoveryRequest:
-      properties:
-        expected_version:
-          type: integer
-          minimum: 1.0
-          title: Expected Version
-        requested_scopes:
-          items:
-            type: string
-          type: array
-          maxItems: 100
-          title: Requested Scopes
-        authorization_server:
-          anyOf:
-          - type: string
-            maxLength: 2083
-            minLength: 1
-            format: uri
-          - type: 'null'
-          title: Authorization Server
-      additionalProperties: false
-      type: object
-      required:
-      - expected_version
-      title: McpOAuthDiscoveryRequest
-    McpOAuthDiscoveryOut:
-      properties:
-        id:
-          type: string
-          title: Id
-        server_id:
-          type: string
-          title: Server Id
-        resource:
-          type: string
-          title: Resource
-        resource_metadata_url:
-          type: string
-          title: Resource Metadata Url
-        authorization_server:
-          type: string
-          title: Authorization Server
-        authorization_server_metadata_url:
-          type: string
-          title: Authorization Server Metadata Url
-        discovery_mechanism:
-          type: string
-          title: Discovery Mechanism
-        authorization_endpoint:
-          type: string
-          title: Authorization Endpoint
-        token_endpoint:
-          type: string
-          title: Token Endpoint
-        registration_endpoint:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Registration Endpoint
-        requested_scopes:
-          items:
-            type: string
-          type: array
-          title: Requested Scopes
-        proposed_scopes:
-          items:
-            type: string
-          type: array
-          title: Proposed Scopes
-        metadata_hash:
-          type: string
-          title: Metadata Hash
-        expires_at:
-          type: string
-          format: date-time
-          title: Expires At
-        created_at:
-          type: string
-          format: date-time
-          title: Created At
-      type: object
-      required:
-      - id
-      - server_id
-      - resource
-      - resource_metadata_url
-      - authorization_server
-      - authorization_server_metadata_url
-      - discovery_mechanism
-      - authorization_endpoint
-      - token_endpoint
-      - requested_scopes
-      - proposed_scopes
-      - metadata_hash
-      - expires_at
-      - created_at
-      title: McpOAuthDiscoveryOut

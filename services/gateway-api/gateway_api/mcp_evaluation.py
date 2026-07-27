@@ -70,7 +70,7 @@ class EvaluationTool:
         )
 
     def document(self) -> str:
-        return " ".join((self.name, self.title, self.description, self.server_name))
+        return f"{self.name} {self.title} {self.description} {self.server_name}"
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -270,7 +270,7 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[index]
 
 
-def _ratio(numerator: int | float, denominator: int | float) -> float:
+def _ratio(numerator: float, denominator: float) -> float:
     if denominator == 0:
         return 0.0
     return float(numerator) / float(denominator)

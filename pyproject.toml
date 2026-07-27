@@ -42,9 +42,9 @@ where = ["services/gateway-api", "cli"]
 
 [tool.klab.lup-sdk]
 package = "klab-llm-usage"
-version = "0.1.0a0"
-artifact = "vendor/llm-usage-sdk/klab_llm_usage-0.1.0a0-py3-none-any.whl"
-sha256 = "71c96edfc73974e8f733713d0e3d7972df86ba6c54493ee46e1536c72facd2a3"
-source-commit = "978a577c9c54f53c88fb2d94fd98f9f689126c58"
+version = "0.1.0b2"
+artifact = "vendor/llm-usage-sdk/klab_llm_usage-0.1.0b2-py3-none-any.whl"
+sha256 = "eb5323f26fb5a2f0dcb5d1a0999c5bb7ef0acf83dd51cb9a7fcae77b42874e85"
+source-commit = "52ab367a68b09db2730c14b626ce019f8a203a4d"
 publication-channel = "jenkins-internal-artifact"
 public-index-allowed = false

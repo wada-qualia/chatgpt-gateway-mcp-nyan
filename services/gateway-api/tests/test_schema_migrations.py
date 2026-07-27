@@ -75,6 +75,19 @@ def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
     table_names = set(inspect(target_engine).get_table_names())
     assert capability_tables <= table_names
     assert "mcp_oauth_discovery_snapshots" in table_names
+    traffic_columns = {
+        column["name"]
+        for column in inspect(target_engine).get_columns("agent_tool_calls")
+    }
+    assert {
+        "request_characters",
+        "response_characters",
+        "estimated_input_tokens",
+        "estimated_output_tokens",
+        "traffic_delivery_status",
+        "traffic_event_id",
+        "traffic_observation_id",
+    } <= traffic_columns
 
 
 def test_legacy_database_is_adopted_and_upgraded(tmp_path: Path) -> None:

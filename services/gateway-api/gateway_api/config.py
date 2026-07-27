@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     gateway_mcp_catalog_rerank_max_candidates: int = 200
     gateway_mcp_action_preparation_ttl_seconds: int = 900
     gateway_lup_enabled: bool = False
+    gateway_lup_mcp_traffic_enabled: bool = False
+    gateway_lup_mcp_traffic_flush_limit: int = Field(default=25, ge=1, le=250)
+    gateway_lup_mcp_traffic_flush_interval_seconds: float = Field(default=15.0, ge=1.0, le=300.0)
     gateway_lup_endpoint: str = "stage"
     gateway_lup_timeout_seconds: float = 5.0
     gateway_lup_max_attempts: int = 3

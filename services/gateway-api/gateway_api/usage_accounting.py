@@ -18,7 +18,7 @@ from .config import Settings
 from .models import LupTaskStart
 
 LUP_TASK_NAMESPACE = UUID("ff9957a6-f2b5-5e12-a9c5-1c68f538a23a")
-LUP_SDK_VERSION = "0.1.0a0"
+LUP_SDK_VERSION = "0.1.0b2"
 _DURABLE_RECEIPT_STATUSES = frozenset({"accepted", "duplicate"})
 
 

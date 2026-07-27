@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
-from sqlalchemy import CheckConstraint, Index
+from sqlalchemy import CheckConstraint, Index, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -1113,6 +1113,119 @@ class McpToolExposure(Base):
         DateTime(timezone=True), default=utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpCatalogIndexGeneration(Base):
+    __tablename__ = "mcp_catalog_index_generations"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "scope_server_id",
+            "model_key",
+            "model_version",
+            "generation",
+            name="uq_mcp_catalog_index_generation_model_generation",
+        ),
+        CheckConstraint(
+            "status in ('building', 'ready', 'active', 'retired', 'failed')",
+            name="ck_mcp_catalog_index_generation_status",
+        ),
+        Index(
+            "ix_mcp_catalog_index_generation_owner_status",
+            "owner_subject",
+            "status",
+        ),
+        Index(
+            "ix_mcp_catalog_index_generation_model",
+            "owner_subject",
+            "model_key",
+            "model_version",
+        ),
+        Index(
+            "uq_mcp_catalog_index_generation_global",
+            "owner_subject",
+            "model_key",
+            "model_version",
+            "generation",
+            unique=True,
+            postgresql_where=text("scope_server_id IS NULL"),
+            sqlite_where=text("scope_server_id IS NULL"),
+        ),
+        Index(
+            "uq_mcp_catalog_index_generation_active_owner",
+            "owner_subject",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+            sqlite_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    scope_server_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_servers.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    model_key: Mapped[str] = mapped_column(String(120))
+    model_version: Mapped[str] = mapped_column(String(120))
+    dimensions: Mapped[int] = mapped_column(Integer)
+    generation: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(40), default="building", index=True)
+    source_catalog_sha256: Mapped[str] = mapped_column(String(64))
+    document_count: Mapped[int] = mapped_column(Integer, default=0)
+    supersedes_generation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mcp_catalog_index_generations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_by_subject: Mapped[str] = mapped_column(String(255))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    activated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    retired_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class McpCatalogEmbedding(Base):
+    __tablename__ = "mcp_catalog_embeddings"
+    __table_args__ = (
+        UniqueConstraint(
+            "generation_id",
+            "revision_id",
+            name="uq_mcp_catalog_embedding_generation_revision",
+        ),
+        Index(
+            "ix_mcp_catalog_embedding_owner_generation",
+            "owner_subject",
+            "generation_id",
+        ),
+        Index(
+            "ix_mcp_catalog_embedding_owner_revision",
+            "owner_subject",
+            "revision_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    generation_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_catalog_index_generations.id", ondelete="CASCADE"), index=True
+    )
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_tool_revisions.id", ondelete="CASCADE"), index=True
+    )
+    schema_hash: Mapped[str] = mapped_column(String(64))
+    document_sha256: Mapped[str] = mapped_column(String(64))
+    dimensions: Mapped[int] = mapped_column(Integer)
+    vector: Mapped[list[float]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow
     )
 

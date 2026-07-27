@@ -1,7 +1,7 @@
 asyncapi: 2.6.0
 info:
   title: ChatGPT MCP SSH Gateway Events
-  version: 0.3.0
+  version: 0.4.0
 defaultContentType: application/json
 servers:
   jetstream:
@@ -300,6 +300,14 @@ channels:
     publish:
       message:
         $ref: '#/components/messages/McpRuntimeDisconnected'
+  gateway.mcp.catalog.index_built.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpCatalogIndexBuilt'
+  gateway.mcp.catalog.index_activated.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/McpCatalogIndexActivated'
   gateway.mcp.action.prepared.v1:
     publish:
       message:
@@ -402,6 +410,14 @@ components:
       name: gateway.mcp.runtime.disconnected.v1
       payload:
         $ref: ../schemas/gateway.mcp.runtime.disconnected.v1.schema.json
+    McpCatalogIndexBuilt:
+      name: gateway.mcp.catalog.index_built.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.catalog.index_built.v1.schema.json
+    McpCatalogIndexActivated:
+      name: gateway.mcp.catalog.index_activated.v1
+      payload:
+        $ref: ../schemas/gateway.mcp.catalog.index_activated.v1.schema.json
     McpActionPrepared:
       name: gateway.mcp.action.prepared.v1
       payload:

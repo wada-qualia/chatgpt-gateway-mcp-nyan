@@ -8,6 +8,9 @@ from ..auth import get_bearer_or_dev_user, get_current_user, require_role
 from ..config import Settings, get_settings
 from ..database import get_db
 from ..dto import (
+    McpCatalogIndexBuildInput,
+    McpCatalogIndexCommand,
+    McpCatalogIndexGenerationOut,
     McpCredentialBindingCreate,
     McpCredentialBindingOut,
     McpFederationPolicyOut,
@@ -27,6 +30,13 @@ from ..dto import (
     McpToolOut,
     McpToolRevisionClassification,
     McpToolRevisionOut,
+)
+from ..mcp_catalog_retrieval import (
+    activate_index_generation,
+    build_index_generation,
+    get_index_generation,
+    list_index_generations,
+    rollback_index_generation,
 )
 from ..mcp_deferred_native import (
     deferred_entries_for_context,
@@ -404,6 +414,98 @@ async def list_runtime_connections(
     require_role(user, "gateway-auditor", "gateway-admin")
     return mcp_federation_service.list_runtime_connections(
         db, owner_subject=user.subject, server_id=server_id
+    )
+
+
+@router.get(
+    "/catalog-index-generations",
+    response_model=list[McpCatalogIndexGenerationOut],
+)
+async def list_catalog_index_generations_endpoint(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-auditor", "gateway-admin")
+    return list_index_generations(db, owner_subject=user.subject)
+
+
+@router.post(
+    "/catalog-index-generations",
+    response_model=McpCatalogIndexGenerationOut,
+    status_code=201,
+)
+async def build_catalog_index_generation_endpoint(
+    payload: McpCatalogIndexBuildInput,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-admin")
+    if payload.server_id is not None:
+        mcp_federation_service.get_server(
+            db, owner_subject=user.subject, server_id=payload.server_id
+        )
+    return build_index_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        model_key=payload.model_key,
+        model_version=payload.model_version,
+        server_id=payload.server_id,
+    )
+
+
+@router.get(
+    "/catalog-index-generations/{generation_id}",
+    response_model=McpCatalogIndexGenerationOut,
+)
+async def get_catalog_index_generation_endpoint(
+    generation_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-auditor", "gateway-admin")
+    return get_index_generation(
+        db, owner_subject=user.subject, generation_id=generation_id
+    )
+
+
+@router.post(
+    "/catalog-index-generations/{generation_id}/activate",
+    response_model=McpCatalogIndexGenerationOut,
+)
+async def activate_catalog_index_generation_endpoint(
+    generation_id: str,
+    payload: McpCatalogIndexCommand,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-admin")
+    return activate_index_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        generation_id=generation_id,
+        expected_version=payload.expected_version,
+    )
+
+
+@router.post(
+    "/catalog-index-generations/{generation_id}/rollback",
+    response_model=McpCatalogIndexGenerationOut,
+)
+async def rollback_catalog_index_generation_endpoint(
+    generation_id: str,
+    payload: McpCatalogIndexCommand,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_role(user, "gateway-admin")
+    return rollback_index_generation(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        generation_id=generation_id,
+        expected_version=payload.expected_version,
     )
 
 

@@ -1388,9 +1388,45 @@ class McpRuntimeConnectionOut(OrmModel):
     disconnected_at: datetime | None = None
 
 
+class McpCatalogIndexBuildInput(McpStrictModel):
+    model_key: str = Field(min_length=1, max_length=120)
+    model_version: str = Field(min_length=1, max_length=120)
+    server_id: str | None = Field(default=None, max_length=36)
+
+
+class McpCatalogIndexCommand(McpStrictModel):
+    expected_version: int = Field(ge=1)
+
+
+class McpCatalogIndexGenerationOut(OrmModel):
+    id: str
+    owner_subject: str
+    scope_server_id: str | None = None
+    model_key: str
+    model_version: str
+    dimensions: int
+    generation: int
+    status: str
+    source_catalog_sha256: str
+    document_count: int
+    supersedes_generation_id: str | None = None
+    created_by_subject: str
+    version: int
+    activated_at: datetime | None = None
+    retired_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class McpCatalogSearchInput(McpStrictModel):
     query: str = Field(min_length=1, max_length=512)
     server_id: str | None = Field(default=None, max_length=36)
+    tool_name: str | None = Field(default=None, max_length=255)
+    action_class: Literal["unknown", "read", "write", "destructive", "production"] | None = None
+    read_only_status: Literal["unverified", "verified", "rejected"] | None = None
+    exposure_mode: Literal["catalog_only", "native_projected"] | None = None
+    approval_class: Literal["none", "operator", "quorum", "production"] | None = None
+    retrieval_mode: Literal["auto", "lexical", "hybrid"] = "auto"
     limit: int = Field(default=20, ge=1, le=50)
 
 

@@ -9,11 +9,12 @@ from typing import Any
 
 from fastapi import HTTPException
 from jsonschema import Draft202012Validator, ValidationError
-from sqlalchemy import text
+from sqlalchemy import and_, bindparam, exists, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .agent_autonomy import DEFAULT_APPROVAL_RULES, agent_autonomy_service
+from .config import get_settings
 from .crypto import decrypt_text, encrypt_text
 from .dto import (
     McpActionExecuteInput,
@@ -23,6 +24,12 @@ from .dto import (
     McpToolDescribeInput,
 )
 from .events import emit_event
+from .mcp_catalog_retrieval import (
+    CatalogRankCandidate,
+    lexical_fallback_score,
+    rank_candidates,
+    semantic_scores,
+)
 from .mcp_federation import get_policy, get_revision, get_server, get_tool
 from .mcp_federation_policy import (
     McpActionClass,
@@ -465,10 +472,109 @@ def _summary(item: AuthorizedRevision) -> dict[str, Any]:
     }
 
 
+def _catalog_filter_matches(
+    item: AuthorizedRevision, payload: McpCatalogSearchInput
+) -> bool:
+    if payload.exposure_mode and item.exposure.mode != payload.exposure_mode:
+        return False
+    if payload.approval_class and item.approval_class.value != payload.approval_class:
+        return False
+    return True
+
+
+def _postgresql_lexical_scores(
+    db: Session,
+    *,
+    owner_subject: str,
+    query_text: str,
+    revision_ids: list[str],
+) -> dict[str, float]:
+    if not revision_ids:
+        return {}
+    statement = text(
+        """
+        SELECT id,
+               ts_rank_cd(
+                   search_vector,
+                   websearch_to_tsquery('simple', :mcp_catalog_query)
+               ) AS lexical_score
+        FROM mcp_tool_revisions
+        WHERE owner_subject = :owner_subject
+          AND id IN :revision_ids
+          AND search_vector @@ websearch_to_tsquery('simple', :mcp_catalog_query)
+        """
+    ).bindparams(bindparam("revision_ids", expanding=True))
+    rows = db.execute(
+        statement,
+        {
+            "owner_subject": owner_subject,
+            "mcp_catalog_query": query_text,
+            "revision_ids": revision_ids,
+        },
+    ).all()
+    return {str(row.id): float(row.lexical_score) for row in rows}
+
+
+def _bounded_rank_ids(
+    *,
+    lexical_scores: dict[str, float],
+    semantic_scores_by_revision: dict[str, float],
+    maximum: int,
+) -> set[str]:
+    lexical = sorted(
+        lexical_scores,
+        key=lambda revision_id: (-lexical_scores[revision_id], revision_id),
+    )[:maximum]
+    semantic = sorted(
+        (
+            revision_id
+            for revision_id, score in semantic_scores_by_revision.items()
+            if score > 0
+        ),
+        key=lambda revision_id: (
+            -semantic_scores_by_revision[revision_id],
+            revision_id,
+        ),
+    )[:maximum]
+    selected: list[str] = []
+    for revision_id in [*lexical, *semantic]:
+        if revision_id not in selected:
+            selected.append(revision_id)
+        if len(selected) >= maximum:
+            break
+    return set(selected)
+
+
 def search_catalog(
     db: Session, *, user: User, payload: McpCatalogSearchInput
 ) -> dict[str, Any]:
     query_text = " ".join(payload.query.split())
+    settings = get_settings()
+    exposure_modes = (
+        [payload.exposure_mode]
+        if payload.exposure_mode
+        else ["catalog_only", "native_projected"]
+    )
+    exposed_revision_exists = exists().where(
+        McpToolExposure.owner_subject == user.subject,
+        McpToolExposure.revision_id == McpToolRevision.id,
+        McpToolExposure.enabled.is_(True),
+        McpToolExposure.mode.in_(exposure_modes),
+    )
+    specific_policy_exists = exists().where(
+        McpFederationPolicy.owner_subject == user.subject,
+        McpFederationPolicy.server_id == McpServer.id,
+    )
+    active_specific_policy_exists = exists().where(
+        McpFederationPolicy.owner_subject == user.subject,
+        McpFederationPolicy.server_id == McpServer.id,
+        McpFederationPolicy.status == "active",
+    )
+    active_global_policy_exists = exists().where(
+        McpFederationPolicy.owner_subject == user.subject,
+        McpFederationPolicy.server_id.is_(None),
+        McpFederationPolicy.status == "active",
+    )
     base = (
         db.query(McpToolRevision, McpTool, McpServer)
         .join(McpTool, McpTool.id == McpToolRevision.tool_id)
@@ -479,36 +585,38 @@ def search_catalog(
             McpServer.owner_subject == user.subject,
             McpTool.lifecycle_state == "active",
             McpTool.current_revision_id == McpToolRevision.id,
+            exposed_revision_exists,
+            or_(
+                active_specific_policy_exists,
+                and_(~specific_policy_exists, active_global_policy_exists),
+            ),
         )
     )
     if payload.server_id:
         base = base.filter(McpServer.id == payload.server_id)
-    dialect = db.bind.dialect.name if db.bind is not None else ""
-    if dialect == "postgresql":
+    if payload.tool_name:
         base = base.filter(
-            text(
-                "mcp_tool_revisions.search_vector @@ websearch_to_tsquery('simple', :mcp_catalog_query)"
+            or_(
+                McpTool.upstream_name == payload.tool_name,
+                McpTool.normalized_name == payload.tool_name.casefold(),
             )
-        ).params(mcp_catalog_query=query_text)
-        base = base.order_by(
-            text(
-                "ts_rank_cd(mcp_tool_revisions.search_vector, websearch_to_tsquery('simple', :mcp_catalog_query)) DESC"
-            ),
-            McpTool.upstream_name.asc(),
         )
-    else:
-        tokens = [token.casefold() for token in query_text.split() if token]
-        rows = base.order_by(McpTool.upstream_name.asc()).limit(1000).all()
-        rows = [
-            row
-            for row in rows
-            if all(
-                token in str(row[0].search_text or "").casefold() for token in tokens
-            )
-        ]
-        base = None
-    rows = rows if base is None else base.limit(500).all()
-    results: list[dict[str, Any]] = []
+    if payload.action_class:
+        base = base.filter(McpToolRevision.action_class == payload.action_class)
+    if payload.read_only_status:
+        base = base.filter(
+            McpToolRevision.read_only_status == payload.read_only_status
+        )
+    rows = (
+        base.order_by(
+            McpServer.id.asc(),
+            McpTool.normalized_name.asc(),
+            McpToolRevision.id.asc(),
+        )
+        .limit(settings.gateway_mcp_catalog_retrieval_max_candidates)
+        .all()
+    )
+    authorized_by_revision: dict[str, AuthorizedRevision] = {}
     for revision, tool, server in rows:
         try:
             authorized = _resolve_authorized(
@@ -520,10 +628,129 @@ def search_catalog(
             )
         except HTTPException:
             continue
-        results.append(_summary(authorized))
+        if _catalog_filter_matches(authorized, payload):
+            authorized_by_revision[revision.id] = authorized
+    revision_ids = sorted(authorized_by_revision)
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    if dialect == "postgresql":
+        lexical_scores = _postgresql_lexical_scores(
+            db,
+            owner_subject=user.subject,
+            query_text=query_text,
+            revision_ids=revision_ids,
+        )
+        lexical_backend = "postgresql_fts"
+    else:
+        lexical_scores = {
+            revision_id: score
+            for revision_id, item in authorized_by_revision.items()
+            if (
+                score := lexical_fallback_score(
+                    query_text,
+                    " ".join(
+                        (
+                            item.server.display_name,
+                            item.tool.upstream_name,
+                            item.revision.sanitized_title or "",
+                            item.revision.search_text or "",
+                        )
+                    ),
+                )
+            )
+            > 0
+        }
+        lexical_backend = "deterministic_lexical_fallback"
+    semantic_scores_by_revision: dict[str, float] = {}
+    semantic_metadata: dict[str, object] = {
+        "available": False,
+        "reason": "lexical_mode_requested",
+    }
+    if payload.retrieval_mode != "lexical":
+        semantic_scores_by_revision, semantic_metadata = semantic_scores(
+            db,
+            owner_subject=user.subject,
+            query=query_text,
+            server_id=payload.server_id,
+            revision_bindings={
+                revision_id: item.revision.schema_hash
+                for revision_id, item in authorized_by_revision.items()
+            },
+        )
+    mode_used = (
+        "hybrid"
+        if semantic_metadata.get("available") and semantic_scores_by_revision
+        else "lexical"
+    )
+    selected_ids = _bounded_rank_ids(
+        lexical_scores=lexical_scores,
+        semantic_scores_by_revision=semantic_scores_by_revision,
+        maximum=settings.gateway_mcp_catalog_rerank_max_candidates,
+    )
+    rank_input = [
+        CatalogRankCandidate(
+            revision_id=revision_id,
+            normalized_name=item.tool.normalized_name,
+            title=item.revision.sanitized_title or "",
+            server_name=item.server.display_name,
+            lexical_score=lexical_scores.get(revision_id, 0.0),
+            semantic_score=semantic_scores_by_revision.get(revision_id),
+        )
+        for revision_id, item in authorized_by_revision.items()
+        if revision_id in selected_ids
+    ]
+    ranked = rank_candidates(
+        rank_input,
+        query=query_text,
+        limit=settings.gateway_mcp_catalog_rerank_max_candidates,
+    )
+    results: list[dict[str, Any]] = []
+    for scored in ranked:
+        revision_id = str(scored["revision_id"])
+        original = authorized_by_revision[revision_id]
+        try:
+            current = _resolve_authorized(
+                db,
+                user=user,
+                tool_ref=_tool_ref(
+                    original.server.id,
+                    original.tool.id,
+                    original.revision.id,
+                ),
+                schema_hash=original.revision.schema_hash,
+                require_available=False,
+            )
+        except HTTPException:
+            continue
+        if not _catalog_filter_matches(current, payload):
+            continue
+        summary = _summary(current)
+        summary["retrieval"] = {
+            "score": scored["score"],
+            "lexical_score": scored["lexical_score"],
+            "semantic_score": scored["semantic_score"],
+        }
+        results.append(summary)
         if len(results) >= payload.limit:
             break
-    return {"query": query_text, "results": results, "count": len(results)}
+    return {
+        "query": query_text,
+        "results": results,
+        "count": len(results),
+        "retrieval": {
+            "requested_mode": payload.retrieval_mode,
+            "mode_used": mode_used,
+            "lexical_backend": lexical_backend,
+            "authorized_candidates": len(authorized_by_revision),
+            "lexical_candidates": len(lexical_scores),
+            "semantic_candidates": len(semantic_scores_by_revision),
+            "reranked_candidates": len(ranked),
+            "semantic": semantic_metadata,
+            "policy_filtering": {
+                "before_ranking": True,
+                "after_ranking": True,
+            },
+        },
+    }
 
 
 def describe_tool(

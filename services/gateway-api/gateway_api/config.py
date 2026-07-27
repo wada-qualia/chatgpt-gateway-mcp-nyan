@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     gateway_mcp_upstream_max_content_items: int = 16
     gateway_mcp_catalog_max_tools: int = 500
     gateway_mcp_catalog_stale_after_seconds: int = 3600
+    gateway_mcp_catalog_retrieval_max_candidates: int = 2000
+    gateway_mcp_catalog_rerank_max_candidates: int = 200
     gateway_mcp_action_preparation_ttl_seconds: int = 900
     gateway_lup_enabled: bool = False
     gateway_lup_endpoint: str = "stage"

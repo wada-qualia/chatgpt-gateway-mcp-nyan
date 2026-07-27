@@ -727,7 +727,7 @@ class LupTaskStartOut(BaseModel):
     project_atlas_entity_id: str | None = None
     project_git_commit: str | None = None
     project_git_branch: str | None = None
-    sdk_version: Literal["0.1.0a0"] = "0.1.0a0"
+    sdk_version: Literal["0.1.0b2"] = "0.1.0b2"
     created: bool
     created_at: datetime
     updated_at: datetime

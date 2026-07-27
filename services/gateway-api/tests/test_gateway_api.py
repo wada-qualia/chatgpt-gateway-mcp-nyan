@@ -5673,8 +5673,8 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "slot": "local",
         "initialization_status": "ready",
         "database_at_head": True,
-        "database_revision": "20260727_0010",
-        "database_head": "20260727_0010",
+        "database_revision": "20260727_0011",
+        "database_head": "20260727_0011",
     }
     ready = client.get("/ready")
     assert ready.status_code == 200
@@ -6817,3 +6817,73 @@ def test_mcp_catalog_index_generation_http_lifecycle(client: TestClient) -> None
         json={"expected_version": generation["version"]},
     )
     assert conflict.status_code == 409
+
+
+def test_mcp_tool_exchange_records_exact_character_counts(client: TestClient) -> None:
+    from gateway_api import database
+    from gateway_api.models import AgentToolCall
+
+    raw = (
+        '{"jsonrpc":"2.0","id":"traffic-success","method":"tools/call",'
+        '"params":{"name":"list_resources","arguments":{}}}'
+    )
+    response = client.post(
+        "/mcp",
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "MCP-Protocol-Version": "2025-11-25",
+        },
+    )
+    assert response.status_code == 200
+    assert "result" in response.json()
+
+    with database.SessionLocal() as db:
+        call = (
+            db.query(AgentToolCall)
+            .filter(AgentToolCall.tool_name == "list_resources")
+            .order_by(AgentToolCall.created_at.desc())
+            .first()
+        )
+        assert call is not None
+        assert call.request_characters == len(raw)
+        assert call.response_characters == len(response.text)
+        assert call.estimated_input_tokens == (len(raw) + 3) // 4
+        assert call.estimated_output_tokens == (len(response.text) + 3) // 4
+        assert call.traffic_delivery_status == "disabled"
+        assert call.traffic_task_usage_id
+        assert call.traffic_event_id
+        assert call.traffic_observation_id
+
+
+def test_mcp_rejected_tool_call_still_records_traffic(client: TestClient) -> None:
+    from gateway_api import database
+    from gateway_api.models import AgentToolCall
+
+    raw = (
+        '{"jsonrpc":"2.0","id":"traffic-error","method":"tools/call",'
+        '"params":{"name":"unknown_private_tool","arguments":{"value":"Привет 👋"}}}'
+    )
+    response = client.post(
+        "/mcp",
+        content=raw.encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "MCP-Protocol-Version": "2025-11-25",
+        },
+    )
+    assert response.status_code == 200
+    assert "error" in response.json()
+
+    with database.SessionLocal() as db:
+        call = (
+            db.query(AgentToolCall)
+            .filter(AgentToolCall.tool_name == "unknown_private_tool")
+            .order_by(AgentToolCall.created_at.desc())
+            .first()
+        )
+        assert call is not None
+        assert call.status == "error"
+        assert call.request_characters == len(raw)
+        assert call.response_characters == len(response.text)
+        assert call.traffic_delivery_status == "disabled"

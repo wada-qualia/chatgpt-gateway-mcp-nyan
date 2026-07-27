@@ -1681,7 +1681,18 @@ async def mcp(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Any:
-    body = await request.json()
+    raw_body = await request.body()
+    try:
+        raw_text = raw_body.decode("utf-8")
+        body = json.loads(raw_text)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return _mcp_jsonrpc_error(
+            None, code=-32700, message="Parse error", status_code=400
+        )
+    if not isinstance(body, dict):
+        return _mcp_jsonrpc_error(
+            None, code=-32600, message="Invalid Request", status_code=400
+        )
     method = body.get("method")
     request_id = body.get("id")
     if method != "initialize":
@@ -1704,6 +1715,15 @@ async def mcp(
         user=user,
         presentation=presentation,
     )
+    tool_call = None
+    if method == "tools/call":
+        try:
+            await request.app.state.gateway_runtime.mcp_traffic.flush_pending(
+                db,
+                owner_subject=user.subject,
+            )
+        except Exception:
+            db.rollback()
     try:
         if method == "initialize":
             params = body.get("params") if isinstance(body.get("params"), dict) else {}
@@ -1744,68 +1764,83 @@ async def mcp(
         elif method == "tools/list":
             result = {"tools": registry.tools()}
         elif method == "tools/call":
-            params = body.get("params") or {}
+            params = body.get("params") if isinstance(body.get("params"), dict) else {}
             name = str(params.get("name") or "")
+            raw_arguments = (
+                params.get("arguments")
+                if isinstance(params.get("arguments"), dict)
+                else {}
+            )
+            tool_call = monitoring_service.create_tool_call(
+                db,
+                owner_subject=user.subject,
+                tool_name=name or "invalid-tools-call",
+                arguments=raw_arguments,
+            )
             arguments = _validate_tool_arguments(
                 name,
-                params.get("arguments") or {},
+                raw_arguments,
                 settings,
                 ssh_profile,
                 registry=registry,
             )
-            tool_call = monitoring_service.create_tool_call(
-                db, owner_subject=user.subject, tool_name=name, arguments=arguments
+            result = await _call_tool(
+                name,
+                arguments,
+                user,
+                db,
+                settings,
+                upstream=request.app.state.upstream_mcp_manager,
+                tool_call_id=tool_call.id,
+                dispatch_target=registry.target(name),
+                presentation=presentation,
             )
-            try:
-                result = await _call_tool(
-                    name,
-                    arguments,
-                    user,
-                    db,
-                    settings,
-                    upstream=request.app.state.upstream_mcp_manager,
-                    tool_call_id=tool_call.id,
-                    dispatch_target=registry.target(name),
-                    presentation=presentation,
-                )
-                structured = result.get("structuredContent") or {}
-                session_id = structured.get("session_id")
-                monitoring_service.finish_tool_call(
-                    db,
-                    call=tool_call,
-                    status="error" if result.get("isError") else "success",
-                    session_id=str(session_id) if session_id else None,
-                    error=str(structured.get("error"))
-                    if result.get("isError")
-                    else None,
-                )
-                structured["background_session_tails"] = (
-                    monitoring_service.background_tails(
-                        db,
-                        owner_subject=user.subject,
-                        tool_call_id=tool_call.id,
-                    )
-                )
-                result["structuredContent"] = structured
-                result = _refresh_result_content(result)
-            except HTTPException as exc:
-                monitoring_service.finish_tool_call(
-                    db, call=tool_call, status="error", error=str(exc.detail)
-                )
-                raise
+            structured = result.get("structuredContent") or {}
+            session_id = structured.get("session_id")
+            monitoring_service.finish_tool_call(
+                db,
+                call=tool_call,
+                status="error" if result.get("isError") else "success",
+                session_id=str(session_id) if session_id else None,
+                error=str(structured.get("error")) if result.get("isError") else None,
+            )
+            structured["background_session_tails"] = monitoring_service.background_tails(
+                db,
+                owner_subject=user.subject,
+                tool_call_id=tool_call.id,
+            )
+            result["structuredContent"] = structured
+            result = _refresh_result_content(result)
         else:
             return _mcp_jsonrpc_error(
                 request_id,
                 code=-32601,
                 message=f"Method not found: {method}",
             )
-        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+        payload = {"jsonrpc": "2.0", "id": request_id, "result": result}
     except HTTPException as exc:
-        return {
+        if tool_call is not None:
+            monitoring_service.finish_tool_call(
+                db, call=tool_call, status="error", error=str(exc.detail)
+            )
+        payload = {
             "jsonrpc": "2.0",
             "id": request_id,
             "error": {"code": exc.status_code, "message": str(exc.detail)},
         }
+
+    response = JSONResponse(content=payload)
+    if tool_call is not None:
+        try:
+            await request.app.state.gateway_runtime.mcp_traffic.record_exchange(
+                db,
+                call=tool_call,
+                request_characters=len(raw_text),
+                response_characters=len(response.body.decode("utf-8")),
+            )
+        except Exception:
+            db.rollback()
+    return response
 
 
 async def _call_native_projection(

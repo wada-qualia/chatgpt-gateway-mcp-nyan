@@ -11,6 +11,7 @@ from .broker import EventBroker, create_broker
 from .config import Settings
 from .outbox import OutboxService, OutboxWorker, resolve_replica_id
 from .realtime import RealtimeService
+from .mcp_traffic import McpTrafficAccountingService
 from .usage_accounting import LUP_SDK_VERSION, LupUsageAccountingService
 from .usage_final_lifecycle import LupFinalLifecycleService
 from .usage_tool_lifecycle import LupToolLifecycleService
@@ -39,6 +40,7 @@ class GatewayRuntime:
         self.worker = OutboxWorker(self.outbox)
         self.autonomy = AgentAutonomyService(settings)
         self.usage_accounting = LupUsageAccountingService(settings)
+        self.mcp_traffic = McpTrafficAccountingService(settings)
         self.usage_tool_lifecycle = LupToolLifecycleService(settings)
         self.usage_final_lifecycle = LupFinalLifecycleService(settings)
         self.autonomy_worker = AutonomyWorker(
@@ -48,6 +50,7 @@ class GatewayRuntime:
         )
         self._stopping = asyncio.Event()
         self._broker_task: asyncio.Task[None] | None = None
+        self._mcp_traffic_task: asyncio.Task[None] | None = None
         self.started = False
 
     async def start(self) -> None:
@@ -63,12 +66,23 @@ class GatewayRuntime:
             self._broker_task = asyncio.create_task(
                 self._supervise_broker(), name="gateway-broker-supervisor"
             )
+        if self.settings.gateway_lup_mcp_traffic_enabled:
+            self._mcp_traffic_task = asyncio.create_task(
+                self._drain_mcp_traffic(), name="gateway-mcp-traffic-outbox"
+            )
         self.started = True
 
     async def stop(self) -> None:
         if not self.started:
             return
         self._stopping.set()
+        if self._mcp_traffic_task is not None:
+            self._mcp_traffic_task.cancel()
+            try:
+                await self._mcp_traffic_task
+            except asyncio.CancelledError:
+                pass
+            self._mcp_traffic_task = None
         if self._broker_task is not None:
             self._broker_task.cancel()
             try:
@@ -81,6 +95,23 @@ class GatewayRuntime:
         await self.worker.stop()
         await self.broker.close()
         self.started = False
+
+    async def _drain_mcp_traffic(self) -> None:
+        while not self._stopping.is_set():
+            try:
+                with self.session_factory() as db:
+                    await self.mcp_traffic.flush_pending(db)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("gateway_mcp_traffic_flush_failed")
+            try:
+                await asyncio.wait_for(
+                    self._stopping.wait(),
+                    timeout=self.settings.gateway_lup_mcp_traffic_flush_interval_seconds,
+                )
+            except TimeoutError:
+                pass
 
     async def _supervise_broker(self) -> None:
         while not self._stopping.is_set():
@@ -135,5 +166,6 @@ class GatewayRuntime:
             "autonomy_enabled": self.settings.gateway_autonomy_enabled,
             "autonomy_emergency_stop": self.settings.gateway_autonomy_emergency_stop,
             "lup_accounting_enabled": self.settings.gateway_lup_enabled,
+            "lup_mcp_traffic_enabled": self.settings.gateway_lup_mcp_traffic_enabled,
             "lup_sdk_version": LUP_SDK_VERSION,
         }

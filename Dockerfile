@@ -85,6 +85,11 @@ USER appuser
 RUN PYTHONPATH=/app/services/gateway-api /opt/venv/bin/python \
       /app/scripts/calibrate_lup_final_response_estimator.py \
       /app/configs/lup/final-response-calibration-v1.json
+RUN mkdir -p /app/artifacts/evaluation \
+  && PYTHONPATH=/app/services/gateway-api /opt/venv/bin/python \
+      /app/scripts/run_mcp_federation_evaluation.py \
+      --config /app/configs/mcp-federation/phase-9-evaluation.json \
+      --output /app/artifacts/evaluation/phase-9-evaluation-report.json
 RUN pytest /app/services/gateway-api/tests /app/cli/tests
 
 FROM runtime-base AS production

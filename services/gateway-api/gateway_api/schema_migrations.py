@@ -2,22 +2,38 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Sequence
 
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import Engine, Connection, inspect, text
+from sqlalchemy import Connection, Engine, inspect, text
+from sqlalchemy.exc import SQLAlchemyError
 
-from . import database, models as _models
+from . import database
+from . import models as _models
 from .config import get_settings
 
 BASELINE_REVISION = "20260725_0001"
 PROJECTION_REVISION = "20260725_0002"
 HEAD_REVISION = "20260727_0011"
 LEGACY_ANCHOR_TABLES = {"users", "secret_blobs", "oauth_clients"}
+REVISION_PATTERN = re.compile(r"^(?P<date>\d{8})_(?P<sequence>\d{4})$")
+
+
+@dataclass(frozen=True)
+class MigrationPlan:
+    current_revision: str | None
+    head_revision: str
+    pending_revisions: tuple[str, ...]
+    compatibility: tuple[str, ...]
+    safe_for_live_expand: bool
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -63,6 +79,54 @@ def migration_head(config: Config | None = None) -> str:
             f"Alembic head {head} does not match application head {HEAD_REVISION}"
         )
     return head
+
+
+def revision_is_forward(current_revision: str | None, required_revision: str) -> bool:
+    if current_revision is None:
+        return False
+    current_match = REVISION_PATTERN.fullmatch(current_revision)
+    required_match = REVISION_PATTERN.fullmatch(required_revision)
+    if current_match is None or required_match is None:
+        return False
+    current_order = (
+        int(current_match.group("date")),
+        int(current_match.group("sequence")),
+    )
+    required_order = (
+        int(required_match.group("date")),
+        int(required_match.group("sequence")),
+    )
+    return current_order > required_order
+
+
+def get_migration_plan(
+    target_engine: Engine | None = None,
+) -> MigrationPlan:
+    active_engine = target_engine if target_engine is not None else database.engine
+    config = alembic_config(str(active_engine.url))
+    scripts = ScriptDirectory.from_config(config)
+    head = migration_head(config)
+    with active_engine.connect() as connection:
+        current_revisions = _current_revisions(connection)
+    if len(current_revisions) > 1:
+        raise RuntimeError(
+            f"Live deployment requires one database revision, found {current_revisions}"
+        )
+    current = current_revisions[0] if current_revisions else None
+    lower = current or "base"
+    pending_scripts = tuple(reversed(tuple(scripts.iterate_revisions(head, lower))))
+    pending = tuple(script.revision for script in pending_scripts)
+    compatibility = tuple(
+        str(getattr(script.module, "deployment_compatibility", "unspecified"))
+        for script in pending_scripts
+    )
+    return MigrationPlan(
+        current_revision=current,
+        head_revision=head,
+        pending_revisions=pending,
+        compatibility=compatibility,
+        safe_for_live_expand=all(value == "expand" for value in compatibility),
+    )
 
 
 def _current_revisions(connection: Connection) -> tuple[str, ...]:
@@ -233,13 +297,15 @@ def _release_postgresql_lock(
 ) -> None:
     if lock_key is None:
         return
+    if connection.in_transaction():
+        connection.rollback()
     try:
         connection.execute(
             text("SELECT pg_advisory_unlock(:lock_key)"),
             {"lock_key": lock_key},
         )
         connection.commit()
-    except Exception:
+    except SQLAlchemyError:
         connection.rollback()
 
 
@@ -258,6 +324,35 @@ def get_migration_status(
     )
 
 
+def validate_schema_metadata(
+    target_engine: Engine | None = None,
+) -> None:
+    active_engine = target_engine if target_engine is not None else database.engine
+    with active_engine.connect() as connection:
+        _validate_metadata_schema(connection)
+
+
+def validate_database_schema(
+    target_engine: Engine | None = None,
+    *,
+    allow_forward_revision: bool = False,
+) -> MigrationStatus:
+    active_engine = target_engine if target_engine is not None else database.engine
+    status = get_migration_status(active_engine)
+    forward_compatible = allow_forward_revision and revision_is_forward(
+        status.current_revision,
+        status.head_revision,
+    )
+    if not status.at_head and not forward_compatible:
+        raise RuntimeError(
+            "Database revision "
+            f"{status.current_revision or 'unversioned'} does not match required "
+            f"Alembic head {status.head_revision}"
+        )
+    validate_schema_metadata(active_engine)
+    return status
+
+
 def run_schema_migrations(
     target_engine: Engine | None = None,
 ) -> MigrationStatus:
@@ -269,20 +364,19 @@ def run_schema_migrations(
         lock_key = _configure_postgresql_session(connection)
         try:
             config.attributes["connection"] = connection
-            current = _current_revisions(connection)
-            if not current and not _is_empty_database(connection):
-                _validate_legacy_identity(connection)
-                command.stamp(config, BASELINE_REVISION, purge=True)
-                connection.commit()
-                adopted = True
-            command.upgrade(config, "head")
-            connection.commit()
-            current = _current_revisions(connection)
-            if current != (head,):
-                raise RuntimeError(
-                    f"Database revision {current} did not reach Alembic head {head}"
-                )
-            _validate_metadata_schema(connection)
+            with connection.begin():
+                current = _current_revisions(connection)
+                if not current and not _is_empty_database(connection):
+                    _validate_legacy_identity(connection)
+                    command.stamp(config, BASELINE_REVISION, purge=True)
+                    adopted = True
+                command.upgrade(config, "head")
+                current = _current_revisions(connection)
+                if current != (head,):
+                    raise RuntimeError(
+                        f"Database revision {current} did not reach Alembic head {head}"
+                    )
+                _validate_metadata_schema(connection)
         finally:
             config.attributes.pop("connection", None)
             _release_postgresql_lock(connection, lock_key)
@@ -297,7 +391,15 @@ def run_schema_migrations(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gateway-schema-migrations")
     parser.add_argument(
-        "operation", choices=("check", "head", "status", "upgrade")
+        "operation",
+        choices=(
+            "check",
+            "deployment-plan",
+            "head",
+            "status",
+            "upgrade",
+            "validate",
+        ),
     )
     return parser
 
@@ -312,6 +414,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.operation == "status":
         print(json.dumps(get_migration_status().to_dict(), sort_keys=True))
+        return 0
+    if args.operation == "deployment-plan":
+        print(json.dumps(get_migration_plan().to_dict(), sort_keys=True))
+        return 0
+    if args.operation == "validate":
+        print(json.dumps(validate_database_schema().to_dict(), sort_keys=True))
         return 0
     print(json.dumps(run_schema_migrations().to_dict(), sort_keys=True))
     return 0

@@ -8,6 +8,7 @@ from sqlalchemy import inspect
 
 revision = "20260727_0011"
 down_revision = "20260727_0010"
+deployment_compatibility = "expand"
 branch_labels = None
 depends_on = None
 

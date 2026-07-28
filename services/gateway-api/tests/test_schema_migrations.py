@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect, text
-
+from alembic import command
+from gateway_api import schema_migrations
 from gateway_api.database import Base
 from gateway_api.schema_migrations import (
     HEAD_REVISION,
+    MigrationPlan,
+    MigrationStatus,
+    alembic_config,
+    get_migration_plan,
     get_migration_status,
     migration_head,
     run_schema_migrations,
 )
+from sqlalchemy import create_engine, inspect, text
 
 
 def sqlite_engine(path: Path):
@@ -19,6 +25,100 @@ def sqlite_engine(path: Path):
         f"sqlite:///{path}",
         connect_args={"check_same_thread": False},
     )
+
+
+def test_deployment_plan_cli_is_read_only(monkeypatch, capsys) -> None:
+    plan = MigrationPlan(
+        current_revision="20260727_0010",
+        head_revision=HEAD_REVISION,
+        pending_revisions=(HEAD_REVISION,),
+        compatibility=("expand",),
+        safe_for_live_expand=True,
+    )
+    monkeypatch.setattr(schema_migrations, "get_migration_plan", lambda: plan)
+
+    def unexpected_upgrade():
+        raise AssertionError("deployment-plan must not run migrations")
+
+    monkeypatch.setattr(
+        schema_migrations,
+        "run_schema_migrations",
+        unexpected_upgrade,
+    )
+
+    assert schema_migrations.main(["deployment-plan"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["current_revision"] == "20260727_0010"
+    assert payload["head_revision"] == HEAD_REVISION
+    assert payload["pending_revisions"] == [HEAD_REVISION]
+    assert payload["safe_for_live_expand"] is True
+
+
+def test_validate_cli_is_read_only(monkeypatch, capsys) -> None:
+    status = MigrationStatus(
+        current_revisions=(HEAD_REVISION,),
+        head_revision=HEAD_REVISION,
+        at_head=True,
+    )
+    monkeypatch.setattr(
+        schema_migrations,
+        "validate_database_schema",
+        lambda: status,
+    )
+
+    def unexpected_upgrade():
+        raise AssertionError("validate must not run migrations")
+
+    monkeypatch.setattr(
+        schema_migrations,
+        "run_schema_migrations",
+        unexpected_upgrade,
+    )
+
+    assert schema_migrations.main(["validate"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["current_revision"] == HEAD_REVISION
+    assert payload["at_head"] is True
+
+
+def test_revision_forward_compatibility_is_strict() -> None:
+    assert schema_migrations.revision_is_forward(
+        "20260728_0012", HEAD_REVISION
+    ) is True
+    assert schema_migrations.revision_is_forward(HEAD_REVISION, HEAD_REVISION) is False
+    assert schema_migrations.revision_is_forward(
+        "20260727_0010", HEAD_REVISION
+    ) is False
+    assert schema_migrations.revision_is_forward("future", HEAD_REVISION) is False
+
+
+def test_validate_database_schema_rejects_stamped_incomplete_database(
+    tmp_path: Path,
+) -> None:
+    target_engine = sqlite_engine(tmp_path / "stamped-incomplete.sqlite")
+    with target_engine.begin() as connection:
+        connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32))"))
+        connection.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
+            {"revision": HEAD_REVISION},
+        )
+
+    with pytest.raises(RuntimeError, match="Database schema is missing tables"):
+        schema_migrations.validate_database_schema(target_engine)
+
+
+def test_live_deployment_plan_from_0010_is_expand_only(tmp_path: Path) -> None:
+    target_engine = sqlite_engine(tmp_path / "deployment-plan.sqlite")
+    config = alembic_config(str(target_engine.url))
+    command.upgrade(config, "20260727_0010")
+
+    plan = get_migration_plan(target_engine)
+
+    assert plan.current_revision == "20260727_0010"
+    assert plan.head_revision == HEAD_REVISION
+    assert plan.pending_revisions == (HEAD_REVISION,)
+    assert plan.compatibility == ("expand",)
+    assert plan.safe_for_live_expand is True
 
 
 def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
@@ -285,22 +385,48 @@ def test_runtime_connection_identity_is_server_scoped() -> None:
         assert legacy not in source_text
 
 
-def test_application_startup_fails_when_migrations_fail(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from fastapi.testclient import TestClient
-
+def main_module_path() -> str:
     import gateway_api.main as main_module
 
-    def fail_migrations():
-        raise RuntimeError("migration failed")
+    return main_module.__file__
 
-    monkeypatch.setattr(main_module, "run_schema_migrations", fail_migrations)
+
+def test_application_startup_refuses_schema_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gateway_api.main as main_module
+    from fastapi.testclient import TestClient
+
+    def incompatible_schema() -> MigrationStatus:
+        raise RuntimeError(
+            "Database revision 20260727_0010 does not match required Alembic head "
+            f"{HEAD_REVISION}"
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "validate_database_schema",
+        incompatible_schema,
+    )
     app = main_module.create_app()
 
-    with pytest.raises(RuntimeError, match="migration failed"):
-        with TestClient(app):
-            pass
+    with (
+        pytest.raises(RuntimeError, match="does not match required Alembic head"),
+        TestClient(app),
+    ):
+        pass
 
     assert app.state.initialization_status == "failed"
     assert app.state.database_at_head is False
+    assert app.state.database_forward_compatible is False
+    assert app.state.database_schema_valid is False
+    assert app.state.database_compatible is False
+
+
+def test_application_startup_never_executes_schema_upgrade() -> None:
+    source = Path(main_module_path()).read_text(encoding="utf-8")
+
+    assert "run_schema_migrations" not in source
+    assert "validate_database_schema" in source
+    assert "get_migration_status" in source
+    assert "validate_schema_metadata" in source

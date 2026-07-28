@@ -22,7 +22,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
-        transaction_per_migration=True,
+        transaction_per_migration=False,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -33,7 +33,7 @@ def run_migrations_with_connection(connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
-        transaction_per_migration=True,
+        transaction_per_migration=False,
     )
     with context.begin_transaction():
         context.run_migrations()

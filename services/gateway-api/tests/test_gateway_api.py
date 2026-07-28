@@ -36,6 +36,9 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.Fixt
     monkeypatch.setenv("COMMAND_BACKGROUND_AFTER_SECONDS", "1")
     monkeypatch.setenv("PUBLIC_BASE_URL", "http://testserver")
     monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv(
+        "COMMAND_SESSION_SPOOL_ROOT", str(tmp_path / "command-sessions")
+    )
 
     import gateway_api.config as config
     import gateway_api.database as database
@@ -48,7 +51,9 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.Fixt
     database.SessionLocal.configure(bind=database.engine)
 
     from gateway_api.main import create_app
+    from gateway_api.schema_migrations import run_schema_migrations
 
+    run_schema_migrations(database.engine)
     with TestClient(create_app()) as test_client:
         yield test_client
 
@@ -5658,6 +5663,68 @@ def test_phase_four_environment_emergency_stop_overrides_database_controls(
         assert blocked.value.status_code == 423
 
 
+def test_readiness_accepts_forward_compatible_schema(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gateway_api.main as main_module
+    from gateway_api.schema_migrations import HEAD_REVISION, MigrationStatus
+
+    future_revision = "20260728_0012"
+    monkeypatch.setattr(
+        main_module,
+        "get_migration_status",
+        lambda: MigrationStatus(
+            current_revisions=(future_revision,),
+            head_revision=HEAD_REVISION,
+            at_head=False,
+        ),
+    )
+    monkeypatch.setattr(main_module, "validate_schema_metadata", lambda: None)
+
+    ready = client.get("/ready")
+
+    assert ready.status_code == 200
+    payload = ready.json()
+    assert payload["database_revision"] == future_revision
+    assert payload["database_at_head"] is False
+    assert payload["database_forward_compatible"] is True
+    assert payload["database_schema_valid"] is True
+    assert payload["database_compatible"] is True
+    assert client.get("/auth/me").status_code == 200
+
+
+def test_readiness_blocks_traffic_on_invalid_schema_and_recovers(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gateway_api.main as main_module
+
+    def invalid_schema() -> None:
+        raise RuntimeError("Database schema is missing required columns")
+
+    monkeypatch.setattr(main_module, "validate_schema_metadata", invalid_schema)
+
+    ready = client.get("/ready")
+
+    assert ready.status_code == 503
+    detail = ready.json()["detail"]
+    assert detail["database_schema_valid"] is False
+    assert detail["database_compatible"] is False
+    assert detail["database_error_code"] == "schema_validation_failed"
+    blocked = client.get("/auth/me")
+    assert blocked.status_code == 503
+    assert blocked.json()["database_compatible"] is False
+
+    monkeypatch.setattr(main_module, "validate_schema_metadata", lambda: None)
+    recovered = client.get("/ready")
+
+    assert recovered.status_code == 200
+    assert recovered.json()["database_schema_valid"] is True
+    assert recovered.json()["database_compatible"] is True
+    assert client.get("/auth/me").status_code == 200
+
+
 def test_release_metadata_and_blue_green_deployment_artifacts(
     client: TestClient,
 ) -> None:
@@ -5673,6 +5740,9 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "slot": "local",
         "initialization_status": "ready",
         "database_at_head": True,
+        "database_forward_compatible": False,
+        "database_schema_valid": True,
+        "database_compatible": True,
         "database_revision": "20260727_0011",
         "database_head": "20260727_0011",
     }
@@ -5737,11 +5807,16 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert "RELEASE_VERSION" in script_text
     assert "chatgpt-gateway-nats" in script_text
     assert "active-slot" in script_text
+    assert "reconcile-state <git-commit>" in script_text
+    assert "initialize-database <git-commit>" in script_text
     assert "prepare <git-commit>" in script_text
     assert "verify-candidate <git-commit>" in script_text
     assert "restart-candidate <git-commit>" in script_text
     assert "verify-compatibility <git-commit>" in script_text
     assert "promote <git-commit>" in script_text
+    assert "verify-production <git-commit>" in script_text
+    assert "finalize <git-commit>" in script_text
+    assert "recover-candidate <git-commit>" in script_text
     assert "cleanup-candidate <git-commit>" in script_text
     assert "deploy-blue-green.sh rollback" in script_text
     assert "Signed thin-client compatibility report is missing" in script_text
@@ -5767,11 +5842,14 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "No-op: release not required",
         "CI: tests and production image",
         "Publish exact image and release to MKS",
+        "CD: reconcile production state",
+        "CD: initialize database",
         "CD: prepare inactive slot",
         "Candidate smoke",
         "Automated candidate resilience gate",
         "CD: promote candidate",
-        "Post-deploy smoke",
+        "CD: verify promoted release",
+        "CD: finalize release",
     ):
         assert stage in jenkinsfile
     assert "name: 'FORCE_REDEPLOY'" in jenkinsfile
@@ -5779,7 +5857,7 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert "writeFile file: '.release-skipped'" in jenkinsfile
     assert "writeFile file: '.release-required'" in jenkinsfile
     assert "expression { fileExists('.release-skipped') }" in jenkinsfile
-    assert jenkinsfile.count("expression { fileExists('.release-required') }") == 7
+    assert jenkinsfile.count("expression { fileExists('.release-required') }") == 10
     assert "SKIP_RELEASE" not in jenkinsfile
     assert "RELEASE_DECISION" not in jenkinsfile
     assert "docker build --platform linux/amd64 --target production" in jenkinsfile
@@ -5795,7 +5873,9 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert "restart-candidate" not in jenkinsfile
     assert "verify-compatibility" not in jenkinsfile
     assert "cleanup-candidate" in jenkinsfile
-    assert "deploy-blue-green.sh' rollback" in jenkinsfile
+    assert "recover-candidate" in jenkinsfile
+    assert "verify-production" in jenkinsfile
+    assert "finalize" in jenkinsfile
     assert "bash deploy/smoke.sh https://gateway.example.com" in jenkinsfile
 
 

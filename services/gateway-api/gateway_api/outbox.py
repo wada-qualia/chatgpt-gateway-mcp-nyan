@@ -633,9 +633,11 @@ class OutboxWorker:
             if not self.service.broker.healthy:
                 await asyncio.sleep(interval)
                 continue
-            result = await self.service.run_once()
-            if result.claimed == 0:
-                await asyncio.sleep(interval)
+            await self.service.run_once()
+            # Always yield a bounded idle window between batches. A sustained
+            # backlog must not monopolize the API process with publisher and
+            # subscriber callbacks.
+            await asyncio.sleep(interval)
 
     async def _heartbeat(self) -> None:
         interval = max(1, int(self.service.settings.gateway_replica_heartbeat_seconds))

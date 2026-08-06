@@ -321,10 +321,52 @@ class RealtimeService:
             or ""
         )
         dedupe_id = f"{self.replica_id}:{message_id}" if message_id else ""
+        notifications = await asyncio.to_thread(
+            self._persist_broker_event,
+            subject=subject,
+            payload=payload,
+            event_type=event_type,
+            envelope=envelope,
+            dedupe_id=dedupe_id,
+        )
+        delivery_results: list[tuple[str, bool]] = []
+        for notification in notifications:
+            delivered = await self.hub.send(
+                owner_subject=str(notification["owner_subject"]),
+                target_kind=str(notification["target_kind"]),
+                target_id=str(notification["target_id"]),
+                payload={
+                    "type": "notification",
+                    "notification_id": str(notification["id"]),
+                    "event_type": str(notification["event_type"]),
+                    "payload": dict(notification["payload"]),
+                },
+            )
+            delivery_results.append((str(notification["id"]), bool(delivered)))
+        if delivery_results:
+            await asyncio.to_thread(
+                self._record_delivery_results,
+                delivery_results,
+            )
+
+    def _persist_broker_event(
+        self,
+        *,
+        subject: str,
+        payload: bytes,
+        event_type: str,
+        envelope: dict[str, Any],
+        dedupe_id: str,
+    ) -> list[dict[str, Any]]:
         with self.session_factory() as db:
-            if dedupe_id and db.get(ProcessedBrokerMessage, dedupe_id) is not None:
-                return
             target_ids = self._target_agent_ids(db, envelope, self.replica_id)
+            # Most domain events do not address a local realtime route. They
+            # have no side effect to deduplicate, so avoid one indexed lookup
+            # and one insert/commit for every such broker message.
+            if not target_ids:
+                return []
+            if dedupe_id and db.get(ProcessedBrokerMessage, dedupe_id) is not None:
+                return []
             notifications: list[RealtimeNotification] = []
             now = utcnow()
             for target_id in target_ids:
@@ -357,24 +399,41 @@ class RealtimeService:
                     )
                 )
             db.commit()
-            for notification in notifications:
-                db.refresh(notification)
-                delivered = await self.hub.send(
-                    owner_subject=notification.owner_subject,
-                    target_kind=notification.target_kind,
-                    target_id=notification.target_id,
-                    payload={
-                        "type": "notification",
-                        "notification_id": notification.id,
-                        "event_type": notification.event_type,
-                        "payload": notification.payload,
-                    },
-                )
+            return [
+                {
+                    "id": notification.id,
+                    "owner_subject": notification.owner_subject,
+                    "target_kind": notification.target_kind,
+                    "target_id": notification.target_id,
+                    "event_type": notification.event_type,
+                    "payload": dict(notification.payload or {}),
+                }
+                for notification in notifications
+            ]
+
+    def _record_delivery_results(
+        self, delivery_results: list[tuple[str, bool]]
+    ) -> None:
+        with self.session_factory() as db:
+            notification_ids = [
+                notification_id for notification_id, _ in delivery_results
+            ]
+            notifications = {
+                notification.id: notification
+                for notification in db.query(RealtimeNotification)
+                .filter(RealtimeNotification.id.in_(notification_ids))
+                .all()
+            }
+            now = utcnow()
+            for notification_id, delivered in delivery_results:
+                notification = notifications.get(notification_id)
+                if notification is None:
+                    continue
                 notification.attempt_count += 1
                 if delivered:
                     notification.status = "delivered"
-                    notification.delivered_at = utcnow()
-                notification.updated_at = utcnow()
+                    notification.delivered_at = now
+                notification.updated_at = now
             if notifications:
                 db.commit()
 

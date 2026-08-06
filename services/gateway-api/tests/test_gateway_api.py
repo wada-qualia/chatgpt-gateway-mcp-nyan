@@ -3835,6 +3835,103 @@ def test_outbox_database_claim_does_not_run_on_event_loop_thread() -> None:
     assert claim_threads[0] != event_loop_thread
 
 
+def test_outbox_worker_throttles_between_nonempty_batches() -> None:
+    from gateway_api.outbox import OutboxWorker
+
+    class Service:
+        settings = type("Settings", (), {"gateway_outbox_poll_interval_seconds": 0.01})()
+        broker = type("Broker", (), {"healthy": True})()
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run_once(self):
+            self.calls += 1
+
+    service = Service()
+    worker = OutboxWorker(service)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(worker._run())
+        await asyncio.sleep(0.035)
+        worker._stopping.set()
+        await task
+
+    asyncio.run(scenario())
+
+    assert 1 <= service.calls <= 6
+
+
+def test_realtime_broker_database_work_does_not_run_on_event_loop_thread() -> None:
+    import threading
+
+    from gateway_api.realtime import RealtimeService
+
+    service = RealtimeService(
+        session_factory=object(),
+        broker=object(),
+        settings=object(),
+        replica_id="thread-isolation-test",
+    )
+    persistence_threads: list[int] = []
+
+    def slow_persist(**kwargs):
+        del kwargs
+        persistence_threads.append(threading.get_ident())
+        time.sleep(0.05)
+        return []
+
+    service._persist_broker_event = slow_persist
+    event_loop_thread = threading.get_ident()
+    asyncio.run(
+        service._on_broker_event(
+            "gateway.events.test",
+            json.dumps(
+                {
+                    "event_id": "thread-isolation-event",
+                    "event_type": "gateway.test.v1",
+                    "actor_subject": "system:test",
+                }
+            ).encode(),
+            {},
+        )
+    )
+
+    assert persistence_threads
+    assert persistence_threads[0] != event_loop_thread
+
+
+def test_realtime_ignores_events_without_local_targets_before_deduplication() -> None:
+    from gateway_api.realtime import RealtimeService
+
+    class SessionContext:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    service = RealtimeService(
+        session_factory=SessionContext,
+        broker=object(),
+        settings=object(),
+        replica_id="irrelevant-event-test",
+    )
+
+    assert service._persist_broker_event(
+        subject="gateway.events.gateway.command_session.output.v1",
+        payload=b"{}",
+        event_type="gateway.command_session.output.v1",
+        envelope={
+            "event_type": "gateway.command_session.output.v1",
+            "actor_subject": "system:test",
+            "owner_subject": "system:test",
+            "payload": {},
+        },
+        dedupe_id="irrelevant-event-test:event-id",
+    ) == []
+
+
 def test_phase_three_outbox_retry_dead_letter_and_replay(client: TestClient) -> None:
     from gateway_api.broker import BrokerPublishAck
     from gateway_api.config import get_settings

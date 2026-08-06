@@ -323,9 +323,47 @@ class OutboxService:
         db.commit()
         return status
 
-    async def run_once(self, *, limit: int | None = None) -> OutboxRunResult:
+    def _claim_batch_in_new_session(
+        self, *, limit: int | None = None
+    ) -> list[OutboxEvent]:
         with self.session_factory() as db:
-            rows = self.claim_batch(db, limit=limit)
+            return self.claim_batch(db, limit=limit)
+
+    def _record_success_in_new_session(
+        self,
+        *,
+        event_id: str,
+        lock_token: str,
+        ack: BrokerPublishAck,
+    ) -> bool:
+        with self.session_factory() as db:
+            return self._record_success(
+                db,
+                event_id=event_id,
+                lock_token=lock_token,
+                ack=ack,
+            )
+
+    def _record_failure_in_new_session(
+        self,
+        *,
+        event_id: str,
+        lock_token: str,
+        error: Exception,
+    ) -> str:
+        with self.session_factory() as db:
+            return self._record_failure(
+                db,
+                event_id=event_id,
+                lock_token=lock_token,
+                error=error,
+            )
+
+    async def run_once(self, *, limit: int | None = None) -> OutboxRunResult:
+        rows = await asyncio.to_thread(
+            self._claim_batch_in_new_session,
+            limit=limit,
+        )
         published = 0
         retried = 0
         dead_lettered = 0
@@ -351,24 +389,22 @@ class OutboxService:
                     message_id=delivery_id,
                     headers=headers,
                 )
-                with self.session_factory() as db:
-                    accepted = self._record_success(
-                        db,
-                        event_id=row.id,
-                        lock_token=str(row.lock_token or ""),
-                        ack=ack,
-                    )
+                accepted = await asyncio.to_thread(
+                    self._record_success_in_new_session,
+                    event_id=row.id,
+                    lock_token=str(row.lock_token or ""),
+                    ack=ack,
+                )
                 if accepted:
                     published += 1
             except Exception as exc:
                 logger.exception("outbox_publish_failed", extra={"outbox_event_id": row.id})
-                with self.session_factory() as db:
-                    result = self._record_failure(
-                        db,
-                        event_id=row.id,
-                        lock_token=str(row.lock_token or ""),
-                        error=exc,
-                    )
+                result = await asyncio.to_thread(
+                    self._record_failure_in_new_session,
+                    event_id=row.id,
+                    lock_token=str(row.lock_token or ""),
+                    error=exc,
+                )
                 if result == "dead_letter":
                     dead_lettered += 1
                 elif result == "retry":
@@ -552,8 +588,7 @@ class OutboxWorker:
 
     async def start(self) -> None:
         self._stopping.clear()
-        with self.service.session_factory() as db:
-            self.service.register_replica(db)
+        await asyncio.to_thread(self._register_replica)
         if (
             self.service.settings.gateway_outbox_enabled
             and self.service.settings.gateway_broker_backend != "disabled"
@@ -576,6 +611,17 @@ class OutboxWorker:
                     await task
                 except asyncio.CancelledError:
                     pass
+        await asyncio.to_thread(self._stop_replica)
+
+    def _register_replica(self) -> None:
+        with self.service.session_factory() as db:
+            self.service.register_replica(db)
+
+    def _heartbeat_replica(self) -> None:
+        with self.service.session_factory() as db:
+            self.service.heartbeat_replica(db)
+
+    def _stop_replica(self) -> None:
         with self.service.session_factory() as db:
             self.service.stop_replica(db)
 
@@ -594,6 +640,5 @@ class OutboxWorker:
     async def _heartbeat(self) -> None:
         interval = max(1, int(self.service.settings.gateway_replica_heartbeat_seconds))
         while not self._stopping.is_set():
-            with self.service.session_factory() as db:
-                self.service.heartbeat_replica(db)
+            await asyncio.to_thread(self._heartbeat_replica)
             await asyncio.sleep(interval)

@@ -3800,6 +3800,41 @@ def test_phase_three_outbox_publish_ack_and_deduplication(client: TestClient) ->
     assert len(published_ids) == len(set(published_ids))
 
 
+def test_outbox_database_claim_does_not_run_on_event_loop_thread() -> None:
+    import threading
+
+    from gateway_api.outbox import OutboxService
+
+    class SessionContext:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    service = OutboxService(
+        session_factory=SessionContext,
+        broker=object(),
+        settings=object(),
+        replica_id="thread-isolation-test",
+    )
+    claim_threads: list[int] = []
+
+    def slow_claim(db, *, limit=None):
+        del db, limit
+        claim_threads.append(threading.get_ident())
+        time.sleep(0.05)
+        return []
+
+    service.claim_batch = slow_claim
+    event_loop_thread = threading.get_ident()
+    result = asyncio.run(service.run_once(limit=1))
+
+    assert result.claimed == 0
+    assert claim_threads
+    assert claim_threads[0] != event_loop_thread
+
+
 def test_phase_three_outbox_retry_dead_letter_and_replay(client: TestClient) -> None:
     from gateway_api.broker import BrokerPublishAck
     from gateway_api.config import get_settings

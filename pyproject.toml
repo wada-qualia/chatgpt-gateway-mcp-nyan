@@ -48,3 +48,12 @@ sha256 = "eb5323f26fb5a2f0dcb5d1a0999c5bb7ef0acf83dd51cb9a7fcae77b42874e85"
 source-commit = "52ab367a68b09db2730c14b626ce019f8a203a4d"
 publication-channel = "jenkins-internal-artifact"
 public-index-allowed = false
+
+[tool.klab.affine-sdk]
+package = "affine-py-sdk"
+version = "0.3.0"
+artifact = "vendor/affine-sdk/affine_py_sdk-0.3.0-py3-none-any.whl"
+sha256 = "8bc00116f30be9e2a566f0c73ea18c5db2fb843e102693e3b308ad92f1fe2982"
+source-commit = "65f064d4223a77a5ff324b698c419d8cd0895e3e"
+publication-channel = "gateway-qualified-vendor"
+public-index-allowed = false

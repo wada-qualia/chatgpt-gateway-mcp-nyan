@@ -189,6 +189,33 @@ def test_private_networks_are_rejected_by_default() -> None:
         asyncio.run(manager.validate_endpoint("https://127.0.0.1/mcp"))
 
 
+def test_exact_trusted_internal_origin_allows_private_http_without_global_flags() -> (
+    None
+):
+    manager = UpstreamMcpManager(
+        public_base_url="https://gateway.example.test",
+        trusted_internal_endpoints={"http://127.0.0.1:8765"},
+    )
+    resolution = asyncio.run(manager.validate_endpoint("http://127.0.0.1:8765/mcp"))
+    assert resolution.scheme == "http"
+    assert resolution.hostname == "127.0.0.1"
+    assert resolution.port == 8765
+    assert resolution.addresses == frozenset({"127.0.0.1"})
+
+    with pytest.raises(UpstreamMcpError, match="Insecure upstream HTTP"):
+        asyncio.run(manager.validate_endpoint("http://127.0.0.1:8766/mcp"))
+    with pytest.raises(UpstreamMcpError, match="non-public"):
+        asyncio.run(manager.validate_endpoint("https://127.0.0.1:8765/mcp"))
+
+
+def test_trusted_internal_endpoint_configuration_requires_exact_origin() -> None:
+    with pytest.raises(ValueError, match="absolute HTTP\\(S\\) origins"):
+        UpstreamMcpManager(
+            public_base_url="https://gateway.example.test",
+            trusted_internal_endpoints={"http://127.0.0.1:8765/mcp"},
+        )
+
+
 def test_service_account_material_is_encrypted_and_resolved(db: Session) -> None:
     payload = McpCredentialMaterialCreate(
         binding_type="service_account",
@@ -270,9 +297,7 @@ def test_timeout_and_result_limit_are_normalized(db: Session) -> None:
                 tool.upstream_name: tool
                 for tool in db.query(McpTool).filter(McpTool.server_id == server.id)
             }
-            slow_revision = db.get(
-                McpToolRevision, tools["slow"].current_revision_id
-            )
+            slow_revision = db.get(McpToolRevision, tools["slow"].current_revision_id)
             with pytest.raises(UpstreamMcpError) as timeout_error:
                 await manager.call_exact_revision(
                     db,
@@ -285,9 +310,7 @@ def test_timeout_and_result_limit_are_normalized(db: Session) -> None:
                 )
             assert timeout_error.value.code == "MCP_CALL_TIMEOUT"
 
-            large_revision = db.get(
-                McpToolRevision, tools["large"].current_revision_id
-            )
+            large_revision = db.get(McpToolRevision, tools["large"].current_revision_id)
             with pytest.raises(UpstreamMcpError) as size_error:
                 await manager.call_exact_revision(
                     db,
@@ -301,7 +324,6 @@ def test_timeout_and_result_limit_are_normalized(db: Session) -> None:
             await manager.stop()
 
     asyncio.run(scenario())
-
 
 
 def test_oauth_pkce_exchange_is_audience_bound_and_single_use(db: Session) -> None:
@@ -381,14 +403,16 @@ def test_oauth_pkce_exchange_is_audience_bound_and_single_use(db: Session) -> No
             )
             assert binding.status == "active"
             assert binding.audience == audience
-            assert exchanges == [{
-                "grant_type": "authorization_code",
-                "code": "accepted-code",
-                "redirect_uri": "https://gateway.example.test/mcp-connections",
-                "client_id": "gateway-client",
-                "code_verifier": exchanges[0]["code_verifier"],
-                "resource": audience,
-            }]
+            assert exchanges == [
+                {
+                    "grant_type": "authorization_code",
+                    "code": "accepted-code",
+                    "redirect_uri": "https://gateway.example.test/mcp-connections",
+                    "client_id": "gateway-client",
+                    "code_verifier": exchanges[0]["code_verifier"],
+                    "resource": audience,
+                }
+            ]
             assert exchanges[0]["code_verifier"]
             token_secret = db.get(SecretBlob, binding.secret_blob_id)
             assert token_secret is not None
@@ -407,7 +431,6 @@ def test_oauth_pkce_exchange_is_audience_bound_and_single_use(db: Session) -> No
             await manager.stop()
 
     asyncio.run(scenario())
-
 
 
 def test_rest_api_enrolls_tests_and_refreshes_remote_server(db: Session) -> None:
@@ -477,7 +500,9 @@ def test_rest_api_enrolls_tests_and_refreshes_remote_server(db: Session) -> None
                 assert tested.json()["tool_count"] == 3
 
                 listed = await client.get("/api/mcp/servers")
-                current = next(item for item in listed.json() if item["id"] == server["id"])
+                current = next(
+                    item for item in listed.json() if item["id"] == server["id"]
+                )
                 refreshed = await client.post(
                     f"/api/mcp/servers/{server['id']}/refresh",
                     headers={"Idempotency-Key": "rest-upstream-refresh-1"},
@@ -491,8 +516,9 @@ def test_rest_api_enrolls_tests_and_refreshes_remote_server(db: Session) -> None
     asyncio.run(scenario())
 
 
-
-def test_service_account_rotation_replay_and_revocation_fail_closed(db: Session) -> None:
+def test_service_account_rotation_replay_and_revocation_fail_closed(
+    db: Session,
+) -> None:
     async def scenario() -> None:
         async with _running_server() as endpoint:
             created = create_credential_material(

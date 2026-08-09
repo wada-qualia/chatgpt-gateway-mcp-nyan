@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     gateway_mcp_max_federation_hops: int = 4
     gateway_mcp_upstream_allow_private_networks: bool = False
     gateway_mcp_upstream_allow_insecure_http: bool = False
+    gateway_mcp_trusted_internal_endpoints: str = ""
     gateway_mcp_upstream_connect_timeout_seconds: float = 10.0
     gateway_mcp_upstream_call_timeout_seconds: float = 30.0
     gateway_mcp_upstream_cancellation_grace_seconds: float = 3.0
@@ -71,7 +72,9 @@ class Settings(BaseSettings):
     gateway_lup_enabled: bool = False
     gateway_lup_mcp_traffic_enabled: bool = False
     gateway_lup_mcp_traffic_flush_limit: int = Field(default=25, ge=1, le=250)
-    gateway_lup_mcp_traffic_flush_interval_seconds: float = Field(default=15.0, ge=1.0, le=300.0)
+    gateway_lup_mcp_traffic_flush_interval_seconds: float = Field(
+        default=15.0, ge=1.0, le=300.0
+    )
     gateway_lup_endpoint: str = "stage"
     gateway_lup_timeout_seconds: float = 5.0
     gateway_lup_max_attempts: int = 3
@@ -85,12 +88,18 @@ class Settings(BaseSettings):
     gateway_lup_project_atlas_entity_id: str | None = None
     gateway_lup_project_git_branch: str | None = None
     gateway_docker_enabled: bool = False
-    gateway_docker_allowed_images: str = Field(default="ubuntu:24.04,ubuntu:22.04,ubuntu:20.04")
+    gateway_docker_allowed_images: str = Field(
+        default="ubuntu:24.04,ubuntu:22.04,ubuntu:20.04"
+    )
     gateway_ssh_enabled: bool = True
     gateway_ssh_known_hosts_path: str = "./data/ssh/known_hosts"
     gateway_ssh_known_hosts_policy: Literal["reject", "accept-new"] = "accept-new"
-    gateway_ssh_allowed_actions: str = Field(default="uptime,disk_usage,memory_usage,whoami,pwd,home_list")
-    gateway_ssh_command_profile_default: Literal["restricted", "filtered", "unrestricted"] | None = None
+    gateway_ssh_allowed_actions: str = Field(
+        default="uptime,disk_usage,memory_usage,whoami,pwd,home_list"
+    )
+    gateway_ssh_command_profile_default: (
+        Literal["restricted", "filtered", "unrestricted"] | None
+    ) = None
     gateway_ssh_allow_raw_command: bool | None = None
     gateway_ssh_raw_command_max_chars: int = 8000
     gateway_agent_allow_unverified_git_context: bool = False
@@ -132,7 +141,11 @@ class Settings(BaseSettings):
 
     @property
     def nats_servers(self) -> list[str]:
-        return [value.strip() for value in self.gateway_nats_servers.split(",") if value.strip()]
+        return [
+            value.strip()
+            for value in self.gateway_nats_servers.split(",")
+            if value.strip()
+        ]
 
     @property
     def mcp_federation_pilot_owner_subjects(self) -> set[str]:
@@ -143,19 +156,41 @@ class Settings(BaseSettings):
         }
 
     @property
+    def mcp_trusted_internal_endpoints(self) -> set[str]:
+        return {
+            endpoint.strip()
+            for endpoint in self.gateway_mcp_trusted_internal_endpoints.split(",")
+            if endpoint.strip()
+        }
+
+    @property
     def supported_scopes(self) -> list[str]:
-        return [scope for scope in self.oauth_supported_scopes.replace(",", " ").split() if scope]
+        return [
+            scope
+            for scope in self.oauth_supported_scopes.replace(",", " ").split()
+            if scope
+        ]
 
     @property
     def docker_allowed_images(self) -> list[str]:
-        return [image.strip() for image in self.gateway_docker_allowed_images.split(",") if image.strip()]
+        return [
+            image.strip()
+            for image in self.gateway_docker_allowed_images.split(",")
+            if image.strip()
+        ]
 
     @property
     def ssh_allowed_actions(self) -> list[str]:
-        return [action.strip() for action in self.gateway_ssh_allowed_actions.split(",") if action.strip()]
+        return [
+            action.strip()
+            for action in self.gateway_ssh_allowed_actions.split(",")
+            if action.strip()
+        ]
 
     @property
-    def ssh_command_profile_default(self) -> Literal["restricted", "filtered", "unrestricted"]:
+    def ssh_command_profile_default(
+        self,
+    ) -> Literal["restricted", "filtered", "unrestricted"]:
         if self.gateway_ssh_command_profile_default is not None:
             return self.gateway_ssh_command_profile_default
         if self.gateway_ssh_allow_raw_command is True:
@@ -166,11 +201,17 @@ class Settings(BaseSettings):
 
     @property
     def ssh_raw_command_denied_patterns(self) -> list[str]:
-        return [pattern.strip() for pattern in self.gateway_ssh_raw_command_denied_patterns.split(",") if pattern.strip()]
+        return [
+            pattern.strip()
+            for pattern in self.gateway_ssh_raw_command_denied_patterns.split(",")
+            if pattern.strip()
+        ]
 
     @property
     def dev_roles(self) -> list[str]:
-        return [role.strip() for role in self.gateway_dev_roles.split(",") if role.strip()]
+        return [
+            role.strip() for role in self.gateway_dev_roles.split(",") if role.strip()
+        ]
 
     @property
     def issuer(self) -> str:

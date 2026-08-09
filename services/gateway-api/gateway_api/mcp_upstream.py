@@ -86,6 +86,34 @@ _BEARER_SCOPE_PARAMETER = re.compile(
 _SCOPE_TOKEN = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,160}$")
 
 
+def _endpoint_origin(value: str) -> tuple[str, str, int] | None:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    try:
+        port = parsed.port or _default_port(parsed.scheme)
+    except ValueError:
+        return None
+    return (parsed.scheme, parsed.hostname.lower(), port)
+
+
+def _configured_trusted_internal_origin(value: str) -> tuple[str, str, int]:
+    parsed = urlparse(value)
+    origin = _endpoint_origin(value)
+    if (
+        origin is None
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "Trusted internal MCP endpoints must be absolute HTTP(S) origins without path, credentials, query or fragment"
+        )
+    return origin
+
+
 def _bearer_challenge_scopes(value: str | None) -> list[str]:
     if (
         not value
@@ -422,6 +450,7 @@ class UpstreamMcpManager:
         public_base_url: str,
         allow_private_networks: bool = False,
         allow_insecure_http: bool = False,
+        trusted_internal_endpoints: set[str] | list[str] | tuple[str, ...] = (),
         connect_timeout_seconds: float = 10.0,
         call_timeout_seconds: float = 30.0,
         cancellation_grace_seconds: float = 3.0,
@@ -449,6 +478,11 @@ class UpstreamMcpManager:
         self.public_base_url = public_base_url.rstrip("/")
         self.allow_private_networks = allow_private_networks
         self.allow_insecure_http = allow_insecure_http
+        self.trusted_internal_origins = {
+            _configured_trusted_internal_origin(str(endpoint).strip())
+            for endpoint in trusted_internal_endpoints
+            if str(endpoint).strip()
+        }
         self.connect_timeout_seconds = connect_timeout_seconds
         self.call_timeout_seconds = call_timeout_seconds
         self.cancellation_grace_seconds = cancellation_grace_seconds
@@ -542,12 +576,14 @@ class UpstreamMcpManager:
     async def validate_endpoint(
         self, endpoint: str, *, purpose: str = "mcp"
     ) -> EndpointResolution:
+        endpoint_origin = _endpoint_origin(endpoint)
+        trusted_internal = endpoint_origin in self.trusted_internal_origins
         try:
             return await resolve_endpoint(
                 endpoint,
                 public_base_url=self.public_base_url,
-                allow_private_networks=self.allow_private_networks,
-                allow_insecure_http=self.allow_insecure_http,
+                allow_private_networks=self.allow_private_networks or trusted_internal,
+                allow_insecure_http=self.allow_insecure_http or trusted_internal,
             )
         except FederationBoundaryError as exc:
             raise UpstreamMcpError(
@@ -946,6 +982,15 @@ class UpstreamMcpManager:
                             tool.upstream_name,
                             arguments,
                             timeout_seconds or self.call_timeout_seconds,
+                            meta={
+                                "gateway": {
+                                    "idempotency_key": idempotency_key,
+                                    "correlation_id": correlation_id,
+                                    "preparation_id": preparation_id,
+                                    "approval_request_id": approval_request_id,
+                                    "execution_permit_id": execution_permit_id,
+                                }
+                            },
                         )
             limited = self._limit_result(raw)
             if revision.output_schema and raw.structuredContent is not None:
@@ -1196,9 +1241,11 @@ class UpstreamMcpManager:
         name: str,
         arguments: dict[str, Any],
         timeout_seconds: float,
+        *,
+        meta: dict[str, Any] | None = None,
     ) -> types.CallToolResult:
         request_id = session._request_id
-        task = asyncio.create_task(session.call_tool(name, arguments))
+        task = asyncio.create_task(session.call_tool(name, arguments, meta=meta))
         self._active_calls.add(task)
         task.add_done_callback(self._active_calls.discard)
         try:

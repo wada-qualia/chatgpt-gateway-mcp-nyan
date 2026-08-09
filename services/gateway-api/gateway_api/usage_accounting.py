@@ -1,19 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import ssl
-import threading
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID, uuid5
 
-import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .client_credentials import ClientCredentialsTokenProvider
 from .config import Settings
 from .models import LupTaskStart
 
@@ -63,59 +60,30 @@ class KeycloakClientCredentialsProvider:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._token: str | None = None
-        self._expires_at = 0.0
-        self._lock = threading.RLock()
+        token_url = settings.gateway_lup_application_token_url or (
+            f"{settings.keycloak_issuer.rstrip('/')}/protocol/openid-connect/token"
+        )
+        self._provider = ClientCredentialsTokenProvider(
+            token_url=token_url,
+            client_id=settings.gateway_lup_application_client_id,
+            client_secret=settings.gateway_lup_application_client_secret.get_secret_value(),
+            scope=settings.gateway_lup_application_scope,
+            timeout_seconds=settings.gateway_lup_timeout_seconds,
+            ca_bundle=settings.keycloak_ca_cert_path,
+            error_label="LUP application proof",
+        )
 
     def __repr__(self) -> str:
         return "KeycloakClientCredentialsProvider(<redacted>)"
 
     def get_token(self) -> str:
-        with self._lock:
-            now = time.monotonic()
-            if self._token is not None and now < self._expires_at - 30:
-                return self._token
-            client_id = self._settings.gateway_lup_application_client_id
-            client_secret = (
-                self._settings.gateway_lup_application_client_secret.get_secret_value()
-            )
-            if not client_id or not client_secret:
-                raise RuntimeError("LUP application credentials are not configured")
-            token_url = self._settings.gateway_lup_application_token_url or (
-                f"{self._settings.keycloak_issuer.rstrip('/')}/protocol/openid-connect/token"
-            )
-            data = {
-                "grant_type": "client_credentials",
-                "client_id": client_id,
-                "client_secret": client_secret,
-            }
-            if self._settings.gateway_lup_application_scope:
-                data["scope"] = self._settings.gateway_lup_application_scope
-            context = ssl.create_default_context()
-            if self._settings.keycloak_ca_cert_path:
-                context.load_verify_locations(
-                    cafile=self._settings.keycloak_ca_cert_path
-                )
-            try:
-                with httpx.Client(
-                    timeout=self._settings.gateway_lup_timeout_seconds, verify=context
-                ) as client:
-                    response = client.post(token_url, data=data)
-                    response.raise_for_status()
-                    payload = response.json()
-            except (httpx.HTTPError, ValueError) as error:
-                raise RuntimeError(
-                    "LUP application proof acquisition failed"
-                ) from error
-            token = payload.get("access_token")
-            expires_in = payload.get("expires_in", 60)
-            if not isinstance(token, str) or not token or len(token) > 131072:
-                raise RuntimeError("LUP application proof response is invalid")
-            if isinstance(expires_in, bool) or not isinstance(expires_in, (int, float)):
-                expires_in = 60
-            self._token = token
-            self._expires_at = now + max(60.0, min(float(expires_in), 86400.0))
-            return token
+        client_id = self._settings.gateway_lup_application_client_id
+        client_secret = (
+            self._settings.gateway_lup_application_client_secret.get_secret_value()
+        )
+        if not client_id or not client_secret:
+            raise RuntimeError("LUP application credentials are not configured")
+        return self._provider.get_token()
 
 
 class SdkTaskStartPublisher:

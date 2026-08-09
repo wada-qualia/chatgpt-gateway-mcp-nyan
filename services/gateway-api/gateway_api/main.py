@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
         public_base_url=settings.public_base_url,
         allow_private_networks=settings.gateway_mcp_upstream_allow_private_networks,
         allow_insecure_http=settings.gateway_mcp_upstream_allow_insecure_http,
+        trusted_internal_endpoints=settings.mcp_trusted_internal_endpoints,
         connect_timeout_seconds=settings.gateway_mcp_upstream_connect_timeout_seconds,
         call_timeout_seconds=settings.gateway_mcp_upstream_call_timeout_seconds,
         cancellation_grace_seconds=settings.gateway_mcp_upstream_cancellation_grace_seconds,
@@ -236,9 +237,7 @@ def create_app() -> FastAPI:
                 state["federation"] = upstream_mcp_manager.readiness_snapshot(db)
         except (RuntimeError, SQLAlchemyError):
             if migration_status is not None:
-                request.app.state.database_revision = (
-                    migration_status.current_revision
-                )
+                request.app.state.database_revision = migration_status.current_revision
                 request.app.state.database_head = migration_status.head_revision
                 request.app.state.database_at_head = migration_status.at_head
             request.app.state.database_forward_compatible = False
@@ -266,10 +265,7 @@ def create_app() -> FastAPI:
         state["database_forward_compatible"] = forward_compatible
         state["database_schema_valid"] = True
         state["database_compatible"] = True
-        if (
-            state["status"] != "ready"
-            or state["initialization_status"] != "ready"
-        ):
+        if state["status"] != "ready" or state["initialization_status"] != "ready":
             raise HTTPException(status_code=503, detail=state)
         return state
 

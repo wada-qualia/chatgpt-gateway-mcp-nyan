@@ -80,6 +80,9 @@ CMD ["uvicorn", "gateway_api.main:app", "--host", "0.0.0.0", "--port", "8000", "
 FROM runtime-base AS test
 
 USER root
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends jq \
+  && rm -rf /var/lib/apt/lists/*
 COPY requirements-dev.txt /app/
 COPY --chown=appuser:appuser packaging /app/packaging
 COPY --chown=appuser:appuser deploy /app/deploy

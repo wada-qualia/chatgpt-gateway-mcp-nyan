@@ -129,6 +129,20 @@ class CommandSessionDelivery(Base):
 
 class AgentToolCall(Base):
     __tablename__ = "agent_tool_calls"
+    __table_args__ = (
+        CheckConstraint(
+            "traffic_delivery_status in "
+            "('not_recorded', 'pending', 'delivered', 'disabled', 'dead_letter')",
+            name="ck_agent_tool_calls_traffic_delivery_status",
+        ),
+        Index(
+            "ix_agent_tool_calls_lup_pending_schedule",
+            "created_at",
+            "id",
+            postgresql_where=text("traffic_delivery_status = 'pending'"),
+            sqlite_where=text("traffic_delivery_status = 'pending'"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_subject: Mapped[str] = mapped_column(String(255), index=True)
@@ -149,6 +163,12 @@ class AgentToolCall(Base):
     traffic_attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     traffic_receipt_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     traffic_last_error_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    traffic_next_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    traffic_last_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     traffic_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -749,6 +769,25 @@ class OutboxEvent(Base):
     __tablename__ = "outbox_events"
     __table_args__ = (
         UniqueConstraint("audit_event_id", name="uq_outbox_event_audit_event"),
+        Index(
+            "ix_outbox_events_ready_claim",
+            "available_at",
+            "created_at",
+            "id",
+            postgresql_where=text("status IN ('pending', 'retry')"),
+            sqlite_where=text("status IN ('pending', 'retry')"),
+        ),
+        Index(
+            "ix_outbox_events_stale_claim",
+            "locked_at",
+            "id",
+            postgresql_where=text(
+                "status = 'processing' AND locked_at IS NOT NULL"
+            ),
+            sqlite_where=text(
+                "status = 'processing' AND locked_at IS NOT NULL"
+            ),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Literal
 
 from alembic import command
 from alembic.config import Config
@@ -16,12 +18,20 @@ from sqlalchemy.exc import SQLAlchemyError
 from . import database
 from . import models as _models
 from .config import get_settings
+from .migration_operations import CreateIndexConcurrently
 
 BASELINE_REVISION = "20260725_0001"
 PROJECTION_REVISION = "20260725_0002"
-HEAD_REVISION = "20260727_0011"
+HEAD_REVISION = "20260811_0012"
 LEGACY_ANCHOR_TABLES = {"users", "secret_blobs", "oauth_clients"}
 REVISION_PATTERN = re.compile(r"^(?P<date>\d{8})_(?P<sequence>\d{4})$")
+
+
+@dataclass(frozen=True, slots=True)
+class OnlineIndexReceipt:
+    name: str
+    action: Literal["created", "reused", "rebuilt"]
+    valid: bool
 
 
 @dataclass(frozen=True)
@@ -31,6 +41,7 @@ class MigrationPlan:
     pending_revisions: tuple[str, ...]
     compatibility: tuple[str, ...]
     safe_for_live_expand: bool
+    online_index_operations: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -42,6 +53,7 @@ class MigrationStatus:
     head_revision: str
     at_head: bool
     adopted_legacy_schema: bool = False
+    online_index_operations: tuple[OnlineIndexReceipt, ...] = ()
 
     @property
     def current_revision(self) -> str | None:
@@ -99,6 +111,30 @@ def revision_is_forward(current_revision: str | None, required_revision: str) ->
     return current_order > required_order
 
 
+def _online_operations_for_scripts(scripts: Sequence[object]) -> tuple[CreateIndexConcurrently, ...]:
+    operations: list[CreateIndexConcurrently] = []
+    names: set[str] = set()
+    for script in scripts:
+        declared = getattr(script.module, "online_operations", ())
+        if not isinstance(declared, tuple):
+            raise TypeError(
+                f"Alembic revision {script.revision} online_operations must be a tuple"
+            )
+        for operation in declared:
+            if not isinstance(operation, CreateIndexConcurrently):
+                raise TypeError(
+                    f"Alembic revision {script.revision} declared an unsupported "
+                    "online operation"
+                )
+            if operation.name in names:
+                raise RuntimeError(
+                    f"duplicate concurrent index operation: {operation.name}"
+                )
+            names.add(operation.name)
+            operations.append(operation)
+    return tuple(operations)
+
+
 def get_migration_plan(
     target_engine: Engine | None = None,
 ) -> MigrationPlan:
@@ -120,12 +156,14 @@ def get_migration_plan(
         str(getattr(script.module, "deployment_compatibility", "unspecified"))
         for script in pending_scripts
     )
+    online_operations = _online_operations_for_scripts(pending_scripts)
     return MigrationPlan(
         current_revision=current,
         head_revision=head,
         pending_revisions=pending,
         compatibility=compatibility,
         safe_for_live_expand=all(value == "expand" for value in compatibility),
+        online_index_operations=tuple(item.name for item in online_operations),
     )
 
 
@@ -273,21 +311,237 @@ def _validate_metadata_schema(connection: Connection) -> None:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class _IndexSignature:
+    method: str
+    unique: bool
+    nulls_not_distinct: bool
+    key_count: int
+    columns: tuple[str, ...]
+    predicate: str | None
+    options: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexState:
+    table: str
+    valid: bool
+    ready: bool
+    signature: _IndexSignature
+
+
+_INDEX_STATE_SQL = text(
+    """
+    SELECT
+        table_class.relname AS table_name,
+        access_method.amname AS method_name,
+        index_state.indisunique,
+        index_state.indnullsnotdistinct,
+        index_state.indisvalid,
+        index_state.indisready,
+        index_state.indnkeyatts,
+        ARRAY(
+            SELECT pg_get_indexdef(index_state.indexrelid, position, true)
+            FROM generate_series(1, index_state.indnatts) AS position
+            ORDER BY position
+        ) AS key_columns,
+        pg_get_expr(index_state.indpred, index_state.indrelid, true) AS predicate,
+        COALESCE(index_class.reloptions, ARRAY[]::text[]) AS index_options
+    FROM pg_index AS index_state
+    JOIN pg_class AS index_class
+      ON index_class.oid = index_state.indexrelid
+    JOIN pg_class AS table_class
+      ON table_class.oid = index_state.indrelid
+    JOIN pg_namespace AS namespace
+      ON namespace.oid = index_class.relnamespace
+    JOIN pg_am AS access_method
+      ON access_method.oid = index_class.relam
+    WHERE namespace.nspname = :schema_name
+      AND index_class.relname = :index_name
+    """
+)
+
+
+def _index_state(
+    connection: Connection,
+    *,
+    schema_name: str,
+    index_name: str,
+) -> _IndexState | None:
+    rows = connection.execute(
+        _INDEX_STATE_SQL,
+        {"schema_name": schema_name, "index_name": index_name},
+    ).mappings().all()
+    if len(rows) > 1:
+        raise RuntimeError(f"concurrent index name is ambiguous: {index_name}")
+    if not rows:
+        return None
+    row = rows[0]
+    return _IndexState(
+        table=str(row["table_name"]),
+        valid=bool(row["indisvalid"]),
+        ready=bool(row["indisready"]),
+        signature=_IndexSignature(
+            method=str(row["method_name"]),
+            unique=bool(row["indisunique"]),
+            nulls_not_distinct=bool(row["indnullsnotdistinct"]),
+            key_count=int(row["indnkeyatts"]),
+            columns=tuple(str(item) for item in row["key_columns"]),
+            predicate=str(row["predicate"]) if row["predicate"] is not None else None,
+            options=tuple(sorted(str(item) for item in row["index_options"])),
+        ),
+    )
+
+
+def _quoted_identifier(connection: Connection, value: str) -> str:
+    return connection.dialect.identifier_preparer.quote(value)
+
+
+def _expected_index_signature(
+    connection: Connection,
+    operation: CreateIndexConcurrently,
+) -> _IndexSignature:
+    suffix = hashlib.sha256(operation.name.encode()).hexdigest()[:12]
+    table_name = f"gateway_index_probe_{suffix}"
+    index_name = f"gateway_index_probe_ix_{suffix}"
+    quoted_table = _quoted_identifier(connection, table_name)
+    quoted_source = _quoted_identifier(connection, operation.table)
+    quoted_index = _quoted_identifier(connection, index_name)
+    columns = ", ".join(
+        _quoted_identifier(connection, column) for column in operation.columns
+    )
+    try:
+        connection.exec_driver_sql(
+            f"CREATE TEMP TABLE {quoted_table} (LIKE {quoted_source})"
+        )
+        connection.exec_driver_sql(
+            f"CREATE INDEX {quoted_index} ON {quoted_table} ({columns}) "
+            f"WHERE {operation.predicate}"
+        )
+        state = _index_state(
+            connection,
+            schema_name=str(
+                connection.execute(
+                    text(
+                        "SELECT nspname FROM pg_namespace "
+                        "WHERE oid = pg_my_temp_schema()"
+                    )
+                )
+                .scalar_one()
+            ),
+            index_name=index_name,
+        )
+        if state is None:
+            raise RuntimeError(
+                f"failed to derive concurrent index signature: {operation.name}"
+            )
+        return state.signature
+    finally:
+        connection.exec_driver_sql(f"DROP TABLE IF EXISTS {quoted_table}")
+
+
+def _create_index_sql(
+    connection: Connection,
+    operation: CreateIndexConcurrently,
+) -> str:
+    name = _quoted_identifier(connection, operation.name)
+    table = _quoted_identifier(connection, operation.table)
+    columns = ", ".join(
+        _quoted_identifier(connection, column) for column in operation.columns
+    )
+    return (
+        f"CREATE INDEX CONCURRENTLY {name} ON {table} ({columns}) "
+        f"WHERE {operation.predicate}"
+    )
+
+
+def _apply_online_index_operation(
+    connection: Connection,
+    operation: CreateIndexConcurrently,
+) -> OnlineIndexReceipt:
+    schema_name = str(
+        connection.execute(text("SELECT current_schema()")).scalar_one()
+    )
+    expected = _expected_index_signature(connection, operation)
+    current = _index_state(
+        connection,
+        schema_name=schema_name,
+        index_name=operation.name,
+    )
+    action: Literal["created", "reused", "rebuilt"] = "created"
+    if current is not None:
+        if current.table != operation.table or current.signature != expected:
+            raise RuntimeError(
+                f"concurrent index definition drift detected: {operation.name}"
+            )
+        if current.valid and current.ready:
+            return OnlineIndexReceipt(
+                name=operation.name,
+                action="reused",
+                valid=True,
+            )
+        connection.exec_driver_sql(
+            f"DROP INDEX CONCURRENTLY {_quoted_identifier(connection, operation.name)}"
+        )
+        action = "rebuilt"
+    connection.exec_driver_sql(_create_index_sql(connection, operation))
+    final = _index_state(
+        connection,
+        schema_name=schema_name,
+        index_name=operation.name,
+    )
+    if (
+        final is None
+        or final.table != operation.table
+        or final.signature != expected
+        or not final.valid
+        or not final.ready
+    ):
+        raise RuntimeError(
+            f"concurrent index did not become valid: {operation.name}"
+        )
+    return OnlineIndexReceipt(
+        name=operation.name,
+        action=action,
+        valid=True,
+    )
+
+
+def _run_online_index_operations(
+    active_engine: Engine,
+    operations: tuple[CreateIndexConcurrently, ...],
+) -> tuple[OnlineIndexReceipt, ...]:
+    if not operations or active_engine.dialect.name != "postgresql":
+        return ()
+    settings = get_settings()
+    timeout = max(1, settings.gateway_db_online_index_timeout_seconds)
+    lock_timeout = max(1, settings.gateway_db_migration_lock_timeout_seconds)
+    receipts: list[OnlineIndexReceipt] = []
+    with active_engine.connect().execution_options(
+        isolation_level="AUTOCOMMIT"
+    ) as connection:
+        connection.exec_driver_sql(f"SET lock_timeout TO '{lock_timeout}s'")
+        connection.exec_driver_sql(f"SET statement_timeout TO '{timeout}s'")
+        for operation in operations:
+            receipts.append(_apply_online_index_operation(connection, operation))
+    return tuple(receipts)
+
+
 def _configure_postgresql_session(connection: Connection) -> int | None:
     if connection.dialect.name != "postgresql":
         return None
     settings = get_settings()
     lock_timeout = max(1, settings.gateway_db_migration_lock_timeout_seconds)
-    statement_timeout = max(
-        lock_timeout, settings.gateway_db_migration_statement_timeout_seconds
-    )
+    statement_timeout = max(1, settings.gateway_db_migration_statement_timeout_seconds)
     lock_key = settings.gateway_db_migration_advisory_lock_key
     connection.exec_driver_sql(f"SET lock_timeout TO '{lock_timeout}s'")
-    connection.exec_driver_sql(f"SET statement_timeout TO '{statement_timeout}s'")
+    connection.exec_driver_sql(f"SET statement_timeout TO '{lock_timeout}s'")
     connection.execute(
         text("SELECT pg_advisory_lock(:lock_key)"),
         {"lock_key": lock_key},
     )
+    connection.commit()
+    connection.exec_driver_sql(f"SET statement_timeout TO '{statement_timeout}s'")
     connection.commit()
     return lock_key
 
@@ -360,10 +614,24 @@ def run_schema_migrations(
     config = alembic_config(str(active_engine.url))
     head = migration_head(config)
     adopted = False
-    with active_engine.connect() as connection:
-        lock_key = _configure_postgresql_session(connection)
+    scripts = ScriptDirectory.from_config(config)
+    with active_engine.connect() as inspection_connection:
+        initial_revisions = _current_revisions(inspection_connection)
+        bootstrap_empty = _is_empty_database(inspection_connection)
+    if len(initial_revisions) > 1:
+        raise RuntimeError(
+            f"Schema upgrade requires one database revision, found {initial_revisions}"
+        )
+    lower = initial_revisions[0] if initial_revisions else "base"
+    pending_scripts = tuple(reversed(tuple(scripts.iterate_revisions(head, lower))))
+    online_operations = _online_operations_for_scripts(pending_scripts)
+    online_receipts: tuple[OnlineIndexReceipt, ...] = ()
+
+    def upgrade_transactionally(connection: Connection) -> None:
+        nonlocal adopted
+        config.attributes["connection"] = connection
+        config.attributes["gateway_online_index_bootstrap"] = bootstrap_empty
         try:
-            config.attributes["connection"] = connection
             with connection.begin():
                 current = _current_revisions(connection)
                 if not current and not _is_empty_database(connection):
@@ -379,12 +647,30 @@ def run_schema_migrations(
                 _validate_metadata_schema(connection)
         finally:
             config.attributes.pop("connection", None)
-            _release_postgresql_lock(connection, lock_key)
+            config.attributes.pop("gateway_online_index_bootstrap", None)
+
+    if active_engine.dialect.name == "postgresql":
+        with active_engine.connect() as lock_connection:
+            lock_key = _configure_postgresql_session(lock_connection)
+            try:
+                if not bootstrap_empty:
+                    online_receipts = _run_online_index_operations(
+                        active_engine,
+                        online_operations,
+                    )
+                with active_engine.connect() as migration_connection:
+                    upgrade_transactionally(migration_connection)
+            finally:
+                _release_postgresql_lock(lock_connection, lock_key)
+    else:
+        with active_engine.connect() as connection:
+            upgrade_transactionally(connection)
     return MigrationStatus(
         current_revisions=(head,),
         head_revision=head,
         at_head=True,
         adopted_legacy_schema=adopted,
+        online_index_operations=online_receipts,
     )
 
 

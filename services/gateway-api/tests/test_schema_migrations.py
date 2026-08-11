@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from alembic import command
 from gateway_api import schema_migrations
 from gateway_api.database import Base
+from gateway_api.migration_operations import (
+    CreateIndexConcurrently,
+    create_index_concurrently,
+)
 from gateway_api.schema_migrations import (
     HEAD_REVISION,
     MigrationPlan,
@@ -83,7 +90,7 @@ def test_validate_cli_is_read_only(monkeypatch, capsys) -> None:
 
 def test_revision_forward_compatibility_is_strict() -> None:
     assert schema_migrations.revision_is_forward(
-        "20260728_0012", HEAD_REVISION
+        "20260812_0001", HEAD_REVISION
     ) is True
     assert schema_migrations.revision_is_forward(HEAD_REVISION, HEAD_REVISION) is False
     assert schema_migrations.revision_is_forward(
@@ -107,18 +114,80 @@ def test_validate_database_schema_rejects_stamped_incomplete_database(
         schema_migrations.validate_database_schema(target_engine)
 
 
-def test_live_deployment_plan_from_0010_is_expand_only(tmp_path: Path) -> None:
+def test_live_deployment_plan_from_0011_declares_online_indexes(
+    tmp_path: Path,
+) -> None:
     target_engine = sqlite_engine(tmp_path / "deployment-plan.sqlite")
     config = alembic_config(str(target_engine.url))
-    command.upgrade(config, "20260727_0010")
+    command.upgrade(config, "20260727_0011")
 
     plan = get_migration_plan(target_engine)
 
-    assert plan.current_revision == "20260727_0010"
+    assert plan.current_revision == "20260727_0011"
     assert plan.head_revision == HEAD_REVISION
     assert plan.pending_revisions == (HEAD_REVISION,)
     assert plan.compatibility == ("expand",)
     assert plan.safe_for_live_expand is True
+    assert plan.online_index_operations == (
+        "ix_outbox_events_ready_claim",
+        "ix_outbox_events_stale_claim",
+        "ix_agent_tool_calls_lup_pending_schedule",
+    )
+
+
+def test_concurrent_index_declarations_are_strictly_typed() -> None:
+    operation = create_index_concurrently(
+        name="ix_example_pending",
+        table="example_rows",
+        columns=("created_at", "id"),
+        predicate="status = 'pending'",
+    )
+
+    assert isinstance(operation, CreateIndexConcurrently)
+    with pytest.raises(TypeError, match="non-empty tuple"):
+        create_index_concurrently(
+            name="ix_example_pending",
+            table="example_rows",
+            columns=[],  # type: ignore[arg-type]
+            predicate="status = 'pending'",
+        )
+    with pytest.raises(ValueError, match="bounded safe expression"):
+        create_index_concurrently(
+            name="ix_example_pending",
+            table="example_rows",
+            columns=("id",),
+            predicate="status = 'pending'; DROP TABLE users",
+        )
+
+
+def test_module_cli_loads_typed_online_operations_once(tmp_path: Path) -> None:
+    database_path = tmp_path / "module-cli.sqlite"
+    target_engine = sqlite_engine(database_path)
+    command.upgrade(alembic_config(str(target_engine.url)), "20260727_0011")
+    environment = dict(os.environ)
+    environment["DATABASE_URL"] = f"sqlite:///{database_path}"
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [
+            str(Path(__file__).resolve().parents[1]),
+            str(Path(__file__).resolve().parents[3] / "cli"),
+        ]
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "gateway_api.schema_migrations", "deployment-plan"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["online_index_operations"] == [
+        "ix_outbox_events_ready_claim",
+        "ix_outbox_events_stale_claim",
+        "ix_agent_tool_calls_lup_pending_schedule",
+    ]
 
 
 def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
@@ -187,7 +256,21 @@ def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
         "traffic_delivery_status",
         "traffic_event_id",
         "traffic_observation_id",
+        "traffic_next_attempt_at",
+        "traffic_last_attempt_at",
     } <= traffic_columns
+    agent_indexes = {
+        item["name"]
+        for item in inspect(target_engine).get_indexes("agent_tool_calls")
+    }
+    outbox_indexes = {
+        item["name"] for item in inspect(target_engine).get_indexes("outbox_events")
+    }
+    assert "ix_agent_tool_calls_lup_pending_schedule" in agent_indexes
+    assert {
+        "ix_outbox_events_ready_claim",
+        "ix_outbox_events_stale_claim",
+    } <= outbox_indexes
 
 
 def test_legacy_database_is_adopted_and_upgraded(tmp_path: Path) -> None:

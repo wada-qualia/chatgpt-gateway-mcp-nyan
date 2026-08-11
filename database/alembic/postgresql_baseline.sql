@@ -111,6 +111,8 @@ CREATE TABLE agent_tool_calls (
 	traffic_attempt_count INTEGER NOT NULL DEFAULT 0,
 	traffic_receipt_status VARCHAR(32),
 	traffic_last_error_code VARCHAR(128),
+	traffic_next_attempt_at TIMESTAMP WITH TIME ZONE,
+	traffic_last_attempt_at TIMESTAMP WITH TIME ZONE,
 	traffic_delivered_at TIMESTAMP WITH TIME ZONE,
 	created_at TIMESTAMP WITH TIME ZONE NOT NULL,
 	completed_at TIMESTAMP WITH TIME ZONE,
@@ -123,7 +125,7 @@ CREATE TABLE agent_tool_calls (
 		traffic_attempt_count >= 0
 	),
 	CONSTRAINT ck_agent_tool_calls_traffic_delivery_status CHECK (
-		traffic_delivery_status IN ('not_recorded', 'pending', 'delivered', 'disabled')
+		traffic_delivery_status IN ('not_recorded', 'pending', 'delivered', 'disabled', 'dead_letter')
 	)
 );
 
@@ -136,6 +138,8 @@ CREATE INDEX ix_agent_tool_calls_owner_subject ON agent_tool_calls (owner_subjec
 CREATE INDEX ix_agent_tool_calls_session_id ON agent_tool_calls (session_id);
 
 CREATE INDEX ix_agent_tool_calls_traffic_delivery_status ON agent_tool_calls (traffic_delivery_status);
+
+CREATE INDEX ix_agent_tool_calls_lup_pending_schedule ON agent_tool_calls (created_at, id) WHERE traffic_delivery_status = 'pending';
 
 CREATE UNIQUE INDEX uq_agent_tool_calls_traffic_task_usage_id ON agent_tool_calls (traffic_task_usage_id) WHERE traffic_task_usage_id IS NOT NULL;
 
@@ -997,6 +1001,10 @@ CREATE INDEX ix_outbox_events_status ON outbox_events (status);
 CREATE INDEX ix_outbox_events_lock_token ON outbox_events (lock_token);
 
 CREATE INDEX ix_outbox_events_created_at ON outbox_events (created_at);
+
+CREATE INDEX ix_outbox_events_ready_claim ON outbox_events (available_at, created_at, id) WHERE status IN ('pending', 'retry');
+
+CREATE INDEX ix_outbox_events_stale_claim ON outbox_events (locked_at, id) WHERE status = 'processing' AND locked_at IS NOT NULL;
 
 CREATE TABLE mcp_credential_bindings (
 	id VARCHAR(36) NOT NULL,

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/gateway.db"
     gateway_db_migration_lock_timeout_seconds: int = 15
     gateway_db_migration_statement_timeout_seconds: int = 300
+    gateway_db_online_index_timeout_seconds: int = 5400
     gateway_db_migration_advisory_lock_key: int = 1129138007
     gateway_readiness_refresh_interval_seconds: float = Field(
         default=60.0, ge=5.0, le=3600.0
@@ -92,6 +93,18 @@ class Settings(BaseSettings):
     gateway_lup_mcp_traffic_flush_limit: int = Field(default=25, ge=1, le=250)
     gateway_lup_mcp_traffic_flush_interval_seconds: float = Field(
         default=15.0, ge=1.0, le=300.0
+    )
+    gateway_lup_mcp_traffic_delivery_concurrency: int = Field(
+        default=4, ge=1, le=32
+    )
+    gateway_lup_mcp_traffic_queue_max_attempts: int = Field(
+        default=10, ge=1, le=100
+    )
+    gateway_lup_mcp_traffic_retry_base_seconds: float = Field(
+        default=5.0, ge=0.01, le=3600.0
+    )
+    gateway_lup_mcp_traffic_retry_max_seconds: float = Field(
+        default=900.0, ge=0.01, le=86400.0
     )
     gateway_lup_endpoint: str = "stage"
     gateway_lup_timeout_seconds: float = 5.0

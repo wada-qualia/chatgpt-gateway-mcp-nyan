@@ -5799,7 +5799,7 @@ def test_readiness_accepts_forward_compatible_schema(
     import gateway_api.readiness_cache as readiness_module
     from gateway_api.schema_migrations import HEAD_REVISION, MigrationStatus
 
-    future_revision = "20260728_0012"
+    future_revision = "20260812_0001"
     monkeypatch.setattr(
         readiness_module,
         "get_migration_status",
@@ -6014,6 +6014,7 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     client: TestClient,
 ) -> None:
     import yaml
+    from gateway_api.schema_migrations import HEAD_REVISION
 
     health = client.get("/health")
     assert health.status_code == 200
@@ -6028,8 +6029,8 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "database_forward_compatible": False,
         "database_schema_valid": True,
         "database_compatible": True,
-        "database_revision": "20260727_0011",
-        "database_head": "20260727_0011",
+        "database_revision": HEAD_REVISION,
+        "database_head": HEAD_REVISION,
     }
     ready = client.get("/ready")
     assert ready.status_code == 200

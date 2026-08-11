@@ -5,11 +5,12 @@ import ssl
 import threading
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from uuid import UUID, uuid5
 
 import httpx
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .config import Settings
@@ -28,6 +29,7 @@ _RESOLVED_MODEL = ESTIMATOR_PROFILE_ID
 _PENDING = "pending"
 _DELIVERED = "delivered"
 _DISABLED = "disabled"
+_DEAD_LETTER = "dead_letter"
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +244,12 @@ class McpTrafficAccountingService:
         current.traffic_observation_id = str(observation_id)
         current.traffic_receipt_status = None
         current.traffic_last_error_code = None
+        current.traffic_next_attempt_at = (
+            datetime.now(UTC)
+            if self.settings.gateway_lup_mcp_traffic_enabled
+            else None
+        )
+        current.traffic_last_attempt_at = None
         current.traffic_delivered_at = None
         current.traffic_delivery_status = (
             _PENDING if self.settings.gateway_lup_mcp_traffic_enabled else _DISABLED
@@ -258,37 +266,74 @@ class McpTrafficAccountingService:
     ) -> int:
         if not self.settings.gateway_lup_mcp_traffic_enabled:
             return 0
+        now = datetime.now(UTC)
         query = db.query(AgentToolCall).filter(
             AgentToolCall.traffic_delivery_status == _PENDING,
+            or_(
+                AgentToolCall.traffic_next_attempt_at.is_(None),
+                AgentToolCall.traffic_next_attempt_at <= now,
+            ),
         )
         if owner_subject is not None:
             query = query.filter(AgentToolCall.owner_subject == owner_subject)
-        rows = (
-            query.order_by(AgentToolCall.created_at, AgentToolCall.id)
-            .limit(self.settings.gateway_lup_mcp_traffic_flush_limit)
-            .all()
+        query = query.order_by(AgentToolCall.created_at, AgentToolCall.id)
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            query = query.with_for_update(skip_locked=True)
+        rows = query.limit(
+            self.settings.gateway_lup_mcp_traffic_flush_limit
+        ).all()
+        if not rows:
+            return 0
+        # The transaction keeps the PostgreSQL row locks while network delivery
+        # runs. Detach each immutable delivery snapshot before handing it to a
+        # worker thread so the synchronous SQLAlchemy Session never crosses a
+        # thread boundary.
+        for row in rows:
+            db.expunge(row)
+
+        semaphore = asyncio.Semaphore(
+            self.settings.gateway_lup_mcp_traffic_delivery_concurrency
+        )
+
+        async def publish(row: AgentToolCall) -> PublishedTraffic:
+            async with semaphore:
+                return await asyncio.to_thread(self.publisher.publish, call=row)
+
+        results = await asyncio.gather(
+            *(publish(row) for row in rows),
+            return_exceptions=True,
         )
         delivered = 0
-        for row in rows:
-            if await self._deliver(db, row):
-                delivered += 1
-        return delivered
-
-    async def _deliver(self, db: Session, call: AgentToolCall) -> bool:
-        call.traffic_attempt_count = int(call.traffic_attempt_count or 0) + 1
-        try:
-            published = await asyncio.to_thread(
-                self.publisher.publish,
-                call=call,
-            )
-        except Exception as error:  # noqa: BLE001 - queue boundary records failure class.
-            call.traffic_delivery_status = _PENDING
-            call.traffic_last_error_code = type(error).__name__[:128]
-            db.commit()
-            return False
-        call.traffic_delivery_status = _DELIVERED
-        call.traffic_receipt_status = published.receipt_status[:32]
-        call.traffic_last_error_code = None
-        call.traffic_delivered_at = published.accepted_at or datetime.now(UTC)
+        max_attempts = self.settings.gateway_lup_mcp_traffic_queue_max_attempts
+        for row, result in zip(rows, results, strict=True):
+            db.add(row)
+            attempt = int(row.traffic_attempt_count or 0) + 1
+            row.traffic_attempt_count = attempt
+            row.traffic_last_attempt_at = now
+            if isinstance(result, BaseException):
+                row.traffic_receipt_status = None
+                row.traffic_last_error_code = type(result).__name__[:128]
+                if attempt >= max_attempts:
+                    row.traffic_delivery_status = _DEAD_LETTER
+                    row.traffic_next_attempt_at = None
+                else:
+                    delay = min(
+                        float(
+                            self.settings.gateway_lup_mcp_traffic_retry_max_seconds
+                        ),
+                        float(
+                            self.settings.gateway_lup_mcp_traffic_retry_base_seconds
+                        )
+                        * (2 ** min(attempt - 1, 30)),
+                    )
+                    row.traffic_delivery_status = _PENDING
+                    row.traffic_next_attempt_at = now + timedelta(seconds=delay)
+                continue
+            row.traffic_delivery_status = _DELIVERED
+            row.traffic_receipt_status = result.receipt_status[:32]
+            row.traffic_last_error_code = None
+            row.traffic_next_attempt_at = None
+            row.traffic_delivered_at = result.accepted_at or now
+            delivered += 1
         db.commit()
-        return True
+        return delivered

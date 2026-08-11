@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -546,19 +546,47 @@ class OutboxService:
             return False
         return True
 
+    def _status_counts_for_metrics(
+        self, db: Session
+    ) -> tuple[dict[str, int], bool]:
+        bind = db.get_bind()
+        if bind.dialect.name != "postgresql":
+            return (
+                {
+                    status: int(
+                        db.scalar(
+                            select(func.count())
+                            .select_from(OutboxEvent)
+                            .where(OutboxEvent.status == status)
+                        )
+                        or 0
+                    )
+                    for status in OUTBOX_STATUSES
+                },
+                False,
+            )
+
+        counts: dict[str, int] = {}
+        for status in OUTBOX_STATUSES:
+            plan = db.execute(
+                text(
+                    "EXPLAIN (FORMAT JSON) "
+                    "SELECT 1 FROM outbox_events WHERE status = :status"
+                ),
+                {"status": status},
+            ).scalar_one()
+            try:
+                estimate = plan[0]["Plan"]["Plan Rows"]
+            except (IndexError, KeyError, TypeError) as error:
+                raise RuntimeError(
+                    "invalid PostgreSQL planner estimate for outbox metrics"
+                ) from error
+            counts[status] = max(0, int(estimate))
+        return counts, True
+
     def metrics(self, db: Session) -> dict[str, Any]:
         now = utcnow()
-        counts = {
-            status: int(
-                db.scalar(
-                    select(func.count())
-                    .select_from(OutboxEvent)
-                    .where(OutboxEvent.status == status)
-                )
-                or 0
-            )
-            for status in OUTBOX_STATUSES
-        }
+        counts, counts_estimated = self._status_counts_for_metrics(db)
         oldest = (
             db.query(func.min(OutboxEvent.created_at))
             .filter(OutboxEvent.status.in_(["pending", "retry", "processing"]))
@@ -580,6 +608,10 @@ class OutboxService:
             "replica_id": self.replica_id,
             "broker_backend": self.settings.gateway_broker_backend,
             "outbox": counts,
+            "outbox_counts_estimated": counts_estimated,
+            "outbox_counts_source": (
+                "postgres_planner_estimate" if counts_estimated else "exact"
+            ),
             "pending_total": sum(counts.get(value, 0) for value in ("pending", "retry", "processing")),
             "dead_letter_total": counts.get("dead_letter", 0),
             "oldest_pending_age_seconds": max(

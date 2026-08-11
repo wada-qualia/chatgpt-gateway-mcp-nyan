@@ -146,6 +146,14 @@ class GatewayMetricsCache:
         ]
         for status, value in sorted(counts.items()):
             lines.append(f'gateway_outbox_events{{status="{status}"}} {int(value)}')
+        lines.extend(
+            [
+                "# HELP gateway_outbox_counts_estimated 1 when outbox status counts are planner estimates.",
+                "# TYPE gateway_outbox_counts_estimated gauge",
+                "gateway_outbox_counts_estimated "
+                + ("1" if metrics.get("outbox_counts_estimated") else "0"),
+            ]
+        )
         for metric_name, help_text, statuses in (
             (
                 "gateway_autonomy_policies",
@@ -260,6 +268,8 @@ class GatewayMetricsCache:
                     "cancelled",
                 )
             },
+            "outbox_counts_estimated": False,
+            "outbox_counts_source": "empty",
             "pending_total": 0,
             "dead_letter_total": 0,
             "oldest_pending_age_seconds": 0.0,

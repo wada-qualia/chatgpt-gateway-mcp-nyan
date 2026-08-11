@@ -5869,6 +5869,7 @@ def test_metrics_handler_is_database_free_and_refresh_sql_is_bounded(
     assert "gateway_metrics_cache_age_seconds" in response.text
     assert "gateway_metrics_cache_stale" in response.text
     assert "gateway_metrics_refresh_failures_total" in response.text
+    assert "gateway_outbox_counts_estimated 0" in response.text
 
     event.listen(database.engine, "before_cursor_execute", capture_statement)
     try:
@@ -5879,6 +5880,50 @@ def test_metrics_handler_is_database_free_and_refresh_sql_is_bounded(
     normalized = "\n".join(statements).lower()
     assert "group by outbox_events.status" not in normalized
     assert normalized.count("outbox_events.status =") == 6
+    snapshot = cache.snapshot()
+    assert snapshot["outbox_counts_estimated"] is False
+    assert snapshot["outbox_counts_source"] == "exact"
+
+
+def test_postgres_outbox_metrics_use_planner_estimates_without_counting(
+    client: TestClient,
+) -> None:
+    from gateway_api.outbox import OUTBOX_STATUSES
+
+    cache = client.app.state.metrics_cache
+    expected = {status: (index + 1) * 100 for index, status in enumerate(OUTBOX_STATUSES)}
+    calls: list[str] = []
+
+    class FakeDialect:
+        name = "postgresql"
+
+    class FakeBind:
+        dialect = FakeDialect()
+
+    class FakeResult:
+        def __init__(self, rows: int) -> None:
+            self.rows = rows
+
+        def scalar_one(self):
+            return [{"Plan": {"Node Type": "Seq Scan", "Plan Rows": self.rows}}]
+
+    class FakeSession:
+        def get_bind(self):
+            return FakeBind()
+
+        def execute(self, statement, parameters):
+            sql = str(statement)
+            assert sql.startswith("EXPLAIN (FORMAT JSON)")
+            assert "count(" not in sql.lower()
+            status = parameters["status"]
+            calls.append(status)
+            return FakeResult(expected[status])
+
+    counts, estimated = cache.outbox._status_counts_for_metrics(FakeSession())
+
+    assert estimated is True
+    assert counts == expected
+    assert calls == list(OUTBOX_STATUSES)
 
 
 def test_metrics_refresh_failure_preserves_last_successful_snapshot(

@@ -1465,7 +1465,7 @@ async def execute_action(
         "truncated": result.truncated if result else False,
         "serialized_bytes": result.serialized_bytes if result else 0,
         "upstream_is_error": result.is_error if result else True,
-        "replayed": False,
+        "replayed": bool(result and result.replayed),
     }
 
 

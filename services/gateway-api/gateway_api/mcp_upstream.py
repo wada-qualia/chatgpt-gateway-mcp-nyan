@@ -17,6 +17,7 @@ from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .crypto import decrypt_text, encrypt_text
@@ -163,6 +164,7 @@ class UpstreamCallResult:
     is_error: bool = False
     client_meta: dict[str, Any] = field(default_factory=dict)
     media_bytes: int = 0
+    replayed: bool = False
 
 
 class UpstreamMcpError(RuntimeError):
@@ -849,6 +851,105 @@ class UpstreamMcpManager:
             self._mark_failure(db, server, exc)
             raise
 
+    def _replay_existing_invocation(
+        self,
+        existing: McpInvocation,
+        *,
+        actor_subject: str,
+        revision_id: str,
+        arguments_sha256: str,
+        preparation_id: str | None,
+        approval_request_id: str | None,
+        execution_permit_id: str | None,
+    ) -> UpstreamCallResult:
+        expected_context = {
+            "actor_subject": actor_subject,
+            "revision_id": revision_id,
+            "arguments_sha256": arguments_sha256,
+            "preparation_id": preparation_id,
+            "approval_request_id": approval_request_id,
+            "execution_permit_id": execution_permit_id,
+        }
+        if any(
+            getattr(existing, field) != expected
+            for field, expected in expected_context.items()
+        ):
+            raise UpstreamMcpError(
+                "MCP_IDEMPOTENCY_CONFLICT",
+                "MCP invocation idempotency key was reused with a different request",
+                http_status=409,
+                metadata={
+                    "invocation_id": existing.id,
+                    "outcome": existing.outcome,
+                },
+            )
+
+        replay_metadata = {
+            "invocation_id": existing.id,
+            "outcome": existing.outcome,
+        }
+        if existing.completed_at is None or existing.outcome == "running":
+            raise UpstreamMcpError(
+                "MCP_INVOCATION_IN_PROGRESS",
+                "An invocation with this idempotency key is still in progress",
+                retryable=True,
+                http_status=409,
+                metadata=replay_metadata,
+            )
+        if existing.normalized_error_code or existing.unknown_outcome:
+            replay_metadata["replayed"] = True
+            if existing.normalized_error_code:
+                replay_metadata["normalized_error_code"] = existing.normalized_error_code
+            self.telemetry.increment(
+                "invocation_replayed", outcome=existing.outcome or "unknown"
+            )
+            raise UpstreamMcpError(
+                existing.normalized_error_code or "MCP_INVOCATION_RECORDED_FAILURE",
+                existing.normalized_error_detail
+                or "A previous invocation with this idempotency key requires reconciliation",
+                http_status=409,
+                unknown_outcome=existing.unknown_outcome,
+                metadata=replay_metadata,
+            )
+
+        original_metadata = dict(existing.response_metadata or {})
+        replay_evidence = {
+            "invocationId": existing.id,
+            "outcome": existing.outcome,
+            "responseSha256": existing.response_sha256,
+            "originalSerializedBytes": original_metadata.get("serialized_bytes"),
+            "originalTruncated": bool(original_metadata.get("truncated")),
+        }
+        payload = {
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "Gateway replayed prior invocation evidence; "
+                        "the original upstream response body is not retained."
+                    ),
+                }
+            ],
+            "structuredContent": {"gatewayReplay": replay_evidence},
+            "isError": existing.outcome != "succeeded",
+        }
+        serialized_bytes = len(
+            json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            ).encode("utf-8")
+        )
+        self.telemetry.increment(
+            "invocation_replayed", outcome=existing.outcome or "unknown"
+        )
+        return UpstreamCallResult(
+            payload=payload,
+            truncated=False,
+            serialized_bytes=serialized_bytes,
+            invocation_id=existing.id,
+            is_error=existing.outcome != "succeeded",
+            replayed=True,
+        )
+
     async def call_exact_revision(
         self,
         db: Session,
@@ -872,6 +973,26 @@ class UpstreamMcpManager:
         server = get_server(
             db, owner_subject=owner_subject, server_id=revision.server_id
         )
+        arguments_sha256 = sha256_json(arguments)
+        if idempotency_key:
+            existing = (
+                db.query(McpInvocation)
+                .filter(
+                    McpInvocation.owner_subject == owner_subject,
+                    McpInvocation.idempotency_key == idempotency_key,
+                )
+                .one_or_none()
+            )
+            if existing is not None:
+                return self._replay_existing_invocation(
+                    existing,
+                    actor_subject=actor_subject,
+                    revision_id=revision.id,
+                    arguments_sha256=arguments_sha256,
+                    preparation_id=preparation_id,
+                    approval_request_id=approval_request_id,
+                    execution_permit_id=execution_permit_id,
+                )
         if self.federation_writes_paused and revision.action_class in {
             "write",
             "destructive",
@@ -914,7 +1035,7 @@ class UpstreamMcpManager:
             schema_hash=revision.schema_hash,
             action_class=revision.action_class,
             arguments_redacted=_redact_structure(arguments),
-            arguments_sha256=sha256_json(arguments),
+            arguments_sha256=arguments_sha256,
             preparation_id=preparation_id,
             approval_request_id=approval_request_id,
             execution_permit_id=execution_permit_id,
@@ -943,7 +1064,30 @@ class UpstreamMcpManager:
             },
             commit=False,
         )
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            if idempotency_key:
+                existing = (
+                    db.query(McpInvocation)
+                    .filter(
+                        McpInvocation.owner_subject == owner_subject,
+                        McpInvocation.idempotency_key == idempotency_key,
+                    )
+                    .one_or_none()
+                )
+                if existing is not None:
+                    return self._replay_existing_invocation(
+                        existing,
+                        actor_subject=actor_subject,
+                        revision_id=revision.id,
+                        arguments_sha256=arguments_sha256,
+                        preparation_id=preparation_id,
+                        approval_request_id=approval_request_id,
+                        execution_permit_id=execution_permit_id,
+                    )
+            raise
         self.telemetry.increment(
             "invocation_started", action_class=revision.action_class
         )

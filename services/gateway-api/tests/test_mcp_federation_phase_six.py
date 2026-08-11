@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from datetime import timedelta
 from pathlib import Path
@@ -532,6 +533,35 @@ def test_federation_realtime_fanout_is_tenant_isolated(
         db.close()
         engine.dispose()
         get_settings.cache_clear()
+
+
+def test_structured_result_preserves_authoritative_content_bytes() -> None:
+    authoritative = "\n  line one\r\nline\x00two  \n"
+    digest = hashlib.sha256(authoritative.encode()).hexdigest()
+    manager = _manager(
+        max_result_bytes=4096,
+        max_text_bytes=4096,
+        max_content_items=4,
+    )
+    bounded = manager._limit_result(
+        types.CallToolResult(
+            content=[
+                types.TextContent(type="text", text="  presentation\x00 text  ")
+            ],
+            structuredContent={
+                "content": authoritative,
+                "content_hash": digest,
+            },
+        )
+    )
+
+    structured = bounded.payload["structuredContent"]
+    assert structured["content"] == authoritative
+    assert (
+        hashlib.sha256(structured["content"].encode()).hexdigest()
+        == structured["content_hash"]
+    )
+    assert bounded.payload["content"][0]["text"] == "presentation  text"
 
 
 def test_oversized_results_are_truncated_then_rejected_at_hard_limit() -> None:

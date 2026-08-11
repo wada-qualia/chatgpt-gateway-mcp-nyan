@@ -36,6 +36,7 @@ from gateway_api.mcp_upstream_dto import (
 )
 from gateway_api.models import (
     Base,
+    McpInvocation,
     McpOAuthAuthorizationState,
     McpTool,
     McpToolRevision,
@@ -271,6 +272,63 @@ def test_refresh_and_exact_revision_call(db: Session) -> None:
                 idempotency_key="call-add-1",
             )
             assert result.payload["structuredContent"] == {"total": 7}
+            replay = await manager.call_exact_revision(
+                db,
+                owner_subject="tenant-a",
+                actor_subject="operator-a",
+                revision_id=revision.id,
+                arguments={"left": 2, "right": 5},
+                idempotency_key="call-add-1",
+            )
+            assert replay.replayed is True
+            assert replay.invocation_id == result.invocation_id
+            assert replay.is_error is False
+            assert replay.payload["structuredContent"]["gatewayReplay"][
+                "invocationId"
+            ] == result.invocation_id
+            assert (
+                db.query(McpInvocation)
+                .filter(McpInvocation.idempotency_key == "call-add-1")
+                .count()
+                == 1
+            )
+            with pytest.raises(UpstreamMcpError) as conflict:
+                await manager.call_exact_revision(
+                    db,
+                    owner_subject="tenant-a",
+                    actor_subject="operator-a",
+                    revision_id=revision.id,
+                    arguments={"left": 3, "right": 5},
+                    idempotency_key="call-add-1",
+                )
+            assert conflict.value.code == "MCP_IDEMPOTENCY_CONFLICT"
+            assert conflict.value.http_status == 409
+            assert (
+                db.query(McpInvocation)
+                .filter(McpInvocation.idempotency_key == "call-add-1")
+                .count()
+                == 1
+            )
+            invocation = db.get(McpInvocation, result.invocation_id)
+            invocation.outcome = "running"
+            invocation.completed_at = None
+            db.commit()
+            with pytest.raises(UpstreamMcpError) as in_progress:
+                await manager.call_exact_revision(
+                    db,
+                    owner_subject="tenant-a",
+                    actor_subject="operator-a",
+                    revision_id=revision.id,
+                    arguments={"left": 2, "right": 5},
+                    idempotency_key="call-add-1",
+                )
+            assert in_progress.value.code == "MCP_INVOCATION_IN_PROGRESS"
+            assert in_progress.value.http_status == 409
+            assert in_progress.value.retryable is True
+            assert in_progress.value.metadata == {
+                "invocation_id": result.invocation_id,
+                "outcome": "running",
+            }
             await manager.stop()
 
     asyncio.run(scenario())
@@ -309,6 +367,35 @@ def test_timeout_and_result_limit_are_normalized(db: Session) -> None:
                     idempotency_key="call-slow-1",
                 )
             assert timeout_error.value.code == "MCP_CALL_TIMEOUT"
+            timeout_invocation = (
+                db.query(McpInvocation)
+                .filter(McpInvocation.idempotency_key == "call-slow-1")
+                .one()
+            )
+            with pytest.raises(UpstreamMcpError) as timeout_replay:
+                await manager.call_exact_revision(
+                    db,
+                    owner_subject="tenant-a",
+                    actor_subject="operator-a",
+                    revision_id=slow_revision.id,
+                    arguments={"delay_seconds": 2},
+                    timeout_seconds=0.05,
+                    idempotency_key="call-slow-1",
+                )
+            assert timeout_replay.value.code == "MCP_CALL_TIMEOUT"
+            assert timeout_replay.value.http_status == 409
+            assert timeout_replay.value.metadata == {
+                "invocation_id": timeout_invocation.id,
+                "outcome": "unknown",
+                "replayed": True,
+                "normalized_error_code": "MCP_CALL_TIMEOUT",
+            }
+            assert (
+                db.query(McpInvocation)
+                .filter(McpInvocation.idempotency_key == "call-slow-1")
+                .count()
+                == 1
+            )
 
             large_revision = db.get(McpToolRevision, tools["large"].current_revision_id)
             with pytest.raises(UpstreamMcpError) as size_error:

@@ -397,7 +397,8 @@ def test_application_startup_refuses_schema_mismatch(
     import gateway_api.main as main_module
     from fastapi.testclient import TestClient
 
-    def incompatible_schema() -> MigrationStatus:
+    def incompatible_schema(*, allow_forward_revision: bool = False) -> MigrationStatus:
+        assert allow_forward_revision is True
         raise RuntimeError(
             "Database revision 20260727_0010 does not match required Alembic head "
             f"{HEAD_REVISION}"
@@ -428,5 +429,4 @@ def test_application_startup_never_executes_schema_upgrade() -> None:
 
     assert "run_schema_migrations" not in source
     assert "validate_database_schema" in source
-    assert "get_migration_status" in source
-    assert "validate_schema_metadata" in source
+    assert "ReadinessCache" in source

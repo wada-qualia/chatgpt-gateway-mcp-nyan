@@ -1,3 +1,4 @@
+# ruff: noqa: B008
 from __future__ import annotations
 
 import asyncio
@@ -6,6 +7,7 @@ import json
 import re
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -31,6 +33,16 @@ from ..agent_collaboration_tools import (
     agent_collaboration_tools,
     call_agent_collaboration_tool,
 )
+from ..agent_coordination import WriteLeaseContext, agent_coordination_service
+from ..agent_coordination_tools import (
+    agent_coordination_tool_names,
+    agent_coordination_tools,
+    call_agent_coordination_tool,
+)
+from ..auth import get_bearer_or_dev_user
+from ..config import Settings, get_settings
+from ..database import get_db
+from ..events import emit_event
 from ..mcp_deferred_native import (
     deferred_entries_for_context,
     deferred_native_dispatch_target,
@@ -43,8 +55,8 @@ from ..mcp_federation_broker import (
     mcp_federation_broker_tools,
 )
 from ..mcp_federation_compat import (
-    McpProtocolAdmissionError,
     SUPPORTED_MCP_PROTOCOL_VERSIONS,
+    McpProtocolAdmissionError,
     gateway_public_server_capabilities,
     negotiate_gateway_protocol_version,
     validate_http_protocol_version,
@@ -57,16 +69,6 @@ from ..mcp_presentation import (
 )
 from ..mcp_tool_registry import ToolDispatchTarget, ToolRegistry
 from ..mcp_upstream import UpstreamMcpError, UpstreamMcpManager
-from ..agent_coordination import WriteLeaseContext, agent_coordination_service
-from ..agent_coordination_tools import (
-    agent_coordination_tool_names,
-    agent_coordination_tools,
-    call_agent_coordination_tool,
-)
-from ..auth import get_bearer_or_dev_user
-from ..config import Settings, get_settings
-from ..database import get_db
-from ..events import emit_event
 from ..models import (
     CommandSession,
     Device,
@@ -111,6 +113,7 @@ def _local_git_state(worktree: Path, base_commit: str) -> dict[str, Any]:
             ["git", "-C", str(worktree), *arguments],
             capture_output=True,
             text=True,
+            check=False,
             encoding="utf-8",
             errors="replace",
             timeout=15,
@@ -1561,7 +1564,7 @@ def _finish_ssh_worker(session_id: str, device: Device, credentials: Any, *, com
         monitoring_service.finish_session(session_id, status_value="failed", exit_code=1, meta={"error": str(exc.detail)},
         )
         return exc
-    except Exception as exc:  # pragma: no cover - defensive safety net for unexpected adapter failures.
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - adapter boundary.
         monitoring_service.append_output(session_id, stream="stderr", text="SSH command failed\n")
         monitoring_service.finish_session(session_id, status_value="failed", exit_code=1, meta={"error": str(exc)})
         return HTTPException(status_code=502, detail="SSH command execution failed")
@@ -1694,6 +1697,11 @@ async def mcp(
             None, code=-32600, message="Invalid Request", status_code=400
         )
     method = body.get("method")
+    request.state.mcp_method = (
+        method
+        if method in {"initialize", "tools/list", "tools/call"}
+        else "other"
+    )
     request_id = body.get("id")
     if method != "initialize":
         try:
@@ -1716,14 +1724,6 @@ async def mcp(
         presentation=presentation,
     )
     tool_call = None
-    if method == "tools/call":
-        try:
-            await request.app.state.gateway_runtime.mcp_traffic.flush_pending(
-                db,
-                owner_subject=user.subject,
-            )
-        except Exception:
-            db.rollback()
     try:
         if method == "initialize":
             params = body.get("params") if isinstance(body.get("params"), dict) else {}
@@ -1784,17 +1784,23 @@ async def mcp(
                 ssh_profile,
                 registry=registry,
             )
-            result = await _call_tool(
-                name,
-                arguments,
-                user,
-                db,
-                settings,
-                upstream=request.app.state.upstream_mcp_manager,
-                tool_call_id=tool_call.id,
-                dispatch_target=registry.target(name),
-                presentation=presentation,
-            )
+            upstream_started = time.monotonic()
+            try:
+                result = await _call_tool(
+                    name,
+                    arguments,
+                    user,
+                    db,
+                    settings,
+                    upstream=request.app.state.upstream_mcp_manager,
+                    tool_call_id=tool_call.id,
+                    dispatch_target=registry.target(name),
+                    presentation=presentation,
+                )
+            finally:
+                request.state.upstream_duration_seconds = max(
+                    0.0, time.monotonic() - upstream_started
+                )
             structured = result.get("structuredContent") or {}
             session_id = structured.get("session_id")
             monitoring_service.finish_tool_call(
@@ -1838,7 +1844,7 @@ async def mcp(
                 request_characters=len(raw_text),
                 response_characters=len(response.body.decode("utf-8")),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - accounting cannot fail the MCP response.
             db.rollback()
     return response
 

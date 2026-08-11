@@ -1,3 +1,4 @@
+# ruff: noqa: B008
 from __future__ import annotations
 
 from typing import Any
@@ -14,15 +15,12 @@ from ..dto import (
     OutboxReplayRequest,
     RealtimeRouteOut,
 )
+from ..metrics_cache import GatewayMetricsCache
 from ..models import (
-    ApprovalRequest,
-    AutonomyPolicy,
-    ExecutionPermit,
     GatewayReplica,
     OutboxDeliveryAttempt,
     OutboxEvent,
     RealtimeRoute,
-    RecoveryLoop,
     User,
 )
 from ..runtime import GatewayRuntime
@@ -40,6 +38,13 @@ def _runtime(request: Request) -> GatewayRuntime:
 
 def _operations_user(user: User) -> None:
     require_role(user, "gateway-auditor", "gateway-admin")
+
+
+def _metrics_cache(request: Request) -> GatewayMetricsCache:
+    cache = getattr(request.app.state, "metrics_cache", None)
+    if not isinstance(cache, GatewayMetricsCache):
+        raise HTTPException(status_code=503, detail="Metrics cache is unavailable")
+    return cache
 
 
 @router.get("/outbox", response_model=list[OutboxEventOut])
@@ -156,10 +161,9 @@ async def drain_outbox(
 async def operations_metrics(
     request: Request,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     _operations_user(user)
-    return _runtime(request).outbox.metrics(db)
+    return _metrics_cache(request).snapshot()
 
 
 @router.get("/replicas", response_model=list[GatewayReplicaOut])
@@ -185,86 +189,8 @@ async def list_realtime_routes(
 
 
 @metrics_router.get("/metrics")
-async def prometheus_metrics(request: Request, db: Session = Depends(get_db)) -> Response:
-    metrics = _runtime(request).outbox.metrics(db)
-    counts = dict(metrics.get("outbox") or {})
-    lines = [
-        "# HELP gateway_outbox_events Number of outbox events by status.",
-        "# TYPE gateway_outbox_events gauge",
-    ]
-    for status, value in sorted(counts.items()):
-        lines.append(f'gateway_outbox_events{{status="{status}"}} {int(value)}')
-    policy_statuses = ["active", "paused", "disabled"]
-    approval_statuses = ["pending", "approved", "rejected", "expired", "revoked"]
-    permit_statuses = ["active", "claimed", "consumed", "expired", "revoked"]
-    recovery_statuses = [
-        "planned",
-        "waiting",
-        "running",
-        "paused",
-        "succeeded",
-        "exhausted",
-        "cancelled",
-    ]
-    lines.extend(
-        [
-            "# HELP gateway_autonomy_policies Number of autonomy policies by status.",
-            "# TYPE gateway_autonomy_policies gauge",
-        ]
+async def prometheus_metrics(request: Request) -> Response:
+    return Response(
+        _metrics_cache(request).prometheus(),
+        media_type="text/plain; version=0.0.4",
     )
-    for status in policy_statuses:
-        value = db.query(AutonomyPolicy).filter(AutonomyPolicy.status == status).count()
-        lines.append(f'gateway_autonomy_policies{{status="{status}"}} {value}')
-    lines.extend(
-        [
-            "# HELP gateway_autonomy_approvals Number of approval requests by status.",
-            "# TYPE gateway_autonomy_approvals gauge",
-        ]
-    )
-    for status in approval_statuses:
-        value = db.query(ApprovalRequest).filter(ApprovalRequest.status == status).count()
-        lines.append(f'gateway_autonomy_approvals{{status="{status}"}} {value}')
-    lines.extend(
-        [
-            "# HELP gateway_autonomy_permits Number of execution permits by status.",
-            "# TYPE gateway_autonomy_permits gauge",
-        ]
-    )
-    for status in permit_statuses:
-        value = db.query(ExecutionPermit).filter(ExecutionPermit.status == status).count()
-        lines.append(f'gateway_autonomy_permits{{status="{status}"}} {value}')
-    lines.extend(
-        [
-            "# HELP gateway_autonomy_recoveries Number of recovery loops by status.",
-            "# TYPE gateway_autonomy_recoveries gauge",
-        ]
-    )
-    for status in recovery_statuses:
-        value = db.query(RecoveryLoop).filter(RecoveryLoop.status == status).count()
-        lines.append(f'gateway_autonomy_recoveries{{status="{status}"}} {value}')
-    lines.extend(
-        [
-            "# TYPE gateway_autonomy_worker_enabled gauge",
-            f"gateway_autonomy_worker_enabled {1 if _runtime(request).settings.gateway_autonomy_enabled else 0}",
-            "# TYPE gateway_autonomy_emergency_stop gauge",
-            f"gateway_autonomy_emergency_stop {1 if _runtime(request).settings.gateway_autonomy_emergency_stop else 0}",
-            "# TYPE gateway_outbox_oldest_pending_age_seconds gauge",
-            f"gateway_outbox_oldest_pending_age_seconds {float(metrics['oldest_pending_age_seconds'])}",
-            "# TYPE gateway_outbox_dead_letter_total gauge",
-            f"gateway_outbox_dead_letter_total {int(metrics['dead_letter_total'])}",
-            "# TYPE gateway_replicas_online gauge",
-            f"gateway_replicas_online {int(metrics['online_replicas'])}",
-            "# TYPE gateway_realtime_routes_online gauge",
-            f"gateway_realtime_routes_online {int(metrics['online_realtime_routes'])}",
-            "# TYPE gateway_runtime_info gauge",
-            (
-                'gateway_runtime_info{replica_id="'
-                + str(metrics["replica_id"]).replace('"', "")
-                + '",broker_backend="'
-                + str(metrics["broker_backend"]).replace('"', "")
-                + '"} 1'
-            ),
-        ]
-    )
-    lines.extend(request.app.state.upstream_mcp_manager.prometheus_lines(db))
-    return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")

@@ -248,8 +248,6 @@ class McpTrafficAccountingService:
         )
         db.commit()
         db.refresh(current)
-        if current.traffic_delivery_status == _PENDING:
-            await self._deliver(db, current)
         return current
 
     async def flush_pending(
@@ -283,7 +281,7 @@ class McpTrafficAccountingService:
                 self.publisher.publish,
                 call=call,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - queue boundary records failure class.
             call.traffic_delivery_status = _PENDING
             call.traffic_last_error_code = type(error).__name__[:128]
             db.commit()

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import base64
 import hashlib
+import json
 import subprocess
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -40,8 +40,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.Fixt
         "COMMAND_SESSION_SPOOL_ROOT", str(tmp_path / "command-sessions")
     )
 
-    import gateway_api.config as config
-    import gateway_api.database as database
+    from gateway_api import config, database
 
     config.get_settings.cache_clear()
     settings = config.get_settings()
@@ -357,7 +356,11 @@ def test_ssh_adapter_uses_backend_credentials_with_mock_client(tmp_path: Path, m
     from types import SimpleNamespace
 
     from gateway_api import config
-    from gateway_api.adapters.ssh import SshCredentials, run_ssh_command, verify_ssh_connection
+    from gateway_api.adapters.ssh import (
+        SshCredentials,
+        run_ssh_command,
+        verify_ssh_connection,
+    )
 
     known_hosts = tmp_path / "known_hosts"
     known_hosts.write_text("192.0.2.10 ssh-ed25519 test-key\n", encoding="utf-8")
@@ -440,7 +443,6 @@ def test_ssh_adapter_uses_backend_credentials_with_mock_client(tmp_path: Path, m
 
 def test_persistent_gateway_secret_key_is_reused(tmp_path: Path) -> None:
     from cryptography.fernet import Fernet
-
     from gateway_api.crypto import _load_or_create_fernet_key
 
     key_file = tmp_path / "gateway-secret.key"
@@ -466,7 +468,7 @@ def test_device_registration_flushes_secret_before_commit(client: TestClient, mo
         return original_flush(self, *args, **kwargs)
 
     def tracked_commit(self, *args, **kwargs):
-        events.append(("commit", tuple()))
+        events.append(("commit", ()))
         return original_commit(self, *args, **kwargs)
 
     monkeypatch.setattr(OrmSession, "flush", tracked_flush)
@@ -947,10 +949,9 @@ def test_mcp_missing_command_working_directory_is_a_recorded_failure(
 
 
 def test_nats_publish_retries_an_ack_timeout_with_the_same_message_id() -> None:
-    from nats import errors as nats_errors
-
     from gateway_api.broker import NatsJetStreamBroker
     from gateway_api.config import Settings
+    from nats import errors as nats_errors
 
     class FakeJetStream:
         def __init__(self) -> None:
@@ -1288,8 +1289,8 @@ def test_mcp_list_resources_returns_owned_identifiers_and_safe_metadata(
 
 
 def test_mcp_ssh_descriptors_respect_feature_flags(monkeypatch: pytest.MonkeyPatch) -> None:
-    import gateway_api.config as config
     import gateway_api.routers.mcp as mcp_router
+    from gateway_api import config
 
     monkeypatch.setenv("GATEWAY_SSH_ENABLED", "false")
     config.get_settings.cache_clear()
@@ -1514,8 +1515,8 @@ def test_mcp_ssh_raw_command_can_be_restricted_per_account(client: TestClient) -
 def test_mcp_ssh_raw_command_enabled_runs_safe_single_line(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import gateway_api.config as config
     import gateway_api.routers.mcp as mcp_router
+    from gateway_api import config
     from gateway_api.adapters.ssh import SshCommandResult
 
     monkeypatch.setenv("GATEWAY_SSH_ALLOW_RAW_COMMAND", "true")
@@ -1568,8 +1569,8 @@ def test_mcp_ssh_raw_command_enabled_runs_safe_single_line(
 def test_mcp_ssh_filtered_profile_blocks_denied_pattern(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import gateway_api.config as config
     import gateway_api.routers.mcp as mcp_router
+    from gateway_api import config
 
     monkeypatch.setenv("GATEWAY_SSH_COMMAND_PROFILE_DEFAULT", "filtered")
     config.get_settings.cache_clear()
@@ -1614,7 +1615,7 @@ def test_mcp_ssh_filtered_profile_blocks_denied_pattern(
 def test_mcp_ssh_raw_command_policy_blocks_multiline_and_overlength(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import gateway_api.config as config
+    from gateway_api import config
 
     monkeypatch.setenv("GATEWAY_SSH_ALLOW_RAW_COMMAND", "true")
     monkeypatch.setenv("GATEWAY_SSH_RAW_COMMAND_MAX_CHARS", "3")
@@ -3450,10 +3451,9 @@ def test_phase_two_conflicts_use_logical_paths_across_worktrees_and_resources(
 def test_phase_two_additive_file_change_schema_upgrade(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from sqlalchemy import create_engine, inspect, text
-
     from gateway_api import database, models
     from gateway_api.schema_migrations import run_schema_migrations
+    from sqlalchemy import create_engine, inspect, text
 
     upgrade_engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}")
     models.Base.metadata.create_all(upgrade_engine)
@@ -4217,11 +4217,10 @@ def test_phase_three_operations_metrics_and_realtime_websocket(client: TestClien
 def test_phase_three_openapi_asyncapi_schema_and_persistence_contracts(
     client: TestClient,
 ) -> None:
-    from sqlalchemy import inspect
     import yaml
-
     from gateway_api.database import SessionLocal
     from gateway_api.models import OutboxEvent
+    from sqlalchemy import inspect
 
     root = Path(__file__).resolve().parents[3]
     static_openapi = yaml.safe_load(
@@ -4623,9 +4622,8 @@ def _phase_four_policy(
 def test_phase_four_contracts_tables_and_disabled_worker_registration(
     client: TestClient,
 ) -> None:
-    from sqlalchemy import inspect
-
     from gateway_api.database import SessionLocal
+    from sqlalchemy import inspect
 
     tools_response = client.post(
         "/mcp", json={"jsonrpc": "2.0", "id": 4010, "method": "tools/list"}
@@ -5667,7 +5665,6 @@ def test_phase_four_static_contracts_event_payload_and_prometheus_metrics(
     client: TestClient,
 ) -> None:
     import yaml
-
     from gateway_api.database import SessionLocal
     from gateway_api.models import OutboxEvent
 
@@ -5799,12 +5796,12 @@ def test_readiness_accepts_forward_compatible_schema(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import gateway_api.main as main_module
+    import gateway_api.readiness_cache as readiness_module
     from gateway_api.schema_migrations import HEAD_REVISION, MigrationStatus
 
     future_revision = "20260728_0012"
     monkeypatch.setattr(
-        main_module,
+        readiness_module,
         "get_migration_status",
         lambda: MigrationStatus(
             current_revisions=(future_revision,),
@@ -5812,7 +5809,8 @@ def test_readiness_accepts_forward_compatible_schema(
             at_head=False,
         ),
     )
-    monkeypatch.setattr(main_module, "validate_schema_metadata", lambda: None)
+    monkeypatch.setattr(readiness_module, "validate_schema_metadata", lambda: None)
+    assert client.app.state.readiness_cache.refresh_sync() is True
 
     ready = client.get("/ready")
 
@@ -5826,16 +5824,170 @@ def test_readiness_accepts_forward_compatible_schema(
     assert client.get("/auth/me").status_code == 200
 
 
-def test_readiness_blocks_traffic_on_invalid_schema_and_recovers(
+def test_readiness_handler_never_runs_deep_schema_validation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gateway_api.readiness_cache as readiness_module
+
+    def forbidden() -> None:
+        raise AssertionError("deep validation must not run in the request handler")
+
+    monkeypatch.setattr(readiness_module, "get_migration_status", forbidden)
+    monkeypatch.setattr(readiness_module, "validate_schema_metadata", forbidden)
+
+    ready = client.get("/ready")
+
+    assert ready.status_code == 200
+    assert ready.json()["database_schema_valid"] is True
+
+
+def test_metrics_handler_is_database_free_and_refresh_sql_is_bounded(
+    client: TestClient,
+) -> None:
+    from gateway_api import database
+    from sqlalchemy import event
+
+    cache = client.app.state.metrics_cache
+    deadline = time.monotonic() + 5
+    while cache.snapshot()["metrics_refresh_in_progress"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+    statements: list[str] = []
+
+    def capture_statement(_conn, _cursor, statement, _parameters, _context, _many):
+        statements.append(str(statement))
+
+    event.listen(database.engine, "before_cursor_execute", capture_statement)
+    try:
+        response = client.get("/metrics")
+    finally:
+        event.remove(database.engine, "before_cursor_execute", capture_statement)
+    assert response.status_code == 200
+    assert statements == []
+    assert "gateway_metrics_cache_age_seconds" in response.text
+    assert "gateway_metrics_cache_stale" in response.text
+    assert "gateway_metrics_refresh_failures_total" in response.text
+
+    event.listen(database.engine, "before_cursor_execute", capture_statement)
+    try:
+        assert cache.refresh_sync() is True
+    finally:
+        event.remove(database.engine, "before_cursor_execute", capture_statement)
+    assert len(statements) <= 40
+    normalized = "\n".join(statements).lower()
+    assert "group by outbox_events.status" not in normalized
+    assert normalized.count("outbox_events.status =") == 6
+
+
+def test_metrics_refresh_failure_preserves_last_successful_snapshot(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = client.app.state.metrics_cache
+    deadline = time.monotonic() + 5
+    while cache.snapshot()["metrics_refresh_in_progress"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    assert cache.refresh_sync() is True
+    before = cache.snapshot()
+
+    def fail_metrics(_db):
+        raise TimeoutError("simulated sampler timeout")
+
+    monkeypatch.setattr(cache.outbox, "metrics", fail_metrics)
+    assert cache.refresh_sync() is False
+    after = cache.snapshot()
+
+    assert after["outbox"] == before["outbox"]
+    assert after["metrics_last_success_at"] == before["metrics_last_success_at"]
+    assert after["metrics_refresh_failures_total"] == (
+        before["metrics_refresh_failures_total"] + 1
+    )
+
+
+def test_health_remains_responsive_during_deep_readiness_refresh(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    import gateway_api.readiness_cache as readiness_module
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_validation() -> None:
+        entered.set()
+        assert release.wait(timeout=5)
+
+    monkeypatch.setattr(
+        readiness_module, "validate_schema_metadata", blocked_validation
+    )
+    worker = threading.Thread(
+        target=client.app.state.readiness_cache.refresh_sync,
+        daemon=True,
+    )
+    worker.start()
+    assert entered.wait(timeout=5)
+    started = time.monotonic()
+    response = client.get("/health")
+    elapsed = time.monotonic() - started
+    release.set()
+    worker.join(timeout=5)
+
+    assert response.status_code == 200
+    assert elapsed < 0.25
+
+
+def test_request_timing_is_normalized_and_content_free(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import gateway_api.main as main_module
 
+    records: list[dict[str, object]] = []
+
+    def capture(_message: str, *, extra: dict[str, object]) -> None:
+        records.append(extra)
+
+    monkeypatch.setattr(main_module.logger, "info", capture)
+    response = client.get("/health?token=must-not-be-logged")
+
+    assert response.status_code == 200
+    assert records
+    record = records[-1]
+    assert record["normalized_path"] == "/health"
+    assert record["status_code"] == 200
+    assert float(record["duration_seconds"]) >= 0
+    assert "must-not-be-logged" not in repr(record)
+
+
+def test_readiness_blocks_traffic_on_invalid_schema_and_recovers(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    import gateway_api.readiness_cache as readiness_module
+
     def invalid_schema() -> None:
         raise RuntimeError("Database schema is missing required columns")
 
-    monkeypatch.setattr(main_module, "validate_schema_metadata", invalid_schema)
+    monkeypatch.setattr(readiness_module, "validate_schema_metadata", invalid_schema)
+    cache = client.app.state.readiness_cache
+    assert cache.refresh_sync() is False
+    with cache._state_lock:
+        assert cache._snapshot is not None
+        cache._snapshot = replace(
+            cache._snapshot,
+            refreshed_monotonic=(
+                cache._snapshot.refreshed_monotonic
+                - cache.settings.gateway_readiness_max_stale_seconds
+                - 1
+            ),
+        )
 
     ready = client.get("/ready")
 
@@ -5843,12 +5995,13 @@ def test_readiness_blocks_traffic_on_invalid_schema_and_recovers(
     detail = ready.json()["detail"]
     assert detail["database_schema_valid"] is False
     assert detail["database_compatible"] is False
-    assert detail["database_error_code"] == "schema_validation_failed"
+    assert detail["database_error_code"] == "readiness_cache_stale"
     blocked = client.get("/auth/me")
     assert blocked.status_code == 503
     assert blocked.json()["database_compatible"] is False
 
-    monkeypatch.setattr(main_module, "validate_schema_metadata", lambda: None)
+    monkeypatch.setattr(readiness_module, "validate_schema_metadata", lambda: None)
+    assert cache.refresh_sync() is True
     recovered = client.get("/ready")
 
     assert recovered.status_code == 200
@@ -6041,7 +6194,7 @@ def test_p0_registry_command_session_cursor_is_stable_and_redacted(
     from gateway_api.database import SessionLocal
     from gateway_api.models import CommandSession
 
-    base = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
     with SessionLocal() as db:
         for index in range(5):
             timestamp = base + timedelta(minutes=index)
@@ -6121,7 +6274,7 @@ def test_p0_collaboration_registry_includes_delivery_history_and_is_tenant_scope
         CollaborationRoom,
     )
 
-    now = datetime(2026, 7, 22, 13, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 22, 13, 0, tzinfo=UTC)
     with SessionLocal() as db:
         room = CollaborationRoom(
             id="registry-room",
@@ -6248,7 +6401,7 @@ def test_p0_autonomy_registry_embeds_approval_votes(client: TestClient) -> None:
         CollaborationRoom,
     )
 
-    now = datetime(2026, 7, 22, 14, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 22, 14, 0, tzinfo=UTC)
     with SessionLocal() as db:
         room = CollaborationRoom(
             id="approval-room",
@@ -6399,7 +6552,7 @@ def test_p1_operations_registry_redacts_batches_and_aggregates(
         RealtimeRoute,
     )
 
-    now = datetime(2026, 7, 22, 15, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 22, 15, 0, tzinfo=UTC)
     with SessionLocal() as db:
         audit = AuditEvent(
             id="p1-audit",
@@ -6579,7 +6732,7 @@ def test_p1_administration_registry_is_safe_and_admin_only(
     from gateway_api.database import SessionLocal
     from gateway_api.models import OAuthClient, User
 
-    now = datetime(2026, 7, 22, 16, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 22, 16, 0, tzinfo=UTC)
     with SessionLocal() as db:
         db.add_all(
             [
@@ -6671,7 +6824,7 @@ def test_mcp_federation_phase_three_broker_tools_are_stable_and_dispatch(
     assert tools["mcp_action_execute"]["annotations"]["idempotentHint"] is True
     assert tools["mcp_action_execute"]["annotations"]["destructiveHint"] is True
     assert "idempotency_key" in tools["mcp_action_prepare"]["inputSchema"]["required"]
-    assert not any(name in tools for name in {"mcp_call", "mcp_invoke", "mcp_execute"})
+    assert not any(name in tools for name in ("mcp_call", "mcp_invoke", "mcp_execute"))
 
     search = client.post(
         "/mcp",

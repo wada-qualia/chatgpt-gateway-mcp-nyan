@@ -19,6 +19,24 @@ class Settings(BaseSettings):
     gateway_db_migration_lock_timeout_seconds: int = 15
     gateway_db_migration_statement_timeout_seconds: int = 300
     gateway_db_migration_advisory_lock_key: int = 1129138007
+    gateway_readiness_refresh_interval_seconds: float = Field(
+        default=60.0, ge=5.0, le=3600.0
+    )
+    gateway_readiness_max_stale_seconds: float = Field(
+        default=120.0, ge=10.0, le=7200.0
+    )
+    gateway_readiness_probe_timeout_seconds: float = Field(
+        default=1.0, ge=0.1, le=10.0
+    )
+    gateway_metrics_refresh_interval_seconds: float = Field(
+        default=300.0, ge=10.0, le=3600.0
+    )
+    gateway_metrics_max_stale_seconds: float = Field(
+        default=600.0, ge=30.0, le=7200.0
+    )
+    gateway_metrics_refresh_timeout_seconds: float = Field(
+        default=30.0, ge=1.0, le=300.0
+    )
     gateway_secret_key: str | None = None
     gateway_secret_key_file: str = "./data/gateway-secret.key"
     gateway_jwt_secret: str = "change-me-local-jwt-secret"

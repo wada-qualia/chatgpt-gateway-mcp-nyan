@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import SQLAlchemyError
 
 from .config import get_settings
 from .database import SessionLocal
@@ -17,6 +18,8 @@ from .mcp_federation_runtime import (
     parse_recursion_context,
 )
 from .mcp_upstream import UpstreamMcpManager
+from .metrics_cache import GatewayMetricsCache
+from .readiness_cache import ReadinessCache
 from .routers import (
     access,
     account,
@@ -41,12 +44,20 @@ from .routers import (
 )
 from .runtime import GatewayRuntime
 from .schema_migrations import (
-    get_migration_status,
     revision_is_forward,
     validate_database_schema,
-    validate_schema_metadata,
 )
 from .spa import SPAStaticFiles
+
+logger = logging.getLogger(__name__)
+
+
+def _normalized_request_path(request: Request) -> str:
+    route = request.scope.get("route")
+    template = getattr(route, "path", None)
+    if isinstance(template, str) and template:
+        return template[:256]
+    return "/<unmatched>"
 
 
 def create_app() -> FastAPI:
@@ -85,26 +96,52 @@ def create_app() -> FastAPI:
         max_catalog_tools=settings.gateway_mcp_catalog_max_tools,
         thin_client_transport=thin_clients.thin_client_manager,
     )
+    readiness_cache = ReadinessCache(
+        settings=settings,
+        session_factory=SessionLocal,
+        upstream_mcp_manager=upstream_mcp_manager,
+    )
+    metrics_cache = GatewayMetricsCache(
+        settings=settings,
+        session_factory=SessionLocal,
+        outbox=runtime.outbox,
+        upstream_mcp_manager=upstream_mcp_manager,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         runtime_started = False
+        readiness_cache_started = False
+        metrics_cache_started = False
         app.state.initialization_status = "verifying_schema"
         app.state.database_at_head = False
         app.state.database_forward_compatible = False
         app.state.database_schema_valid = False
         app.state.database_compatible = False
         try:
-            migration_status = await asyncio.to_thread(validate_database_schema)
+            migration_status = await asyncio.to_thread(
+                validate_database_schema,
+                allow_forward_revision=True,
+            )
+            forward_compatible = revision_is_forward(
+                migration_status.current_revision,
+                migration_status.head_revision,
+            )
             app.state.database_revision = migration_status.current_revision
             app.state.database_head = migration_status.head_revision
             app.state.database_at_head = migration_status.at_head
+            app.state.database_forward_compatible = forward_compatible
             app.state.database_schema_valid = True
             app.state.database_compatible = True
             app.state.initialization_status = "starting_runtime"
             app.state.gateway_runtime = runtime
+            await asyncio.to_thread(readiness_cache.seed, migration_status)
             await runtime.start()
             runtime_started = True
+            await readiness_cache.start()
+            readiness_cache_started = True
+            await metrics_cache.start()
+            metrics_cache_started = True
             app.state.initialization_status = "ready"
             yield
         except BaseException:
@@ -115,6 +152,10 @@ def create_app() -> FastAPI:
             app.state.database_compatible = False
             raise
         finally:
+            if metrics_cache_started:
+                await metrics_cache.stop()
+            if readiness_cache_started:
+                await readiness_cache.stop()
             await upstream_mcp_manager.stop()
             if runtime_started:
                 await runtime.stop()
@@ -129,6 +170,8 @@ def create_app() -> FastAPI:
     )
     app.state.gateway_runtime = runtime
     app.state.upstream_mcp_manager = upstream_mcp_manager
+    app.state.readiness_cache = readiness_cache
+    app.state.metrics_cache = metrics_cache
     app.state.initialization_status = "created"
     app.state.database_revision = None
     app.state.database_head = None
@@ -143,6 +186,32 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def request_timing(request: Request, call_next):
+        started = time.monotonic()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        finally:
+            total_duration = max(0.0, time.monotonic() - started)
+            upstream_duration = getattr(
+                request.state, "upstream_duration_seconds", None
+            )
+            mcp_method = getattr(request.state, "mcp_method", None)
+            logger.info(
+                "gateway_request_completed",
+                extra={
+                    "http_method": request.method,
+                    "normalized_path": _normalized_request_path(request),
+                    "mcp_method": mcp_method,
+                    "status_code": status_code,
+                    "duration_seconds": total_duration,
+                    "upstream_duration_seconds": upstream_duration,
+                },
+            )
 
     @app.middleware("http")
     async def initialization_gate(request: Request, call_next):
@@ -220,51 +289,46 @@ def create_app() -> FastAPI:
     async def ready(request: Request) -> dict:
         state = request.app.state.gateway_runtime.readiness()
         state["initialization_status"] = request.app.state.initialization_status
-        migration_status = None
-        try:
-            migration_status = await asyncio.to_thread(get_migration_status)
-            forward_compatible = revision_is_forward(
-                migration_status.current_revision,
-                migration_status.head_revision,
-            )
-            revision_compatible = migration_status.at_head or forward_compatible
-            if not revision_compatible:
-                raise RuntimeError(
-                    "Database revision is incompatible with the running image"
-                )
-            await asyncio.to_thread(validate_schema_metadata)
-            with SessionLocal() as db:
-                state["federation"] = upstream_mcp_manager.readiness_snapshot(db)
-        except (RuntimeError, SQLAlchemyError):
-            if migration_status is not None:
-                request.app.state.database_revision = migration_status.current_revision
-                request.app.state.database_head = migration_status.head_revision
-                request.app.state.database_at_head = migration_status.at_head
-            request.app.state.database_forward_compatible = False
-            request.app.state.database_schema_valid = False
-            request.app.state.database_compatible = False
-            state["status"] = "not_ready"
-            state["database_revision"] = request.app.state.database_revision
-            state["database_head"] = request.app.state.database_head
-            state["database_at_head"] = request.app.state.database_at_head
-            state["database_forward_compatible"] = False
-            state["database_schema_valid"] = False
-            state["database_compatible"] = False
-            state["database_error_code"] = "schema_validation_failed"
-            raise HTTPException(status_code=503, detail=state) from None
-
-        request.app.state.database_revision = migration_status.current_revision
-        request.app.state.database_head = migration_status.head_revision
-        request.app.state.database_at_head = migration_status.at_head
+        cache: ReadinessCache = request.app.state.readiness_cache
+        snapshot, stale, refresh_error = cache.cached()
+        database_reachable = await cache.probe_database()
+        cache_valid = snapshot is not None and not stale
+        if snapshot is not None:
+            migration_status = snapshot.migration_status
+            database_revision = migration_status.current_revision
+            database_head = migration_status.head_revision
+            database_at_head = migration_status.at_head
+            forward_compatible = snapshot.forward_compatible
+            state["federation"] = snapshot.federation
+        else:
+            database_revision = request.app.state.database_revision
+            database_head = request.app.state.database_head
+            database_at_head = request.app.state.database_at_head
+            forward_compatible = False
+        database_compatible = cache_valid and database_reachable
+        request.app.state.database_revision = database_revision
+        request.app.state.database_head = database_head
+        request.app.state.database_at_head = database_at_head
         request.app.state.database_forward_compatible = forward_compatible
-        request.app.state.database_schema_valid = True
-        request.app.state.database_compatible = True
-        state["database_revision"] = migration_status.current_revision
-        state["database_head"] = migration_status.head_revision
-        state["database_at_head"] = migration_status.at_head
+        request.app.state.database_schema_valid = cache_valid
+        request.app.state.database_compatible = database_compatible
+        state["database_revision"] = database_revision
+        state["database_head"] = database_head
+        state["database_at_head"] = database_at_head
         state["database_forward_compatible"] = forward_compatible
-        state["database_schema_valid"] = True
-        state["database_compatible"] = True
+        state["database_schema_valid"] = cache_valid
+        state["database_compatible"] = database_compatible
+        if not database_compatible:
+            state["status"] = "not_ready"
+            if not cache_valid:
+                state["database_error_code"] = (
+                    "readiness_cache_stale"
+                    if snapshot is not None
+                    else refresh_error or "schema_validation_failed"
+                )
+            else:
+                state["database_error_code"] = "database_probe_failed"
+            raise HTTPException(status_code=503, detail=state)
         if state["status"] != "ready" or state["initialization_status"] != "ready":
             raise HTTPException(status_code=503, detail=state)
         return state

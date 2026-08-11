@@ -8,10 +8,10 @@ import os
 import socket
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta, timezone
+from datetime import UTC, timedelta
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -31,12 +31,20 @@ logger = logging.getLogger(__name__)
 
 OUTBOX_ACTIVE_STATUSES = {"pending", "retry", "processing"}
 OUTBOX_TERMINAL_STATUSES = {"published", "dead_letter", "cancelled"}
+OUTBOX_STATUSES = (
+    "pending",
+    "retry",
+    "processing",
+    "published",
+    "dead_letter",
+    "cancelled",
+)
 
 
 def _aware(value):
     if value is None or value.tzinfo is not None:
         return value
-    return value.replace(tzinfo=timezone.utc)
+    return value.replace(tzinfo=UTC)
 
 
 def resolve_replica_id(settings: Settings) -> str:
@@ -541,10 +549,15 @@ class OutboxService:
     def metrics(self, db: Session) -> dict[str, Any]:
         now = utcnow()
         counts = {
-            str(status): int(count)
-            for status, count in db.query(OutboxEvent.status, func.count(OutboxEvent.id))
-            .group_by(OutboxEvent.status)
-            .all()
+            status: int(
+                db.scalar(
+                    select(func.count())
+                    .select_from(OutboxEvent)
+                    .where(OutboxEvent.status == status)
+                )
+                or 0
+            )
+            for status in OUTBOX_STATUSES
         }
         oldest = (
             db.query(func.min(OutboxEvent.created_at))

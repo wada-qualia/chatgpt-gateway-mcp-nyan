@@ -1889,10 +1889,14 @@ class UpstreamMcpManager:
         db.commit()
 
     def _limit_result(self, result: types.CallToolResult) -> UpstreamCallResult:
+        raw_payload = result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        structured_content = raw_payload.pop("structuredContent", None)
         payload = sanitize_untrusted(
-            result.model_dump(mode="json", by_alias=True, exclude_none=True),
+            raw_payload,
             max_string=max(self.max_text_bytes, self.max_result_bytes),
         )
+        if structured_content is not None:
+            payload["structuredContent"] = structured_content
         try:
             projection = project_call_result(
                 payload,

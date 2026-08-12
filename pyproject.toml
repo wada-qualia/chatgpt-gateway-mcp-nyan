@@ -51,9 +51,9 @@ public-index-allowed = false
 
 [tool.klab.affine-sdk]
 package = "affine-py-sdk"
-version = "0.3.0"
-artifact = "vendor/affine-sdk/affine_py_sdk-0.3.0-py3-none-any.whl"
-sha256 = "8bc00116f30be9e2a566f0c73ea18c5db2fb843e102693e3b308ad92f1fe2982"
-source-commit = "65f064d4223a77a5ff324b698c419d8cd0895e3e"
+version = "0.3.1"
+artifact = "vendor/affine-sdk/affine_py_sdk-0.3.1-py3-none-any.whl"
+sha256 = "5eff9a1a6f616e76573c7fb7bb2400498551564ff76ac7494854037daed59f92"
+source-commit = "c8881192678ed9bec452d37c3a67a8a87755064d"
 publication-channel = "gateway-qualified-vendor"
 public-index-allowed = false

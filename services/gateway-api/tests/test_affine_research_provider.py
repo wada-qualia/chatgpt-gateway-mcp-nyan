@@ -3,21 +3,21 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import socket
+from collections.abc import AsyncIterator
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from typing import Any, AsyncIterator
+from typing import Any, Self
 
 import httpx
 import uvicorn
-from mcp import ClientSession, types
-from mcp.client.streamable_http import streamable_http_client
-
 from gateway_api.affine_research_provider import (
     AffineProviderSettings,
     AffineResearchService,
     build_mcp,
 )
 from gateway_api.mcp_upstream import UpstreamMcpManager
+from mcp import ClientSession, types
+from mcp.client.streamable_http import streamable_http_client
 
 
 class _StaticTokenProvider:
@@ -36,12 +36,24 @@ class _BridgeConflict(RuntimeError):
         }
 
 
+class _BridgeTitleConflict(RuntimeError):
+    def __init__(self, expected_title: str, current_title: str) -> None:
+        super().__init__("Document title changed")
+        self.status_code = 409
+        self.details = {
+            "code": "DOCUMENT_TITLE_CONFLICT",
+            "expected_title": expected_title,
+            "current_title": current_title,
+        }
+
+
 class _FakeBridgeClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.conflict: tuple[str, str] | None = None
+        self.title_conflict: tuple[str, str] | None = None
 
-    async def __aenter__(self) -> "_FakeBridgeClient":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *_: object) -> None:
@@ -105,6 +117,8 @@ class _FakeBridgeClient:
         self.calls.append(
             ("update_title", {"note_id": note_id, "title": title, **kwargs})
         )
+        if self.title_conflict is not None:
+            raise _BridgeTitleConflict(*self.title_conflict)
         return SimpleNamespace(
             doc_id=note_id,
             web_url=f"https://affine.example/workspace-1/{note_id}",
@@ -224,15 +238,17 @@ async def _running_provider(
 
 @contextlib.asynccontextmanager
 async def _provider_session(url: str) -> AsyncIterator[ClientSession]:
-    async with httpx.AsyncClient(
-        headers={"Authorization": "Bearer gateway-provider-secret"}
-    ) as http_client:
-        async with streamable_http_client(
+    async with (
+        httpx.AsyncClient(
+            headers={"Authorization": "Bearer gateway-provider-secret"}
+        ) as http_client,
+        streamable_http_client(
             url, http_client=http_client, terminate_on_close=False
-        ) as (read_stream, write_stream, _):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                yield session
+        ) as (read_stream, write_stream, _),
+        ClientSession(read_stream, write_stream) as session,
+    ):
+        await session.initialize()
+        yield session
 
 
 async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contract() -> (
@@ -384,6 +400,32 @@ async def _test_provider_preserves_authoritative_content_conflict_as_tool_error(
         assert update_calls[0]["idempotency_key"] == "mcp-action:stale"
 
 
+async def _test_provider_preserves_authoritative_title_conflict_as_tool_error() -> None:
+    expected = "Original title"
+    current = "Current title"
+    async with _running_provider(access_mode="read_write") as (url, fake):
+        fake.title_conflict = (expected, current)
+        async with _provider_session(url) as session:
+            result = await session.call_tool(
+                "research_v1_note_update_title",
+                {
+                    "note_id": "note-1",
+                    "title": "Replacement title",
+                    "expected_title": expected,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:stale-title"}},
+            )
+        assert result.isError is True
+        error_text = result.content[0].text
+        assert "DOCUMENT_TITLE_CONFLICT" in error_text
+        assert expected in error_text
+        assert current in error_text
+        update_calls = [payload for name, payload in fake.calls if name == "update_title"]
+        assert len(update_calls) == 1
+        assert update_calls[0]["expected_title"] == expected
+        assert update_calls[0]["idempotency_key"] == "mcp-action:stale-title"
+
+
 async def _test_upstream_protocol_call_forwards_non_secret_gateway_meta() -> None:
     captured: dict[str, Any] = {}
 
@@ -449,6 +491,10 @@ def test_provider_write_requires_and_forwards_gateway_bound_idempotency() -> Non
 
 def test_provider_preserves_authoritative_content_conflict_as_tool_error() -> None:
     asyncio.run(_test_provider_preserves_authoritative_content_conflict_as_tool_error())
+
+
+def test_provider_preserves_authoritative_title_conflict_as_tool_error() -> None:
+    asyncio.run(_test_provider_preserves_authoritative_title_conflict_as_tool_error())
 
 
 def test_upstream_protocol_call_forwards_non_secret_gateway_meta() -> None:

@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, Self
 
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
@@ -162,7 +163,7 @@ class _BridgeClient(Protocol):
         self, note_id: str, title: str, **kwargs: Any
     ) -> Any: ...
 
-    async def __aenter__(self) -> "_BridgeClient": ...
+    async def __aenter__(self) -> Self: ...
 
     async def __aexit__(self, *args: object) -> None: ...
 
@@ -203,7 +204,7 @@ class AffineResearchService:
         self._client_factory = client_factory
 
     @asynccontextmanager
-    async def client(self) -> Any:
+    async def client(self) -> AsyncIterator[_BridgeClient]:
         token = await asyncio.to_thread(self._token_provider.get_token)
         factory = self._client_factory
         if factory is None:
@@ -223,7 +224,7 @@ class AffineResearchService:
         try:
             async with self.client() as client:
                 payload = await client.ready()
-        except Exception:
+        except Exception:  # noqa: BLE001 - readiness must fail closed on any bridge failure.
             return False
         return isinstance(payload, dict) and payload.get("status") == "ready"
 
@@ -271,6 +272,8 @@ class AffineResearchService:
                 "code",
                 "expected_content_hash",
                 "current_content_hash",
+                "expected_title",
+                "current_title",
                 "operation_id",
                 "replayed",
             ):

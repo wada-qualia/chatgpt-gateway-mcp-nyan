@@ -159,6 +159,13 @@ class Settings(BaseSettings):
     gateway_autonomy_assignment_batch_size: int = 10
     gateway_autonomy_approval_ttl_seconds: int = 3600
     gateway_autonomy_permit_ttl_seconds: int = 300
+    gateway_research_persistent_writes_enabled: bool = False
+    gateway_research_unattended_approval_enabled: bool = False
+    gateway_research_unattended_approver_subject: str = ""
+    gateway_research_unattended_allowed_server_ids: str = ""
+    gateway_research_unattended_allowed_tools: str = ""
+    gateway_research_unattended_poll_interval_seconds: float = 2.0
+    gateway_research_unattended_batch_size: int = 25
     gateway_ssh_raw_command_denied_patterns: str = Field(
         default="sudo\\b,su\\b,reboot\\b,shutdown\\b,mkfs\\b,mount\\b,umount\\b,chmod\\s+-R,chown\\s+-R,>\\s*/dev/"
     )

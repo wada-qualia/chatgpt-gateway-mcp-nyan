@@ -50,7 +50,7 @@ RUN /opt/venv/bin/python /app/scripts/verify_lup_sdk_artifact.py \
   && /opt/venv/bin/python /app/scripts/verify_affine_sdk_artifact.py \
   && /opt/venv/bin/pip install --no-cache-dir --no-deps \
     /app/vendor/llm-usage-sdk/klab_llm_usage-0.1.0b2-py3-none-any.whl \
-    /app/vendor/affine-sdk/affine_py_sdk-0.3.1-py3-none-any.whl \
+    /app/vendor/affine-sdk/affine_py_sdk-0.4.0-py3-none-any.whl \
   && /opt/venv/bin/python -c 'import klab_llm_usage as sdk; from affine_py_sdk import AffineBridgeClient; assert sdk.__version__ == "0.1.0b2"; assert AffineBridgeClient.__name__ == "AffineBridgeClient"'
 
 COPY services /app/services

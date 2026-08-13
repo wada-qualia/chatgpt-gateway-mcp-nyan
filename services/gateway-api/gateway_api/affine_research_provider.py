@@ -19,6 +19,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .client_credentials import ClientCredentialsTokenProvider
+from .research_knowledge_contract import (
+    ResearchLink,
+    ResearchSourceReference,
+    render_note_link,
+    render_source_reference,
+)
 
 
 class AffineProviderSettings(BaseSettings):
@@ -120,6 +126,16 @@ class ResearchNoteContent(BaseModel):
     canonical_url: str
 
 
+class ResearchNoteMetadata(BaseModel):
+    provider: Literal["affine"] = "affine"
+    workspace_id: str
+    note_id: str
+    title: str
+    tags: list[str]
+    tags_hash: str
+    canonical_url: str
+
+
 class ResearchSearchMatch(BaseModel):
     note_id: str | None = None
     title: str | None = None
@@ -140,6 +156,8 @@ class ResearchMutationReply(BaseModel):
     note_id: str
     canonical_url: str
     content_hash: str | None = None
+    tags: list[str] | None = None
+    tags_hash: str | None = None
     operation_id: str | None = None
     replayed: bool = False
 
@@ -153,10 +171,22 @@ class _BridgeClient(Protocol):
         self, note_id: str, **kwargs: Any
     ) -> Any: ...
 
+    async def read_affine_document_metadata(
+        self, note_id: str, **kwargs: Any
+    ) -> Any: ...
+
     async def search_affine_documents(self, query: str, **kwargs: Any) -> list[Any]: ...
 
     async def update_affine_document_content(
         self, note_id: str, content: str, **kwargs: Any
+    ) -> Any: ...
+
+    async def append_affine_document_content(
+        self, note_id: str, content: str, **kwargs: Any
+    ) -> Any: ...
+
+    async def update_affine_document_tags(
+        self, note_id: str, tags: list[str], **kwargs: Any
     ) -> Any: ...
 
     async def update_affine_document_title(
@@ -274,6 +304,8 @@ class AffineResearchService:
                 "current_content_hash",
                 "expected_title",
                 "current_title",
+                "expected_tags_hash",
+                "current_tags_hash",
                 "operation_id",
                 "replayed",
             ):
@@ -358,9 +390,19 @@ def build_mcp(
 
     @mcp.tool(annotations=READ_ONLY, structured_output=True)
     async def research_v1_provider_capabilities() -> ProviderCapabilities:
-        operations = ["capabilities", "read", "search"]
+        operations = ["capabilities", "read", "metadata", "search"]
         if resolved.access_mode == "read_write":
-            operations.extend(["create", "update_content", "update_title"])
+            operations.extend(
+                [
+                    "create",
+                    "update_content",
+                    "append",
+                    "update_tags",
+                    "link",
+                    "source_reference",
+                    "update_title",
+                ]
+            )
         return ProviderCapabilities(
             workspace_id=resolved.workspace_id,
             access_mode=resolved.access_mode,
@@ -382,6 +424,24 @@ def build_mcp(
             content=value.content,
             content_hash=value.content_hash,
             format=value.format,
+            canonical_url=value.web_url,
+        )
+
+    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    async def research_v1_note_metadata(note_id: str) -> ResearchNoteMetadata:
+        try:
+            async with active_service.client() as client:
+                value = await client.read_affine_document_metadata(
+                    note_id, workspace_id=resolved.workspace_id
+                )
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchNoteMetadata(
+            workspace_id=value.workspace_id,
+            note_id=value.doc_id,
+            title=value.title,
+            tags=list(value.tags),
+            tags_hash=value.tags_hash,
             canonical_url=value.web_url,
         )
 
@@ -411,6 +471,36 @@ def build_mcp(
                 )
                 for value in values
             ],
+        )
+
+    async def append_note(
+        note_id: str,
+        content: str,
+        expected_content_hash: str,
+        ctx: Context,
+    ) -> ResearchMutationReply:
+        active_service.require_write()
+        idempotency_key = active_service.gateway_idempotency_key(ctx)
+        try:
+            async with active_service.client() as client:
+                value = await client.append_affine_document_content(
+                    note_id,
+                    content,
+                    expected_content_hash=expected_content_hash,
+                    workspace_id=resolved.workspace_id,
+                    idempotency_key=idempotency_key,
+                )
+        except ToolError:
+            raise
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchMutationReply(
+            workspace_id=resolved.workspace_id,
+            note_id=value.doc_id,
+            canonical_url=value.web_url,
+            content_hash=value.content_hash,
+            operation_id=value.operation_id,
+            replayed=value.replayed,
         )
 
     @mcp.tool(annotations=WRITE, structured_output=True)
@@ -472,6 +562,91 @@ def build_mcp(
             operation_id=value.operation_id,
             replayed=value.replayed,
         )
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_note_append(
+        note_id: str,
+        content: str,
+        expected_content_hash: str,
+        ctx: Context,
+    ) -> ResearchMutationReply:
+        if not content:
+            raise ToolError("append content must not be empty")
+        return await append_note(note_id, content, expected_content_hash, ctx)
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_note_set_tags(
+        note_id: str,
+        tags: list[str],
+        expected_tags_hash: str,
+        ctx: Context,
+    ) -> ResearchMutationReply:
+        active_service.require_write()
+        idempotency_key = active_service.gateway_idempotency_key(ctx)
+        try:
+            async with active_service.client() as client:
+                value = await client.update_affine_document_tags(
+                    note_id,
+                    tags,
+                    expected_tags_hash=expected_tags_hash,
+                    workspace_id=resolved.workspace_id,
+                    idempotency_key=idempotency_key,
+                )
+        except ToolError:
+            raise
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchMutationReply(
+            workspace_id=resolved.workspace_id,
+            note_id=value.doc_id,
+            canonical_url=value.web_url,
+            tags=list(value.tags) if value.tags is not None else None,
+            tags_hash=value.tags_hash,
+            operation_id=value.operation_id,
+            replayed=value.replayed,
+        )
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_note_link(
+        note_id: str,
+        target_note_id: str,
+        expected_content_hash: str,
+        ctx: Context,
+        label: str | None = None,
+    ) -> ResearchMutationReply:
+        try:
+            async with active_service.client() as client:
+                target = await client.read_affine_document_metadata(
+                    target_note_id,
+                    workspace_id=resolved.workspace_id,
+                )
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        rendered = render_note_link(
+            ResearchLink(
+                target_note_id=target_note_id,
+                target_url=target.web_url,
+                label=label or target.title or target_note_id,
+            )
+        )
+        return await append_note(note_id, rendered, expected_content_hash, ctx)
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_note_add_source(
+        note_id: str,
+        url: str,
+        title: str,
+        expected_content_hash: str,
+        ctx: Context,
+        locator: str | None = None,
+    ) -> ResearchMutationReply:
+        try:
+            rendered = render_source_reference(
+                ResearchSourceReference(url=url, title=title, locator=locator)
+            )
+        except ValueError as error:
+            raise ToolError(str(error)) from error
+        return await append_note(note_id, rendered, expected_content_hash, ctx)
 
     @mcp.tool(annotations=WRITE, structured_output=True)
     async def research_v1_note_update_title(

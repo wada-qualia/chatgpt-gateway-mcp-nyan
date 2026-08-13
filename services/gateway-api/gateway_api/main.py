@@ -20,6 +20,7 @@ from .mcp_federation_runtime import (
 from .mcp_upstream import UpstreamMcpManager
 from .metrics_cache import GatewayMetricsCache
 from .readiness_cache import ReadinessCache
+from .research_write_approval import ResearchWriteApprovalWorker
 from .routers import (
     access,
     account,
@@ -107,12 +108,17 @@ def create_app() -> FastAPI:
         outbox=runtime.outbox,
         upstream_mcp_manager=upstream_mcp_manager,
     )
+    research_write_approval_worker = ResearchWriteApprovalWorker(
+        settings=settings,
+        session_factory=SessionLocal,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         runtime_started = False
         readiness_cache_started = False
         metrics_cache_started = False
+        research_write_approval_started = False
         app.state.initialization_status = "verifying_schema"
         app.state.database_at_head = False
         app.state.database_forward_compatible = False
@@ -142,6 +148,8 @@ def create_app() -> FastAPI:
             readiness_cache_started = True
             await metrics_cache.start()
             metrics_cache_started = True
+            await research_write_approval_worker.start()
+            research_write_approval_started = True
             app.state.initialization_status = "ready"
             yield
         except BaseException:
@@ -152,6 +160,8 @@ def create_app() -> FastAPI:
             app.state.database_compatible = False
             raise
         finally:
+            if research_write_approval_started:
+                await research_write_approval_worker.stop()
             if metrics_cache_started:
                 await metrics_cache.stop()
             if readiness_cache_started:

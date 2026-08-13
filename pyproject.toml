@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chatgpt-mcp-ssh-gateway"
-version = "0.8.1"
+version = "0.9.0"
 description = "Perpetus Galaxy FastAPI gateway for ChatGPT MCP SSH and Docker workspaces."
 requires-python = ">=3.12,<3.15"
 dependencies = [
@@ -51,9 +51,9 @@ public-index-allowed = false
 
 [tool.klab.affine-sdk]
 package = "affine-py-sdk"
-version = "0.3.1"
-artifact = "vendor/affine-sdk/affine_py_sdk-0.3.1-py3-none-any.whl"
-sha256 = "5eff9a1a6f616e76573c7fb7bb2400498551564ff76ac7494854037daed59f92"
-source-commit = "c8881192678ed9bec452d37c3a67a8a87755064d"
+version = "0.4.0"
+artifact = "vendor/affine-sdk/affine_py_sdk-0.4.0-py3-none-any.whl"
+sha256 = "fb528ab6e0854bc859d6a8c2eb8b6be0f17d95f752a1d1b4a0b695205854906b"
+source-commit = "2666b1750ef14492350379bb9b311f4e1c76fe8c"
 publication-channel = "gateway-qualified-vendor"
 public-index-allowed = false

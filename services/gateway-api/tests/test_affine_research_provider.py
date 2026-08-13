@@ -74,6 +74,19 @@ class _FakeBridgeClient:
             web_url=f"https://affine.example/workspace-1/{note_id}",
         )
 
+    async def read_affine_document_metadata(
+        self, note_id: str, **kwargs: Any
+    ) -> Any:
+        self.calls.append(("metadata", {"note_id": note_id, **kwargs}))
+        return SimpleNamespace(
+            workspace_id="workspace-1",
+            doc_id=note_id,
+            title="Research note",
+            tags=["research", "graph"],
+            tags_hash="d" * 64,
+            web_url=f"https://affine.example/workspace-1/{note_id}",
+        )
+
     async def search_affine_documents(self, query: str, **kwargs: Any) -> list[Any]:
         self.calls.append(("search", {"query": query, **kwargs}))
         return [
@@ -108,6 +121,38 @@ class _FakeBridgeClient:
             web_url=f"https://affine.example/workspace-1/{note_id}",
             content_hash="c" * 64,
             operation_id="operation-update",
+            replayed=False,
+        )
+
+    async def append_affine_document_content(
+        self, note_id: str, content: str, **kwargs: Any
+    ) -> Any:
+        self.calls.append(
+            ("append", {"note_id": note_id, "content": content, **kwargs})
+        )
+        if self.conflict is not None:
+            raise _BridgeConflict(*self.conflict)
+        return SimpleNamespace(
+            doc_id=note_id,
+            web_url=f"https://affine.example/workspace-1/{note_id}",
+            content_hash="e" * 64,
+            operation_id="operation-append",
+            replayed=False,
+        )
+
+    async def update_affine_document_tags(
+        self, note_id: str, tags: list[str], **kwargs: Any
+    ) -> Any:
+        self.calls.append(
+            ("update_tags", {"note_id": note_id, "tags": tags, **kwargs})
+        )
+        return SimpleNamespace(
+            doc_id=note_id,
+            web_url=f"https://affine.example/workspace-1/{note_id}",
+            content_hash=None,
+            tags=tags,
+            tags_hash="f" * 64,
+            operation_id="operation-tags",
             replayed=False,
         )
 
@@ -274,9 +319,14 @@ async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contra
             assert set(tools) == {
                 "research_v1_provider_capabilities",
                 "research_v1_note_read",
+                "research_v1_note_metadata",
                 "research_v1_note_search",
                 "research_v1_note_create",
                 "research_v1_note_update_content",
+                "research_v1_note_append",
+                "research_v1_note_set_tags",
+                "research_v1_note_link",
+                "research_v1_note_add_source",
                 "research_v1_note_update_title",
             }
             assert tools["research_v1_note_read"].annotations.readOnlyHint is True
@@ -426,6 +476,87 @@ async def _test_provider_preserves_authoritative_title_conflict_as_tool_error() 
         assert update_calls[0]["idempotency_key"] == "mcp-action:stale-title"
 
 
+async def _test_provider_expanded_write_tools_use_affine_sdk_boundary() -> None:
+    async with _running_provider(access_mode="read_write") as (url, fake):
+        async with _provider_session(url) as session:
+            metadata = await session.call_tool(
+                "research_v1_note_metadata", {"note_id": "note-1"}
+            )
+            appended = await session.call_tool(
+                "research_v1_note_append",
+                {
+                    "note_id": "note-1",
+                    "content": "append body",
+                    "expected_content_hash": "a" * 64,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:append"}},
+            )
+            tagged = await session.call_tool(
+                "research_v1_note_set_tags",
+                {
+                    "note_id": "note-1",
+                    "tags": ["research", "graph"],
+                    "expected_tags_hash": "d" * 64,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:tags"}},
+            )
+            linked = await session.call_tool(
+                "research_v1_note_link",
+                {
+                    "note_id": "note-1",
+                    "target_note_id": "note-2",
+                    "expected_content_hash": "e" * 64,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:link"}},
+            )
+            sourced = await session.call_tool(
+                "research_v1_note_add_source",
+                {
+                    "note_id": "note-1",
+                    "url": "https://example.test/paper",
+                    "title": "Paper",
+                    "locator": "p. 12",
+                    "expected_content_hash": "e" * 64,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:source"}},
+            )
+
+        assert metadata.isError is False
+        assert metadata.structuredContent["tags"] == ["research", "graph"]
+        assert appended.isError is False
+        assert appended.structuredContent["content_hash"] == "e" * 64
+        assert tagged.isError is False
+        assert tagged.structuredContent["tags_hash"] == "f" * 64
+        assert linked.isError is False
+        assert sourced.isError is False
+
+        calls = fake.calls
+        assert any(
+            name == "append"
+            and payload["idempotency_key"] == "mcp-action:append"
+            for name, payload in calls
+        )
+        assert any(
+            name == "update_tags"
+            and payload["expected_tags_hash"] == "d" * 64
+            for name, payload in calls
+        )
+        link_append = next(
+            payload
+            for name, payload in calls
+            if name == "append" and payload["idempotency_key"] == "mcp-action:link"
+        )
+        assert "research-link:v1" in link_append["content"]
+        assert "note-2" in link_append["content"]
+        source_append = next(
+            payload
+            for name, payload in calls
+            if name == "append" and payload["idempotency_key"] == "mcp-action:source"
+        )
+        assert "research-source:v1" in source_append["content"]
+        assert "https://example.test/paper" in source_append["content"]
+
+
 async def _test_upstream_protocol_call_forwards_non_secret_gateway_meta() -> None:
     captured: dict[str, Any] = {}
 
@@ -495,6 +626,10 @@ def test_provider_preserves_authoritative_content_conflict_as_tool_error() -> No
 
 def test_provider_preserves_authoritative_title_conflict_as_tool_error() -> None:
     asyncio.run(_test_provider_preserves_authoritative_title_conflict_as_tool_error())
+
+
+def test_provider_expanded_write_tools_use_affine_sdk_boundary() -> None:
+    asyncio.run(_test_provider_expanded_write_tools_use_affine_sdk_boundary())
 
 
 def test_upstream_protocol_call_forwards_non_secret_gateway_meta() -> None:

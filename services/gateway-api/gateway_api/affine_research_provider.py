@@ -726,7 +726,7 @@ def build_mcp(
         except Exception as error:
             raise active_service.bridge_error(error) from error
         return ResearchDocumentMutationReply(
-            workspace_id=value.workspace_id,
+            workspace_id=workspace_id,
             document_id=value.doc_id,
             canonical_url=value.web_url,
             content_hash=value.content_hash,

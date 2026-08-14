@@ -194,7 +194,6 @@ class _FakeBridgeClient:
         self.calls.append(("create", kwargs))
         workspace_id = str(kwargs["workspace_id"])
         return SimpleNamespace(
-            workspace_id=workspace_id,
             doc_id="note-created",
             web_url=f"https://affine.example/{workspace_id}/note-created",
             content_hash="b" * 64,

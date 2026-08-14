@@ -150,6 +150,77 @@ class ResearchSearchReply(BaseModel):
     matches: list[ResearchSearchMatch]
 
 
+class ResearchSpaceRef(BaseModel):
+    provider: Literal["affine"] = "affine"
+    workspace_id: str
+    name: str | None = None
+    created_at: str
+    space_ref: str
+
+
+class ResearchSpacePage(BaseModel):
+    provider: Literal["affine"] = "affine"
+    visibility_mode: Literal["all_documents", "native_acl"]
+    spaces: list[ResearchSpaceRef]
+    next_cursor: str | None = None
+
+
+class ResearchDocumentSummary(BaseModel):
+    provider: Literal["affine"] = "affine"
+    workspace_id: str
+    document_id: str
+    title: str | None = None
+    created_at: str
+    updated_at: str
+    document_ref: str
+
+
+class ResearchDocumentPage(BaseModel):
+    provider: Literal["affine"] = "affine"
+    visibility_mode: Literal["all_documents", "native_acl"]
+    documents: list[ResearchDocumentSummary]
+    next_cursor: str | None = None
+
+
+class ResearchDocumentContent(BaseModel):
+    provider: Literal["affine"] = "affine"
+    workspace_id: str
+    document_id: str
+    title: str | None = None
+    content: str
+    content_hash: str
+    format: str
+    canonical_url: str
+    document_ref: str
+
+
+class ResearchDocumentMetadata(BaseModel):
+    provider: Literal["affine"] = "affine"
+    workspace_id: str
+    document_id: str
+    title: str
+    tags: list[str]
+    tags_hash: str
+    canonical_url: str
+    document_ref: str
+
+
+class ResearchDocumentSearchMatch(BaseModel):
+    workspace_id: str
+    document_id: str | None = None
+    title: str | None = None
+    created_at: str | None = None
+    content: str | None = None
+    document_ref: str | None = None
+
+
+class ResearchDocumentSearchReply(BaseModel):
+    provider: Literal["affine"] = "affine"
+    visibility_mode: Literal["all_documents", "native_acl"]
+    mode: Literal["keyword", "semantic"]
+    matches: list[ResearchDocumentSearchMatch]
+
+
 class ResearchMutationReply(BaseModel):
     provider: Literal["affine"] = "affine"
     workspace_id: str
@@ -176,6 +247,22 @@ class _BridgeClient(Protocol):
     ) -> Any: ...
 
     async def search_affine_documents(self, query: str, **kwargs: Any) -> list[Any]: ...
+
+    async def list_affine_global_spaces(self, **kwargs: Any) -> Any: ...
+
+    async def list_affine_global_documents(self, **kwargs: Any) -> Any: ...
+
+    async def read_affine_global_document(
+        self, workspace_id: str, document_id: str
+    ) -> Any: ...
+
+    async def read_affine_global_document_metadata(
+        self, workspace_id: str, document_id: str
+    ) -> Any: ...
+
+    async def search_affine_global_documents(
+        self, query: str, **kwargs: Any
+    ) -> Any: ...
 
     async def update_affine_document_content(
         self, note_id: str, content: str, **kwargs: Any
@@ -390,7 +477,17 @@ def build_mcp(
 
     @mcp.tool(annotations=READ_ONLY, structured_output=True)
     async def research_v1_provider_capabilities() -> ProviderCapabilities:
-        operations = ["capabilities", "read", "metadata", "search"]
+        operations = [
+            "capabilities",
+            "read",
+            "metadata",
+            "search",
+            "space_list",
+            "document_list",
+            "document_read",
+            "document_metadata",
+            "document_search",
+        ]
         if resolved.access_mode == "read_write":
             operations.extend(
                 [
@@ -407,6 +504,152 @@ def build_mcp(
             workspace_id=resolved.workspace_id,
             access_mode=resolved.access_mode,
             operations=operations,
+        )
+
+    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    async def research_v1_space_list(
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> ResearchSpacePage:
+        if limit < 1 or limit > 100:
+            raise ToolError("limit must be between 1 and 100")
+        try:
+            async with active_service.client() as client:
+                value = await client.list_affine_global_spaces(
+                    cursor=cursor,
+                    limit=limit,
+                )
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchSpacePage(
+            visibility_mode=value.visibility_mode,
+            spaces=[
+                ResearchSpaceRef(
+                    workspace_id=item.workspace_id,
+                    name=item.name,
+                    created_at=item.created_at,
+                    space_ref=item.space_ref,
+                )
+                for item in value.spaces
+            ],
+            next_cursor=value.next_cursor,
+        )
+
+    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    async def research_v1_document_list(
+        workspace_id: str | None = None,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> ResearchDocumentPage:
+        if limit < 1 or limit > 100:
+            raise ToolError("limit must be between 1 and 100")
+        try:
+            async with active_service.client() as client:
+                value = await client.list_affine_global_documents(
+                    workspace_id=workspace_id,
+                    cursor=cursor,
+                    limit=limit,
+                )
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchDocumentPage(
+            visibility_mode=value.visibility_mode,
+            documents=[
+                ResearchDocumentSummary(
+                    workspace_id=item.workspace_id,
+                    document_id=item.doc_id,
+                    title=item.title,
+                    created_at=item.created_at,
+                    updated_at=item.updated_at,
+                    document_ref=item.document_ref,
+                )
+                for item in value.documents
+            ],
+            next_cursor=value.next_cursor,
+        )
+
+    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    async def research_v1_document_read(
+        workspace_id: str,
+        document_id: str,
+    ) -> ResearchDocumentContent:
+        try:
+            async with active_service.client() as client:
+                value = await client.read_affine_global_document(
+                    workspace_id,
+                    document_id,
+                )
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchDocumentContent(
+            workspace_id=value.workspace_id,
+            document_id=value.doc_id,
+            title=value.title,
+            content=value.content,
+            content_hash=value.content_hash,
+            format=value.format,
+            canonical_url=value.web_url,
+            document_ref=value.document_ref,
+        )
+
+    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    async def research_v1_document_metadata(
+        workspace_id: str,
+        document_id: str,
+    ) -> ResearchDocumentMetadata:
+        try:
+            async with active_service.client() as client:
+                value = await client.read_affine_global_document_metadata(
+                    workspace_id,
+                    document_id,
+                )
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchDocumentMetadata(
+            workspace_id=value.workspace_id,
+            document_id=value.doc_id,
+            title=value.title,
+            tags=list(value.tags),
+            tags_hash=value.tags_hash,
+            canonical_url=value.web_url,
+            document_ref=value.document_ref,
+        )
+
+    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    async def research_v1_document_search(
+        query: str,
+        mode: Literal["keyword", "semantic"] = "keyword",
+        workspace_id: str | None = None,
+        limit: int = 20,
+    ) -> ResearchDocumentSearchReply:
+        if not query.strip():
+            raise ToolError("document search query must not be empty")
+        if limit < 1 or limit > 100:
+            raise ToolError("limit must be between 1 and 100")
+        try:
+            async with active_service.client() as client:
+                value = await client.search_affine_global_documents(
+                    query,
+                    mode=mode,
+                    workspace_id=workspace_id,
+                    limit=limit,
+                )
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchDocumentSearchReply(
+            visibility_mode=value.visibility_mode,
+            mode=value.mode,
+            matches=[
+                ResearchDocumentSearchMatch(
+                    workspace_id=item.workspace_id,
+                    document_id=item.doc_id,
+                    title=item.title,
+                    created_at=item.created_at,
+                    content=item.content,
+                    document_ref=item.document_ref,
+                )
+                for item in value.results
+            ],
         )
 
     @mcp.tool(annotations=READ_ONLY, structured_output=True)

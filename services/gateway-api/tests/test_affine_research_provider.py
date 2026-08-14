@@ -192,9 +192,11 @@ class _FakeBridgeClient:
 
     async def create_affine_document(self, **kwargs: Any) -> Any:
         self.calls.append(("create", kwargs))
+        workspace_id = str(kwargs["workspace_id"])
         return SimpleNamespace(
+            workspace_id=workspace_id,
             doc_id="note-created",
-            web_url="https://affine.example/workspace-1/note-created",
+            web_url=f"https://affine.example/{workspace_id}/note-created",
             content_hash="b" * 64,
             operation_id="operation-create",
             replayed=False,
@@ -208,9 +210,11 @@ class _FakeBridgeClient:
         )
         if self.conflict is not None:
             raise _BridgeConflict(*self.conflict)
+        workspace_id = str(kwargs["workspace_id"])
         return SimpleNamespace(
+            workspace_id=workspace_id,
             doc_id=note_id,
-            web_url=f"https://affine.example/workspace-1/{note_id}",
+            web_url=f"https://affine.example/{workspace_id}/{note_id}",
             content_hash="c" * 64,
             operation_id="operation-update",
             replayed=False,
@@ -224,9 +228,11 @@ class _FakeBridgeClient:
         )
         if self.conflict is not None:
             raise _BridgeConflict(*self.conflict)
+        workspace_id = str(kwargs["workspace_id"])
         return SimpleNamespace(
+            workspace_id=workspace_id,
             doc_id=note_id,
-            web_url=f"https://affine.example/workspace-1/{note_id}",
+            web_url=f"https://affine.example/{workspace_id}/{note_id}",
             content_hash="e" * 64,
             operation_id="operation-append",
             replayed=False,
@@ -236,9 +242,11 @@ class _FakeBridgeClient:
         self, note_id: str, tags: list[str], **kwargs: Any
     ) -> Any:
         self.calls.append(("update_tags", {"note_id": note_id, "tags": tags, **kwargs}))
+        workspace_id = str(kwargs["workspace_id"])
         return SimpleNamespace(
+            workspace_id=workspace_id,
             doc_id=note_id,
-            web_url=f"https://affine.example/workspace-1/{note_id}",
+            web_url=f"https://affine.example/{workspace_id}/{note_id}",
             content_hash=None,
             tags=tags,
             tags_hash="f" * 64,
@@ -254,9 +262,11 @@ class _FakeBridgeClient:
         )
         if self.title_conflict is not None:
             raise _BridgeTitleConflict(*self.title_conflict)
+        workspace_id = str(kwargs["workspace_id"])
         return SimpleNamespace(
+            workspace_id=workspace_id,
             doc_id=note_id,
-            web_url=f"https://affine.example/workspace-1/{note_id}",
+            web_url=f"https://affine.example/{workspace_id}/{note_id}",
             content_hash=None,
             operation_id="operation-title",
             replayed=False,
@@ -413,6 +423,13 @@ async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contra
                 "research_v1_document_read",
                 "research_v1_document_metadata",
                 "research_v1_document_search",
+                "research_v1_document_create",
+                "research_v1_document_update_content",
+                "research_v1_document_append",
+                "research_v1_document_set_tags",
+                "research_v1_document_link",
+                "research_v1_document_add_source",
+                "research_v1_document_update_title",
                 "research_v1_note_read",
                 "research_v1_note_metadata",
                 "research_v1_note_search",
@@ -437,6 +454,30 @@ async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contra
                 "expected_content_hash",
             }
             assert "idempotency_key" not in update_schema.get("properties", {})
+            document_create_schema = tools["research_v1_document_create"].inputSchema
+            assert set(document_create_schema["required"]) == {
+                "workspace_id",
+                "title",
+                "content",
+            }
+            document_update_schema = tools[
+                "research_v1_document_update_content"
+            ].inputSchema
+            assert set(document_update_schema["required"]) == {
+                "workspace_id",
+                "document_id",
+                "content",
+                "expected_content_hash",
+            }
+            document_title_schema = tools[
+                "research_v1_document_update_title"
+            ].inputSchema
+            assert set(document_title_schema["required"]) == {
+                "workspace_id",
+                "document_id",
+                "title",
+                "expected_title",
+            }
             capabilities = await session.call_tool(
                 "research_v1_provider_capabilities", {}
             )
@@ -562,13 +603,25 @@ async def _test_provider_global_document_tools_use_affine_sdk_boundary() -> None
 async def _test_provider_write_is_fail_closed_in_read_only_mode() -> None:
     async with _running_provider(access_mode="read_only") as (url, fake):
         async with _provider_session(url) as session:
-            result = await session.call_tool(
+            legacy = await session.call_tool(
                 "research_v1_note_create",
                 {"title": "Blocked", "content": "No write"},
                 meta={"gateway": {"idempotency_key": "mcp-action:blocked"}},
             )
-        assert result.isError is True
-        assert "AFFINE_PROVIDER_READ_ONLY" in result.content[0].text
+            document = await session.call_tool(
+                "research_v1_document_link",
+                {
+                    "workspace_id": "workspace-2",
+                    "document_id": "ordinary-1",
+                    "target_workspace_id": "workspace-3",
+                    "target_document_id": "target-1",
+                    "expected_content_hash": "9" * 64,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:blocked-document"}},
+            )
+        for result in (legacy, document):
+            assert result.isError is True
+            assert "AFFINE_PROVIDER_READ_ONLY" in result.content[0].text
         assert fake.calls == []
 
 
@@ -737,6 +790,107 @@ async def _test_provider_expanded_write_tools_use_affine_sdk_boundary() -> None:
         assert "https://example.test/paper" in source_append["content"]
 
 
+async def _test_provider_global_write_tools_use_explicit_workspace_boundary() -> None:
+    async with _running_provider(access_mode="read_write") as (url, fake):
+        async with _provider_session(url) as session:
+            created = await session.call_tool(
+                "research_v1_document_create",
+                {
+                    "workspace_id": "workspace-2",
+                    "title": "Created globally",
+                    "content": "body",
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:global-create"}},
+            )
+            updated = await session.call_tool(
+                "research_v1_document_update_content",
+                {
+                    "workspace_id": "workspace-2",
+                    "document_id": "ordinary-1",
+                    "content": "replacement",
+                    "expected_content_hash": "9" * 64,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:global-update"}},
+            )
+            appended = await session.call_tool(
+                "research_v1_document_append",
+                {
+                    "workspace_id": "workspace-2",
+                    "document_id": "ordinary-1",
+                    "content": "append",
+                    "expected_content_hash": "c" * 64,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:global-append"}},
+            )
+            tagged = await session.call_tool(
+                "research_v1_document_set_tags",
+                {
+                    "workspace_id": "workspace-2",
+                    "document_id": "ordinary-1",
+                    "tags": ["global"],
+                    "expected_tags_hash": "8" * 64,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:global-tags"}},
+            )
+            linked = await session.call_tool(
+                "research_v1_document_link",
+                {
+                    "workspace_id": "workspace-2",
+                    "document_id": "ordinary-1",
+                    "target_workspace_id": "workspace-3",
+                    "target_document_id": "target-1",
+                    "expected_content_hash": "e" * 64,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:global-link"}},
+            )
+            sourced = await session.call_tool(
+                "research_v1_document_add_source",
+                {
+                    "workspace_id": "workspace-2",
+                    "document_id": "ordinary-1",
+                    "url": "https://example.test/global",
+                    "title": "Global source",
+                    "expected_content_hash": "e" * 64,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:global-source"}},
+            )
+            titled = await session.call_tool(
+                "research_v1_document_update_title",
+                {
+                    "workspace_id": "workspace-2",
+                    "document_id": "ordinary-1",
+                    "title": "Updated globally",
+                    "expected_title": "Ordinary document",
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:global-title"}},
+            )
+            blank = await session.call_tool(
+                "research_v1_document_create",
+                {"workspace_id": "   ", "title": "Blocked", "content": "body"},
+                meta={"gateway": {"idempotency_key": "mcp-action:blank-workspace"}},
+            )
+
+        for result in (created, updated, appended, tagged, linked, sourced, titled):
+            assert result.isError is False
+            assert result.structuredContent["workspace_id"] == "workspace-2"
+        assert created.structuredContent["document_id"] == "note-created"
+        assert blank.isError is True
+        assert "workspace_id must not be empty" in blank.content[0].text
+
+        write_calls = [
+            (name, payload)
+            for name, payload in fake.calls
+            if name in {"create", "update_content", "append", "update_tags", "update_title"}
+        ]
+        assert write_calls
+        assert all(payload["workspace_id"] == "workspace-2" for _, payload in write_calls)
+        assert not any(payload.get("workspace_id") == "workspace-1" for _, payload in write_calls)
+        assert (
+            "global_document_metadata",
+            {"workspace_id": "workspace-3", "document_id": "target-1"},
+        ) in fake.calls
+
+
 async def _test_upstream_protocol_call_forwards_non_secret_gateway_meta() -> None:
     captured: dict[str, Any] = {}
 
@@ -814,6 +968,10 @@ def test_provider_preserves_authoritative_title_conflict_as_tool_error() -> None
 
 def test_provider_expanded_write_tools_use_affine_sdk_boundary() -> None:
     asyncio.run(_test_provider_expanded_write_tools_use_affine_sdk_boundary())
+
+
+def test_provider_global_write_tools_use_explicit_workspace_boundary() -> None:
+    asyncio.run(_test_provider_global_write_tools_use_explicit_workspace_boundary())
 
 
 def test_upstream_protocol_call_forwards_non_secret_gateway_meta() -> None:

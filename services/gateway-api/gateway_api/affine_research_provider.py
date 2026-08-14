@@ -233,6 +233,18 @@ class ResearchMutationReply(BaseModel):
     replayed: bool = False
 
 
+class ResearchDocumentMutationReply(BaseModel):
+    provider: Literal["affine"] = "affine"
+    workspace_id: str
+    document_id: str
+    canonical_url: str
+    content_hash: str | None = None
+    tags: list[str] | None = None
+    tags_hash: str | None = None
+    operation_id: str | None = None
+    replayed: bool = False
+
+
 class _BridgeClient(Protocol):
     async def ready(self) -> dict[str, Any]: ...
 
@@ -438,8 +450,8 @@ def build_mcp(
     mcp = FastMCP(
         name="affine-research-knowledge-provider",
         instructions=(
-            "Provider-neutral research note facade backed by AFFiNE. "
-            "Writes use authoritative AFFiNE content CAS and Gateway-bound idempotency."
+            "Provider-neutral research document facade backed by AFFiNE. "
+            "Writes use explicit workspace targets, authoritative AFFiNE CAS and Gateway-bound idempotency."
         ),
         host=resolved.host,
         port=resolved.port,
@@ -650,6 +662,266 @@ def build_mcp(
                 )
                 for item in value.results
             ],
+        )
+
+    def require_explicit_target(value: str, label: str) -> str:
+        target = value.strip()
+        if not target:
+            raise ToolError(f"{label} must not be empty")
+        return target
+
+    async def append_document(
+        workspace_id: str,
+        document_id: str,
+        content: str,
+        expected_content_hash: str,
+        ctx: Context,
+    ) -> ResearchDocumentMutationReply:
+        active_service.require_write()
+        workspace_id = require_explicit_target(workspace_id, "workspace_id")
+        document_id = require_explicit_target(document_id, "document_id")
+        idempotency_key = active_service.gateway_idempotency_key(ctx)
+        try:
+            async with active_service.client() as client:
+                value = await client.append_affine_document_content(
+                    document_id,
+                    content,
+                    expected_content_hash=expected_content_hash,
+                    workspace_id=workspace_id,
+                    idempotency_key=idempotency_key,
+                )
+        except ToolError:
+            raise
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchDocumentMutationReply(
+            workspace_id=value.workspace_id,
+            document_id=value.doc_id,
+            canonical_url=value.web_url,
+            content_hash=value.content_hash,
+            operation_id=value.operation_id,
+            replayed=value.replayed,
+        )
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_document_create(
+        workspace_id: str,
+        title: str,
+        content: str,
+        ctx: Context,
+    ) -> ResearchDocumentMutationReply:
+        active_service.require_write()
+        workspace_id = require_explicit_target(workspace_id, "workspace_id")
+        idempotency_key = active_service.gateway_idempotency_key(ctx)
+        try:
+            async with active_service.client() as client:
+                value = await client.create_affine_document(
+                    title=title,
+                    content=content,
+                    workspace_id=workspace_id,
+                    idempotency_key=idempotency_key,
+                )
+        except ToolError:
+            raise
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchDocumentMutationReply(
+            workspace_id=value.workspace_id,
+            document_id=value.doc_id,
+            canonical_url=value.web_url,
+            content_hash=value.content_hash,
+            operation_id=value.operation_id,
+            replayed=value.replayed,
+        )
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_document_update_content(
+        workspace_id: str,
+        document_id: str,
+        content: str,
+        expected_content_hash: str,
+        ctx: Context,
+    ) -> ResearchDocumentMutationReply:
+        active_service.require_write()
+        workspace_id = require_explicit_target(workspace_id, "workspace_id")
+        document_id = require_explicit_target(document_id, "document_id")
+        idempotency_key = active_service.gateway_idempotency_key(ctx)
+        try:
+            async with active_service.client() as client:
+                value = await client.update_affine_document_content(
+                    document_id,
+                    content,
+                    expected_content_hash=expected_content_hash,
+                    workspace_id=workspace_id,
+                    idempotency_key=idempotency_key,
+                )
+        except ToolError:
+            raise
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchDocumentMutationReply(
+            workspace_id=value.workspace_id,
+            document_id=value.doc_id,
+            canonical_url=value.web_url,
+            content_hash=value.content_hash,
+            operation_id=value.operation_id,
+            replayed=value.replayed,
+        )
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_document_append(
+        workspace_id: str,
+        document_id: str,
+        content: str,
+        expected_content_hash: str,
+        ctx: Context,
+    ) -> ResearchDocumentMutationReply:
+        if not content:
+            raise ToolError("append content must not be empty")
+        return await append_document(
+            workspace_id,
+            document_id,
+            content,
+            expected_content_hash,
+            ctx,
+        )
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_document_set_tags(
+        workspace_id: str,
+        document_id: str,
+        tags: list[str],
+        expected_tags_hash: str,
+        ctx: Context,
+    ) -> ResearchDocumentMutationReply:
+        active_service.require_write()
+        workspace_id = require_explicit_target(workspace_id, "workspace_id")
+        document_id = require_explicit_target(document_id, "document_id")
+        idempotency_key = active_service.gateway_idempotency_key(ctx)
+        try:
+            async with active_service.client() as client:
+                value = await client.update_affine_document_tags(
+                    document_id,
+                    tags,
+                    expected_tags_hash=expected_tags_hash,
+                    workspace_id=workspace_id,
+                    idempotency_key=idempotency_key,
+                )
+        except ToolError:
+            raise
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchDocumentMutationReply(
+            workspace_id=value.workspace_id,
+            document_id=value.doc_id,
+            canonical_url=value.web_url,
+            tags=list(value.tags) if value.tags is not None else None,
+            tags_hash=value.tags_hash,
+            operation_id=value.operation_id,
+            replayed=value.replayed,
+        )
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_document_link(
+        workspace_id: str,
+        document_id: str,
+        target_workspace_id: str,
+        target_document_id: str,
+        expected_content_hash: str,
+        ctx: Context,
+        label: str | None = None,
+    ) -> ResearchDocumentMutationReply:
+        active_service.require_write()
+        workspace_id = require_explicit_target(workspace_id, "workspace_id")
+        document_id = require_explicit_target(document_id, "document_id")
+        target_workspace_id = require_explicit_target(
+            target_workspace_id, "target_workspace_id"
+        )
+        target_document_id = require_explicit_target(
+            target_document_id, "target_document_id"
+        )
+        try:
+            async with active_service.client() as client:
+                target = await client.read_affine_global_document_metadata(
+                    target_workspace_id,
+                    target_document_id,
+                )
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        rendered = render_note_link(
+            ResearchLink(
+                target_note_id=target_document_id,
+                target_url=target.web_url,
+                label=label or target.title or target_document_id,
+            )
+        )
+        return await append_document(
+            workspace_id,
+            document_id,
+            rendered,
+            expected_content_hash,
+            ctx,
+        )
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_document_add_source(
+        workspace_id: str,
+        document_id: str,
+        url: str,
+        title: str,
+        expected_content_hash: str,
+        ctx: Context,
+        locator: str | None = None,
+    ) -> ResearchDocumentMutationReply:
+        active_service.require_write()
+        workspace_id = require_explicit_target(workspace_id, "workspace_id")
+        document_id = require_explicit_target(document_id, "document_id")
+        try:
+            rendered = render_source_reference(
+                ResearchSourceReference(url=url, title=title, locator=locator)
+            )
+        except ValueError as error:
+            raise ToolError(str(error)) from error
+        return await append_document(
+            workspace_id,
+            document_id,
+            rendered,
+            expected_content_hash,
+            ctx,
+        )
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_document_update_title(
+        workspace_id: str,
+        document_id: str,
+        title: str,
+        expected_title: str,
+        ctx: Context,
+    ) -> ResearchDocumentMutationReply:
+        active_service.require_write()
+        workspace_id = require_explicit_target(workspace_id, "workspace_id")
+        document_id = require_explicit_target(document_id, "document_id")
+        idempotency_key = active_service.gateway_idempotency_key(ctx)
+        try:
+            async with active_service.client() as client:
+                value = await client.update_affine_document_title(
+                    document_id,
+                    title,
+                    expected_title=expected_title,
+                    workspace_id=workspace_id,
+                    idempotency_key=idempotency_key,
+                )
+        except ToolError:
+            raise
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchDocumentMutationReply(
+            workspace_id=value.workspace_id,
+            document_id=value.doc_id,
+            canonical_url=value.web_url,
+            content_hash=value.content_hash,
+            operation_id=value.operation_id,
+            replayed=value.replayed,
         )
 
     @mcp.tool(annotations=READ_ONLY, structured_output=True)

@@ -22,13 +22,13 @@ logger = logging.getLogger(__name__)
 
 SAFE_RESEARCH_WRITE_TOOLS = frozenset(
     {
-        "research_v1_note_create",
-        "research_v1_note_update_content",
-        "research_v1_note_append",
-        "research_v1_note_set_tags",
-        "research_v1_note_link",
-        "research_v1_note_add_source",
-        "research_v1_note_update_title",
+        "research_v1_document_create",
+        "research_v1_document_update_content",
+        "research_v1_document_append",
+        "research_v1_document_set_tags",
+        "research_v1_document_link",
+        "research_v1_document_add_source",
+        "research_v1_document_update_title",
     }
 )
 
@@ -53,10 +53,6 @@ class ResearchWriteApprovalWorker:
 
     def _validate_configuration(self) -> None:
         if self.settings.gateway_research_persistent_writes_enabled:
-            if not self.settings.gateway_research_unattended_approval_enabled:
-                raise RuntimeError(
-                    "persistent research writes require unattended approval to remain fenced"
-                )
             if self.settings.gateway_mcp_federation_writes_paused:
                 raise RuntimeError(
                     "persistent research writes require federation writes to be explicitly unpaused"
@@ -65,8 +61,16 @@ class ResearchWriteApprovalWorker:
                 raise RuntimeError(
                     "persistent research writes require the autonomy control plane"
                 )
+            if self.settings.gateway_autonomy_emergency_stop:
+                raise RuntimeError(
+                    "persistent research writes require the autonomy emergency stop to be disabled"
+                )
         if not self.settings.gateway_research_unattended_approval_enabled:
             return
+        if not self.settings.gateway_research_persistent_writes_enabled:
+            raise RuntimeError(
+                "unattended research approval requires persistent research writes"
+            )
         if not self.settings.gateway_autonomy_enabled:
             raise RuntimeError(
                 "unattended research approval requires GATEWAY_AUTONOMY_ENABLED"

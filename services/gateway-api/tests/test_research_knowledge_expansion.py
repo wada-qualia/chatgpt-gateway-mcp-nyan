@@ -314,15 +314,16 @@ def _seed_research_approval(db: Session, *, tool_name: str) -> str:
 def test_unattended_worker_only_votes_for_exact_allowlisted_research_write() -> None:
     db, factory = _worker_db()
     recorder = _VoteRecorder()
-    request_id = _seed_research_approval(db, tool_name="research_v1_note_append")
+    request_id = _seed_research_approval(db, tool_name="research_v1_document_append")
     settings = Settings(
         gateway_autonomy_enabled=True,
         gateway_autonomy_emergency_stop=False,
         gateway_mcp_federation_writes_paused=False,
+        gateway_research_persistent_writes_enabled=True,
         gateway_research_unattended_approval_enabled=True,
         gateway_research_unattended_approver_subject="research-approver",
         gateway_research_unattended_allowed_server_ids="server-affine",
-        gateway_research_unattended_allowed_tools="research_v1_note_append",
+        gateway_research_unattended_allowed_tools="research_v1_document_append",
     )
     worker = ResearchWriteApprovalWorker(
         service=recorder,  # type: ignore[arg-type]
@@ -337,7 +338,7 @@ def test_unattended_worker_only_votes_for_exact_allowlisted_research_write() -> 
 
 def test_unattended_worker_requires_scoped_access_grant_with_real_service() -> None:
     db, factory = _worker_db()
-    request_id = _seed_research_approval(db, tool_name="research_v1_note_append")
+    request_id = _seed_research_approval(db, tool_name="research_v1_document_append")
     request = db.get(ApprovalRequest, request_id)
     assert request is not None
     request.command_id = None
@@ -347,10 +348,11 @@ def test_unattended_worker_requires_scoped_access_grant_with_real_service() -> N
         gateway_autonomy_enabled=True,
         gateway_autonomy_emergency_stop=False,
         gateway_mcp_federation_writes_paused=False,
+        gateway_research_persistent_writes_enabled=True,
         gateway_research_unattended_approval_enabled=True,
         gateway_research_unattended_approver_subject="research-approver",
         gateway_research_unattended_allowed_server_ids="server-affine",
-        gateway_research_unattended_allowed_tools="research_v1_note_append",
+        gateway_research_unattended_allowed_tools="research_v1_document_append",
     )
     worker = ResearchWriteApprovalWorker(
         service=agent_autonomy_service,
@@ -389,10 +391,7 @@ def test_persistent_write_configuration_is_fail_closed() -> None:
         gateway_autonomy_enabled=True,
         gateway_mcp_federation_writes_paused=True,
         gateway_research_persistent_writes_enabled=True,
-        gateway_research_unattended_approval_enabled=True,
-        gateway_research_unattended_approver_subject="research-approver",
-        gateway_research_unattended_allowed_server_ids="server-affine",
-        gateway_research_unattended_allowed_tools="research_v1_note_append",
+        gateway_research_unattended_approval_enabled=False,
     )
     _, factory = _worker_db()
     worker = ResearchWriteApprovalWorker(
@@ -404,9 +403,50 @@ def test_persistent_write_configuration_is_fail_closed() -> None:
         worker._validate_configuration()
 
 
+def test_persistent_operator_write_configuration_does_not_require_unattended() -> None:
+    settings = Settings(
+        gateway_autonomy_enabled=True,
+        gateway_autonomy_emergency_stop=False,
+        gateway_mcp_federation_writes_paused=False,
+        gateway_research_persistent_writes_enabled=True,
+        gateway_research_unattended_approval_enabled=False,
+    )
+    _, factory = _worker_db()
+    worker = ResearchWriteApprovalWorker(
+        service=SimpleNamespace(),  # type: ignore[arg-type]
+        session_factory=factory,
+        settings=settings,
+    )
+    worker._validate_configuration()
+
+
+def test_unattended_configuration_requires_persistent_write_mode() -> None:
+    settings = Settings(
+        gateway_autonomy_enabled=True,
+        gateway_autonomy_emergency_stop=False,
+        gateway_mcp_federation_writes_paused=False,
+        gateway_research_persistent_writes_enabled=False,
+        gateway_research_unattended_approval_enabled=True,
+        gateway_research_unattended_approver_subject="research-approver",
+        gateway_research_unattended_allowed_server_ids="server-affine",
+        gateway_research_unattended_allowed_tools="research_v1_document_append",
+    )
+    _, factory = _worker_db()
+    worker = ResearchWriteApprovalWorker(
+        service=SimpleNamespace(),  # type: ignore[arg-type]
+        session_factory=factory,
+        settings=settings,
+    )
+    with pytest.raises(RuntimeError, match="requires persistent research writes"):
+        worker._validate_configuration()
+
+
 def test_unattended_configuration_requires_explicit_tool_allowlist() -> None:
     settings = Settings(
         gateway_autonomy_enabled=True,
+        gateway_autonomy_emergency_stop=False,
+        gateway_mcp_federation_writes_paused=False,
+        gateway_research_persistent_writes_enabled=True,
         gateway_research_unattended_approval_enabled=True,
         gateway_research_unattended_approver_subject="research-approver",
         gateway_research_unattended_allowed_server_ids="server-affine",
@@ -424,6 +464,9 @@ def test_unattended_configuration_requires_explicit_tool_allowlist() -> None:
 def test_unattended_configuration_rejects_non_research_write_tool() -> None:
     settings = Settings(
         gateway_autonomy_enabled=True,
+        gateway_autonomy_emergency_stop=False,
+        gateway_mcp_federation_writes_paused=False,
+        gateway_research_persistent_writes_enabled=True,
         gateway_research_unattended_approval_enabled=True,
         gateway_research_unattended_approver_subject="research-approver",
         gateway_research_unattended_allowed_server_ids="server-affine",

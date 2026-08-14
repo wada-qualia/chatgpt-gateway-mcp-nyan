@@ -74,9 +74,7 @@ class _FakeBridgeClient:
             web_url=f"https://affine.example/workspace-1/{note_id}",
         )
 
-    async def read_affine_document_metadata(
-        self, note_id: str, **kwargs: Any
-    ) -> Any:
+    async def read_affine_document_metadata(self, note_id: str, **kwargs: Any) -> Any:
         self.calls.append(("metadata", {"note_id": note_id, **kwargs}))
         return SimpleNamespace(
             workspace_id="workspace-1",
@@ -97,6 +95,100 @@ class _FakeBridgeClient:
                 content="Matched content",
             )
         ]
+
+    async def list_affine_global_spaces(self, **kwargs: Any) -> Any:
+        self.calls.append(("global_space_list", kwargs))
+        return SimpleNamespace(
+            visibility_mode="all_documents",
+            spaces=[
+                SimpleNamespace(
+                    workspace_id="workspace-1",
+                    name="Research",
+                    created_at="2026-08-09T00:00:00Z",
+                    space_ref="rk://affine/workspace-1",
+                ),
+                SimpleNamespace(
+                    workspace_id="workspace-2",
+                    name="Ordinary",
+                    created_at="2026-08-10T00:00:00Z",
+                    space_ref="rk://affine/workspace-2",
+                ),
+            ],
+            next_cursor=None,
+        )
+
+    async def list_affine_global_documents(self, **kwargs: Any) -> Any:
+        self.calls.append(("global_document_list", kwargs))
+        return SimpleNamespace(
+            visibility_mode="all_documents",
+            documents=[
+                SimpleNamespace(
+                    workspace_id="workspace-2",
+                    doc_id="ordinary-1",
+                    title="Ordinary document",
+                    created_at="2026-08-10T00:00:00Z",
+                    updated_at="2026-08-11T00:00:00Z",
+                    document_ref="rk://affine/workspace-2/ordinary-1",
+                )
+            ],
+            next_cursor=None,
+        )
+
+    async def read_affine_global_document(
+        self, workspace_id: str, document_id: str
+    ) -> Any:
+        self.calls.append(
+            (
+                "global_document_read",
+                {"workspace_id": workspace_id, "document_id": document_id},
+            )
+        )
+        return SimpleNamespace(
+            workspace_id=workspace_id,
+            doc_id=document_id,
+            title="Ordinary document",
+            content="ordinary cross-workspace content",
+            content_hash="9" * 64,
+            format="markdown",
+            web_url=f"https://affine.example/{workspace_id}/{document_id}",
+            document_ref=f"rk://affine/{workspace_id}/{document_id}",
+        )
+
+    async def read_affine_global_document_metadata(
+        self, workspace_id: str, document_id: str
+    ) -> Any:
+        self.calls.append(
+            (
+                "global_document_metadata",
+                {"workspace_id": workspace_id, "document_id": document_id},
+            )
+        )
+        return SimpleNamespace(
+            workspace_id=workspace_id,
+            doc_id=document_id,
+            title="Ordinary document",
+            tags=[],
+            tags_hash="8" * 64,
+            web_url=f"https://affine.example/{workspace_id}/{document_id}",
+            document_ref=f"rk://affine/{workspace_id}/{document_id}",
+        )
+
+    async def search_affine_global_documents(self, query: str, **kwargs: Any) -> Any:
+        self.calls.append(("global_document_search", {"query": query, **kwargs}))
+        return SimpleNamespace(
+            visibility_mode="all_documents",
+            mode=kwargs.get("mode", "keyword"),
+            results=[
+                SimpleNamespace(
+                    workspace_id="workspace-2",
+                    doc_id="ordinary-1",
+                    title="Ordinary document",
+                    created_at="2026-08-10T00:00:00Z",
+                    content="ordinary cross-workspace content",
+                    document_ref="rk://affine/workspace-2/ordinary-1",
+                )
+            ],
+        )
 
     async def create_affine_document(self, **kwargs: Any) -> Any:
         self.calls.append(("create", kwargs))
@@ -143,9 +235,7 @@ class _FakeBridgeClient:
     async def update_affine_document_tags(
         self, note_id: str, tags: list[str], **kwargs: Any
     ) -> Any:
-        self.calls.append(
-            ("update_tags", {"note_id": note_id, "tags": tags, **kwargs})
-        )
+        self.calls.append(("update_tags", {"note_id": note_id, "tags": tags, **kwargs}))
         return SimpleNamespace(
             doc_id=note_id,
             web_url=f"https://affine.example/workspace-1/{note_id}",
@@ -318,6 +408,11 @@ async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contra
             tools = {tool.name: tool for tool in page.tools}
             assert set(tools) == {
                 "research_v1_provider_capabilities",
+                "research_v1_space_list",
+                "research_v1_document_list",
+                "research_v1_document_read",
+                "research_v1_document_metadata",
+                "research_v1_document_search",
                 "research_v1_note_read",
                 "research_v1_note_metadata",
                 "research_v1_note_search",
@@ -330,6 +425,7 @@ async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contra
                 "research_v1_note_update_title",
             }
             assert tools["research_v1_note_read"].annotations.readOnlyHint is True
+            assert tools["research_v1_document_read"].annotations.readOnlyHint is True
             assert (
                 tools["research_v1_note_update_content"].annotations.readOnlyHint
                 is False
@@ -350,6 +446,13 @@ async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contra
                 == "research-knowledge/v1"
             )
             assert capabilities.structuredContent["access_mode"] == "read_only"
+            assert {
+                "space_list",
+                "document_list",
+                "document_read",
+                "document_metadata",
+                "document_search",
+            } <= set(capabilities.structuredContent["operations"])
 
 
 async def _test_provider_read_tools_use_affine_sdk_boundary() -> None:
@@ -374,6 +477,83 @@ async def _test_provider_read_tools_use_affine_sdk_boundary() -> None:
                     "query": "graph",
                     "mode": "semantic",
                     "workspace_id": "workspace-1",
+                },
+            ),
+        ]
+
+
+async def _test_provider_global_document_tools_use_affine_sdk_boundary() -> None:
+    async with _running_provider(access_mode="read_only") as (url, fake):
+        async with _provider_session(url) as session:
+            spaces = await session.call_tool("research_v1_space_list", {"limit": 10})
+            assert spaces.isError is False
+            assert spaces.structuredContent["visibility_mode"] == "all_documents"
+            assert spaces.structuredContent["spaces"][1]["space_ref"] == (
+                "rk://affine/workspace-2"
+            )
+
+            documents = await session.call_tool(
+                "research_v1_document_list",
+                {"workspace_id": "workspace-2", "limit": 25},
+            )
+            assert documents.isError is False
+            assert documents.structuredContent["documents"][0]["document_ref"] == (
+                "rk://affine/workspace-2/ordinary-1"
+            )
+
+            read = await session.call_tool(
+                "research_v1_document_read",
+                {"workspace_id": "workspace-2", "document_id": "ordinary-1"},
+            )
+            assert read.isError is False
+            assert read.structuredContent["workspace_id"] == "workspace-2"
+            assert (
+                read.structuredContent["content"] == "ordinary cross-workspace content"
+            )
+            assert read.structuredContent["content_hash"] == "9" * 64
+
+            metadata = await session.call_tool(
+                "research_v1_document_metadata",
+                {"workspace_id": "workspace-2", "document_id": "ordinary-1"},
+            )
+            assert metadata.isError is False
+            assert metadata.structuredContent["tags"] == []
+            assert metadata.structuredContent["tags_hash"] == "8" * 64
+
+            search = await session.call_tool(
+                "research_v1_document_search",
+                {"query": "ordinary", "mode": "keyword"},
+            )
+            assert search.isError is False
+            assert search.structuredContent["visibility_mode"] == "all_documents"
+            assert search.structuredContent["matches"][0]["workspace_id"] == (
+                "workspace-2"
+            )
+            assert search.structuredContent["matches"][0]["document_id"] == (
+                "ordinary-1"
+            )
+
+        assert fake.calls == [
+            ("global_space_list", {"cursor": None, "limit": 10}),
+            (
+                "global_document_list",
+                {"workspace_id": "workspace-2", "cursor": None, "limit": 25},
+            ),
+            (
+                "global_document_read",
+                {"workspace_id": "workspace-2", "document_id": "ordinary-1"},
+            ),
+            (
+                "global_document_metadata",
+                {"workspace_id": "workspace-2", "document_id": "ordinary-1"},
+            ),
+            (
+                "global_document_search",
+                {
+                    "query": "ordinary",
+                    "mode": "keyword",
+                    "workspace_id": None,
+                    "limit": 20,
                 },
             ),
         ]
@@ -470,7 +650,9 @@ async def _test_provider_preserves_authoritative_title_conflict_as_tool_error() 
         assert "DOCUMENT_TITLE_CONFLICT" in error_text
         assert expected in error_text
         assert current in error_text
-        update_calls = [payload for name, payload in fake.calls if name == "update_title"]
+        update_calls = [
+            payload for name, payload in fake.calls if name == "update_title"
+        ]
         assert len(update_calls) == 1
         assert update_calls[0]["expected_title"] == expected
         assert update_calls[0]["idempotency_key"] == "mcp-action:stale-title"
@@ -532,13 +714,11 @@ async def _test_provider_expanded_write_tools_use_affine_sdk_boundary() -> None:
 
         calls = fake.calls
         assert any(
-            name == "append"
-            and payload["idempotency_key"] == "mcp-action:append"
+            name == "append" and payload["idempotency_key"] == "mcp-action:append"
             for name, payload in calls
         )
         assert any(
-            name == "update_tags"
-            and payload["expected_tags_hash"] == "d" * 64
+            name == "update_tags" and payload["expected_tags_hash"] == "d" * 64
             for name, payload in calls
         )
         link_append = next(
@@ -610,6 +790,10 @@ def test_provider_requires_internal_bearer_and_exposes_stable_tool_contract() ->
 
 def test_provider_read_tools_use_affine_sdk_boundary() -> None:
     asyncio.run(_test_provider_read_tools_use_affine_sdk_boundary())
+
+
+def test_provider_global_document_tools_use_affine_sdk_boundary() -> None:
+    asyncio.run(_test_provider_global_document_tools_use_affine_sdk_boundary())
 
 
 def test_provider_write_is_fail_closed_in_read_only_mode() -> None:

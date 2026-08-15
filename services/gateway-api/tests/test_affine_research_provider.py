@@ -169,6 +169,8 @@ class _FakeBridgeClient:
             title="Ordinary document",
             tags=[],
             tags_hash="8" * 64,
+            trash=False,
+            trash_date=None,
             web_url=f"https://affine.example/{workspace_id}/{document_id}",
             document_ref=f"rk://affine/{workspace_id}/{document_id}",
         )
@@ -264,6 +266,45 @@ class _FakeBridgeClient:
             web_url=f"https://affine.example/{workspace_id}/{note_id}",
             content_hash=None,
             operation_id="operation-title",
+            replayed=False,
+        )
+
+    async def trash_affine_document(self, note_id: str, **kwargs: Any) -> Any:
+        self.calls.append(("trash", {"note_id": note_id, **kwargs}))
+        workspace_id = str(kwargs["workspace_id"])
+        return SimpleNamespace(
+            doc_id=note_id,
+            web_url=f"https://affine.example/{workspace_id}/{note_id}",
+            trash=True,
+            trash_date=123,
+            purged=None,
+            operation_id="operation-trash",
+            replayed=False,
+        )
+
+    async def restore_affine_document(self, note_id: str, **kwargs: Any) -> Any:
+        self.calls.append(("restore", {"note_id": note_id, **kwargs}))
+        workspace_id = str(kwargs["workspace_id"])
+        return SimpleNamespace(
+            doc_id=note_id,
+            web_url=f"https://affine.example/{workspace_id}/{note_id}",
+            trash=False,
+            trash_date=None,
+            purged=None,
+            operation_id="operation-restore",
+            replayed=False,
+        )
+
+    async def purge_affine_document(self, note_id: str, **kwargs: Any) -> Any:
+        self.calls.append(("purge", {"note_id": note_id, **kwargs}))
+        workspace_id = str(kwargs["workspace_id"])
+        return SimpleNamespace(
+            doc_id=note_id,
+            web_url=f"https://affine.example/{workspace_id}/{note_id}",
+            trash=None,
+            trash_date=None,
+            purged=True,
+            operation_id="operation-purge",
             replayed=False,
         )
 
@@ -425,6 +466,9 @@ async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contra
                 "research_v1_document_link",
                 "research_v1_document_add_source",
                 "research_v1_document_update_title",
+                "research_v1_document_trash",
+                "research_v1_document_restore",
+                "research_v1_document_purge",
                 "research_v1_note_read",
                 "research_v1_note_metadata",
                 "research_v1_note_search",
@@ -473,6 +517,28 @@ async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contra
                 "title",
                 "expected_title",
             }
+            lifecycle_schema = tools["research_v1_document_trash"].inputSchema
+            assert set(lifecycle_schema["required"]) == {
+                "workspace_id",
+                "document_id",
+                "expected_trash",
+            }
+            purge_schema = tools["research_v1_document_purge"].inputSchema
+            assert set(purge_schema["required"]) == {
+                "workspace_id",
+                "document_id",
+                "expected_trash",
+            }
+            assert (
+                tools["research_v1_document_trash"].annotations.destructiveHint is False
+            )
+            assert (
+                tools["research_v1_document_restore"].annotations.destructiveHint
+                is False
+            )
+            assert (
+                tools["research_v1_document_purge"].annotations.destructiveHint is True
+            )
             capabilities = await session.call_tool(
                 "research_v1_provider_capabilities", {}
             )
@@ -555,6 +621,8 @@ async def _test_provider_global_document_tools_use_affine_sdk_boundary() -> None
             assert metadata.isError is False
             assert metadata.structuredContent["tags"] == []
             assert metadata.structuredContent["tags_hash"] == "8" * 64
+            assert metadata.structuredContent["trash"] is False
+            assert metadata.structuredContent["trash_date"] is None
 
             search = await session.call_tool(
                 "research_v1_document_search",
@@ -859,27 +927,100 @@ async def _test_provider_global_write_tools_use_explicit_workspace_boundary() ->
                 },
                 meta={"gateway": {"idempotency_key": "mcp-action:global-title"}},
             )
+            trashed = await session.call_tool(
+                "research_v1_document_trash",
+                {
+                    "workspace_id": "workspace-2",
+                    "document_id": "ordinary-1",
+                    "expected_trash": False,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:global-trash"}},
+            )
+            restored = await session.call_tool(
+                "research_v1_document_restore",
+                {
+                    "workspace_id": "workspace-2",
+                    "document_id": "ordinary-1",
+                    "expected_trash": True,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:global-restore"}},
+            )
+            purged = await session.call_tool(
+                "research_v1_document_purge",
+                {
+                    "workspace_id": "workspace-2",
+                    "document_id": "ordinary-1",
+                    "expected_trash": True,
+                },
+                meta={"gateway": {"idempotency_key": "mcp-action:global-purge"}},
+            )
+            capabilities = await session.call_tool(
+                "research_v1_provider_capabilities", {}
+            )
             blank = await session.call_tool(
                 "research_v1_document_create",
                 {"workspace_id": "   ", "title": "Blocked", "content": "body"},
                 meta={"gateway": {"idempotency_key": "mcp-action:blank-workspace"}},
             )
 
-        for result in (created, updated, appended, tagged, linked, sourced, titled):
+        for result in (
+            created,
+            updated,
+            appended,
+            tagged,
+            linked,
+            sourced,
+            titled,
+            trashed,
+            restored,
+            purged,
+        ):
             assert result.isError is False
             assert result.structuredContent["workspace_id"] == "workspace-2"
         assert created.structuredContent["document_id"] == "note-created"
+        assert trashed.structuredContent["trash"] is True
+        assert trashed.structuredContent["trash_date"] == 123
+        assert restored.structuredContent["trash"] is False
+        assert purged.structuredContent["purged"] is True
+        assert {"trash", "restore", "purge"} <= set(
+            capabilities.structuredContent["operations"]
+        )
         assert blank.isError is True
         assert "workspace_id must not be empty" in blank.content[0].text
 
         write_calls = [
             (name, payload)
             for name, payload in fake.calls
-            if name in {"create", "update_content", "append", "update_tags", "update_title"}
+            if name
+            in {
+                "create",
+                "update_content",
+                "append",
+                "update_tags",
+                "update_title",
+                "trash",
+                "restore",
+                "purge",
+            }
         ]
         assert write_calls
-        assert all(payload["workspace_id"] == "workspace-2" for _, payload in write_calls)
-        assert not any(payload.get("workspace_id") == "workspace-1" for _, payload in write_calls)
+        assert all(
+            payload["workspace_id"] == "workspace-2" for _, payload in write_calls
+        )
+        assert not any(
+            payload.get("workspace_id") == "workspace-1" for _, payload in write_calls
+        )
+        trash_call = next(payload for name, payload in write_calls if name == "trash")
+        restore_call = next(
+            payload for name, payload in write_calls if name == "restore"
+        )
+        purge_call = next(payload for name, payload in write_calls if name == "purge")
+        assert trash_call["expected_trash"] is False
+        assert trash_call["idempotency_key"] == "mcp-action:global-trash"
+        assert restore_call["expected_trash"] is True
+        assert restore_call["idempotency_key"] == "mcp-action:global-restore"
+        assert "expected_trash" not in purge_call
+        assert purge_call["idempotency_key"] == "mcp-action:global-purge"
         assert (
             "global_document_metadata",
             {"workspace_id": "workspace-3", "document_id": "target-1"},

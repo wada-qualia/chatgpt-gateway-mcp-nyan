@@ -655,3 +655,17 @@ def test_unattended_configuration_rejects_non_research_write_tool() -> None:
     )
     with pytest.raises(RuntimeError, match="unsupported tools"):
         worker._validate_configuration()
+
+
+def test_unattended_configuration_rejects_destructive_document_purge() -> None:
+    settings = _unattended_settings(
+        gateway_research_unattended_allowed_tools="research_v1_document_purge"
+    )
+    _, factory = _worker_db()
+    worker = ResearchWriteApprovalWorker(
+        service=SimpleNamespace(),  # type: ignore[arg-type]
+        session_factory=factory,
+        settings=settings,
+    )
+    with pytest.raises(RuntimeError, match="unsupported tools"):
+        worker._validate_configuration()

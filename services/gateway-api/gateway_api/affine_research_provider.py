@@ -201,6 +201,8 @@ class ResearchDocumentMetadata(BaseModel):
     title: str
     tags: list[str]
     tags_hash: str
+    trash: bool = False
+    trash_date: int | None = None
     canonical_url: str
     document_ref: str
 
@@ -241,6 +243,9 @@ class ResearchDocumentMutationReply(BaseModel):
     content_hash: str | None = None
     tags: list[str] | None = None
     tags_hash: str | None = None
+    trash: bool | None = None
+    trash_date: int | None = None
+    purged: bool | None = None
     operation_id: str | None = None
     replayed: bool = False
 
@@ -291,6 +296,12 @@ class _BridgeClient(Protocol):
     async def update_affine_document_title(
         self, note_id: str, title: str, **kwargs: Any
     ) -> Any: ...
+
+    async def trash_affine_document(self, note_id: str, **kwargs: Any) -> Any: ...
+
+    async def restore_affine_document(self, note_id: str, **kwargs: Any) -> Any: ...
+
+    async def purge_affine_document(self, note_id: str, **kwargs: Any) -> Any: ...
 
     async def __aenter__(self) -> Self: ...
 
@@ -436,6 +447,13 @@ WRITE = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=True,
 )
+DESTRUCTIVE = ToolAnnotations(
+    title="Research knowledge destructive write",
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=True,
+)
 
 
 def build_mcp(
@@ -510,6 +528,9 @@ def build_mcp(
                     "link",
                     "source_reference",
                     "update_title",
+                    "trash",
+                    "restore",
+                    "purge",
                 ]
             )
         return ProviderCapabilities(
@@ -623,6 +644,8 @@ def build_mcp(
             title=value.title,
             tags=list(value.tags),
             tags_hash=value.tags_hash,
+            trash=value.trash,
+            trash_date=value.trash_date,
             canonical_url=value.web_url,
             document_ref=value.document_ref,
         )
@@ -699,6 +722,48 @@ def build_mcp(
             document_id=value.doc_id,
             canonical_url=value.web_url,
             content_hash=value.content_hash,
+            operation_id=value.operation_id,
+            replayed=value.replayed,
+        )
+
+    async def mutate_document_lifecycle(
+        workspace_id: str,
+        document_id: str,
+        *,
+        action: Literal["trash", "restore", "purge"],
+        expected_trash: bool,
+        ctx: Context,
+    ) -> ResearchDocumentMutationReply:
+        active_service.require_write()
+        workspace_id = require_explicit_target(workspace_id, "workspace_id")
+        document_id = require_explicit_target(document_id, "document_id")
+        idempotency_key = active_service.gateway_idempotency_key(ctx)
+        method_name = {
+            "trash": "trash_affine_document",
+            "restore": "restore_affine_document",
+            "purge": "purge_affine_document",
+        }[action]
+        try:
+            async with active_service.client() as client:
+                method = getattr(client, method_name)
+                kwargs: dict[str, Any] = {
+                    "workspace_id": workspace_id,
+                    "idempotency_key": idempotency_key,
+                }
+                if action != "purge":
+                    kwargs["expected_trash"] = expected_trash
+                value = await method(document_id, **kwargs)
+        except ToolError:
+            raise
+        except Exception as error:
+            raise active_service.bridge_error(error) from error
+        return ResearchDocumentMutationReply(
+            workspace_id=workspace_id,
+            document_id=value.doc_id,
+            canonical_url=value.web_url,
+            trash=value.trash,
+            trash_date=value.trash_date,
+            purged=value.purged,
             operation_id=value.operation_id,
             replayed=value.replayed,
         )
@@ -922,6 +987,51 @@ def build_mcp(
             content_hash=value.content_hash,
             operation_id=value.operation_id,
             replayed=value.replayed,
+        )
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_document_trash(
+        workspace_id: str,
+        document_id: str,
+        expected_trash: bool,
+        ctx: Context,
+    ) -> ResearchDocumentMutationReply:
+        return await mutate_document_lifecycle(
+            workspace_id,
+            document_id,
+            action="trash",
+            expected_trash=expected_trash,
+            ctx=ctx,
+        )
+
+    @mcp.tool(annotations=WRITE, structured_output=True)
+    async def research_v1_document_restore(
+        workspace_id: str,
+        document_id: str,
+        expected_trash: bool,
+        ctx: Context,
+    ) -> ResearchDocumentMutationReply:
+        return await mutate_document_lifecycle(
+            workspace_id,
+            document_id,
+            action="restore",
+            expected_trash=expected_trash,
+            ctx=ctx,
+        )
+
+    @mcp.tool(annotations=DESTRUCTIVE, structured_output=True)
+    async def research_v1_document_purge(
+        workspace_id: str,
+        document_id: str,
+        expected_trash: Literal[True],
+        ctx: Context,
+    ) -> ResearchDocumentMutationReply:
+        return await mutate_document_lifecycle(
+            workspace_id,
+            document_id,
+            action="purge",
+            expected_trash=expected_trash,
+            ctx=ctx,
         )
 
     @mcp.tool(annotations=READ_ONLY, structured_output=True)

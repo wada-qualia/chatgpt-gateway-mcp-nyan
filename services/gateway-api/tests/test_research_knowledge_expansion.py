@@ -6,7 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
 from gateway_api.agent_autonomy import agent_autonomy_service
 from gateway_api.config import Settings
 from gateway_api.models import (
@@ -183,8 +182,23 @@ def _worker_db() -> tuple[Session, sessionmaker]:
 
 
 class _VoteRecorder:
-    def __init__(self) -> None:
+    def __init__(self, *, autonomy_enabled: bool = True) -> None:
         self.calls: list[tuple[str, str, str]] = []
+        self.autonomy_enabled = autonomy_enabled
+
+    def control_snapshot(
+        self,
+        db: Session,
+        *,
+        owner_subject: str,
+        room_id: str | None = None,
+        policy_id: str | None = None,
+    ) -> dict[str, object]:
+        del db, owner_subject, room_id, policy_id
+        return {
+            "enabled": self.autonomy_enabled,
+            "effective_state": "enabled" if self.autonomy_enabled else "killed",
+        }
 
     def cast_vote(
         self,
@@ -203,7 +217,12 @@ class _VoteRecorder:
         return request
 
 
-def _seed_research_approval(db: Session, *, tool_name: str) -> str:
+def _seed_research_approval(
+    db: Session,
+    *,
+    tool_name: str,
+    grant_status: str | None = "active",
+) -> str:
     owner = "research-writer-owner"
     request_id = "approval-1"
     server_id = "server-affine"
@@ -307,8 +326,35 @@ def _seed_research_approval(db: Session, *, tool_name: str) -> str:
             expires_at=expires,
         )
     )
+    if grant_status is not None:
+        db.add(
+            AccessGrant(
+                id="research-approval-grant-1",
+                owner_subject=owner,
+                grantee_subject="research-approver",
+                resource_type="autonomy_approval",
+                resource_id="policy-1",
+                scopes=["approve"],
+                status=grant_status,
+            )
+        )
     db.commit()
     return request_id
+
+
+def _unattended_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "gateway_autonomy_enabled": True,
+        "gateway_autonomy_emergency_stop": False,
+        "gateway_mcp_federation_writes_paused": False,
+        "gateway_research_persistent_writes_enabled": True,
+        "gateway_research_unattended_approval_enabled": True,
+        "gateway_research_unattended_approver_subject": "research-approver",
+        "gateway_research_unattended_allowed_server_ids": "server-affine",
+        "gateway_research_unattended_allowed_tools": "research_v1_document_append",
+    }
+    values.update(overrides)
+    return Settings(**values)
 
 
 def test_unattended_worker_only_votes_for_exact_allowlisted_research_write() -> None:
@@ -331,14 +377,14 @@ def test_unattended_worker_only_votes_for_exact_allowlisted_research_write() -> 
         settings=settings,
     )
     assert worker.run_cycle(db) == 1
-    assert recorder.calls == [
-        (request_id, "approve", "research-write-allowlist-v1")
-    ]
+    assert recorder.calls == [(request_id, "approve", "research-write-allowlist-v1")]
 
 
 def test_unattended_worker_requires_scoped_access_grant_with_real_service() -> None:
     db, factory = _worker_db()
-    request_id = _seed_research_approval(db, tool_name="research_v1_document_append")
+    request_id = _seed_research_approval(
+        db, tool_name="research_v1_document_append", grant_status=None
+    )
     request = db.get(ApprovalRequest, request_id)
     assert request is not None
     request.command_id = None
@@ -360,11 +406,7 @@ def test_unattended_worker_requires_scoped_access_grant_with_real_service() -> N
         settings=settings,
     )
 
-    with pytest.raises(HTTPException) as denied:
-        worker.run_cycle(db)
-    assert denied.value.status_code == 403
-    assert "outside granted scope" in str(denied.value.detail)
-    db.rollback()
+    assert worker.run_cycle(db) == 0
     request = db.get(ApprovalRequest, request_id)
     assert request is not None and request.status == "pending"
 
@@ -384,6 +426,139 @@ def test_unattended_worker_requires_scoped_access_grant_with_real_service() -> N
     assert worker.run_cycle(db) == 1
     request = db.get(ApprovalRequest, request_id)
     assert request is not None and request.status == "approved"
+
+
+def test_unattended_worker_skips_revoked_access_grant() -> None:
+    db, factory = _worker_db()
+    _seed_research_approval(
+        db,
+        tool_name="research_v1_document_append",
+        grant_status="revoked",
+    )
+    recorder = _VoteRecorder()
+    worker = ResearchWriteApprovalWorker(
+        service=recorder,  # type: ignore[arg-type]
+        session_factory=factory,
+        settings=_unattended_settings(),
+    )
+    assert worker.run_cycle(db) == 0
+    assert recorder.calls == []
+
+
+def test_unattended_worker_skips_wrong_federation_owner() -> None:
+    db, factory = _worker_db()
+    _seed_research_approval(db, tool_name="research_v1_document_append")
+    server = db.get(McpServer, "server-affine")
+    assert server is not None
+    server.owner_subject = "other-owner"
+    db.commit()
+    recorder = _VoteRecorder()
+    worker = ResearchWriteApprovalWorker(
+        service=recorder,  # type: ignore[arg-type]
+        session_factory=factory,
+        settings=_unattended_settings(),
+    )
+    assert worker.run_cycle(db) == 0
+    assert recorder.calls == []
+
+
+def test_unattended_worker_skips_server_outside_allowlist() -> None:
+    db, factory = _worker_db()
+    _seed_research_approval(db, tool_name="research_v1_document_append")
+    recorder = _VoteRecorder()
+    worker = ResearchWriteApprovalWorker(
+        service=recorder,  # type: ignore[arg-type]
+        session_factory=factory,
+        settings=_unattended_settings(
+            gateway_research_unattended_allowed_server_ids="other-server"
+        ),
+    )
+    assert worker.run_cycle(db) == 0
+    assert recorder.calls == []
+
+
+def test_unattended_worker_skips_tool_outside_allowlist() -> None:
+    db, factory = _worker_db()
+    _seed_research_approval(db, tool_name="research_v1_document_append")
+    recorder = _VoteRecorder()
+    worker = ResearchWriteApprovalWorker(
+        service=recorder,  # type: ignore[arg-type]
+        session_factory=factory,
+        settings=_unattended_settings(
+            gateway_research_unattended_allowed_tools="research_v1_document_set_tags"
+        ),
+    )
+    assert worker.run_cycle(db) == 0
+    assert recorder.calls == []
+
+
+def test_unattended_worker_skips_schema_drift() -> None:
+    db, factory = _worker_db()
+    _seed_research_approval(db, tool_name="research_v1_document_append")
+    revision = db.get(McpToolRevision, "revision-1")
+    assert revision is not None
+    revision.schema_hash = "d" * 64
+    db.commit()
+    recorder = _VoteRecorder()
+    worker = ResearchWriteApprovalWorker(
+        service=recorder,  # type: ignore[arg-type]
+        session_factory=factory,
+        settings=_unattended_settings(),
+    )
+    assert worker.run_cycle(db) == 0
+    assert recorder.calls == []
+
+
+def test_unattended_worker_skips_policy_generation_drift() -> None:
+    db, factory = _worker_db()
+    request_id = _seed_research_approval(db, tool_name="research_v1_document_append")
+    request = db.get(ApprovalRequest, request_id)
+    assert request is not None
+    request.policy_generation = 2
+    db.commit()
+    recorder = _VoteRecorder()
+    worker = ResearchWriteApprovalWorker(
+        service=recorder,  # type: ignore[arg-type]
+        session_factory=factory,
+        settings=_unattended_settings(),
+    )
+    assert worker.run_cycle(db) == 0
+    assert recorder.calls == []
+
+
+def test_unattended_worker_skips_dynamic_autonomy_kill() -> None:
+    db, factory = _worker_db()
+    _seed_research_approval(db, tool_name="research_v1_document_append")
+    recorder = _VoteRecorder(autonomy_enabled=False)
+    worker = ResearchWriteApprovalWorker(
+        service=recorder,  # type: ignore[arg-type]
+        session_factory=factory,
+        settings=_unattended_settings(),
+    )
+    assert worker.run_cycle(db) == 0
+    assert recorder.calls == []
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"gateway_mcp_federation_writes_paused": True},
+        {"gateway_autonomy_emergency_stop": True},
+    ],
+)
+def test_unattended_worker_static_kill_switches_never_vote(
+    overrides: dict[str, object],
+) -> None:
+    db, factory = _worker_db()
+    _seed_research_approval(db, tool_name="research_v1_document_append")
+    recorder = _VoteRecorder()
+    worker = ResearchWriteApprovalWorker(
+        service=recorder,  # type: ignore[arg-type]
+        session_factory=factory,
+        settings=_unattended_settings(**overrides),
+    )
+    assert worker.run_cycle(db) == 0
+    assert recorder.calls == []
 
 
 def test_persistent_write_configuration_is_fail_closed() -> None:

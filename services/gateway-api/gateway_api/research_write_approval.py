@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .agent_autonomy import AgentAutonomyService, agent_autonomy_service
 from .config import Settings
 from .models import (
+    AccessGrant,
     ApprovalRequest,
     McpActionPreparation,
     McpServer,
@@ -127,11 +128,30 @@ class ResearchWriteApprovalWorker:
             )
         return user
 
+    @staticmethod
+    def _has_approval_grant(
+        db: Session, *, request: ApprovalRequest, approver: User
+    ) -> bool:
+        resource_ids = {request.id, request.policy_id, request.room_id}
+        grants = (
+            db.query(AccessGrant)
+            .filter(
+                AccessGrant.owner_subject == request.owner_subject,
+                AccessGrant.grantee_subject == approver.subject,
+                AccessGrant.resource_type == "autonomy_approval",
+                AccessGrant.resource_id.in_(sorted(resource_ids)),
+                AccessGrant.status == "active",
+            )
+            .all()
+        )
+        return any("approve" in set(grant.scopes or []) for grant in grants)
+
     def _eligible(
         self,
         db: Session,
         *,
         request: ApprovalRequest,
+        approver: User,
         allowed_servers: set[str],
         allowed_tools: set[str],
     ) -> bool:
@@ -160,9 +180,26 @@ class ResearchWriteApprovalWorker:
             prep_expires = prep_expires.replace(tzinfo=UTC)
         if preparation.status != "pending_approval" or prep_expires <= now:
             return False
-        if preparation.action_class != "write" or preparation.approval_class != "operator":
+        if (
+            preparation.action_class != "write"
+            or preparation.approval_class != "operator"
+        ):
             return False
         if preparation.owner_subject != request.owner_subject:
+            return False
+        if preparation.autonomy_policy_id != request.policy_id:
+            return False
+        if preparation.autonomy_policy_generation != request.policy_generation:
+            return False
+        if not self._has_approval_grant(db, request=request, approver=approver):
+            return False
+        control = self.service.control_snapshot(
+            db,
+            owner_subject=request.owner_subject,
+            room_id=request.room_id,
+            policy_id=request.policy_id,
+        )
+        if not bool(control.get("enabled")):
             return False
         if preparation.server_id not in allowed_servers:
             return False
@@ -171,6 +208,12 @@ class ResearchWriteApprovalWorker:
         tool = db.get(McpTool, preparation.tool_id)
         revision = db.get(McpToolRevision, preparation.revision_id)
         if server is None or tool is None or revision is None:
+            return False
+        if (
+            server.owner_subject != request.owner_subject
+            or tool.owner_subject != request.owner_subject
+            or revision.owner_subject != request.owner_subject
+        ):
             return False
         if server.status not in {"online", "degraded"}:
             return False
@@ -188,10 +231,7 @@ class ResearchWriteApprovalWorker:
             return False
         if revision.schema_hash != preparation.schema_hash:
             return False
-        return (
-            preparation.tool_id == tool.id
-            and preparation.revision_id == revision.id
-        )
+        return preparation.tool_id == tool.id and preparation.revision_id == revision.id
 
     def run_cycle(self, db: Session) -> int:
         if not self.settings.gateway_research_unattended_approval_enabled:
@@ -227,6 +267,7 @@ class ResearchWriteApprovalWorker:
             if not self._eligible(
                 db,
                 request=request,
+                approver=approver,
                 allowed_servers=allowed_servers,
                 allowed_tools=allowed_tools,
             ):

@@ -233,6 +233,22 @@ paths:
       responses:
         '201':
           description: Access grant created
+  /api/access/grants/{grant_id}/revoke:
+    post:
+      operationId: revokeAccessGrant
+      parameters:
+        - name: grant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Access grant revoked or already revoked
+        '404':
+          description: Access grant not found
+        '409':
+          description: Access grant cannot transition to revoked
   /api/audit/events:
     get:
       operationId: listAuditEvents

@@ -211,7 +211,6 @@ class _FakeBridgeClient:
             raise _BridgeConflict(*self.conflict)
         workspace_id = str(kwargs["workspace_id"])
         return SimpleNamespace(
-            workspace_id=workspace_id,
             doc_id=note_id,
             web_url=f"https://affine.example/{workspace_id}/{note_id}",
             content_hash="c" * 64,
@@ -229,7 +228,6 @@ class _FakeBridgeClient:
             raise _BridgeConflict(*self.conflict)
         workspace_id = str(kwargs["workspace_id"])
         return SimpleNamespace(
-            workspace_id=workspace_id,
             doc_id=note_id,
             web_url=f"https://affine.example/{workspace_id}/{note_id}",
             content_hash="e" * 64,
@@ -243,7 +241,6 @@ class _FakeBridgeClient:
         self.calls.append(("update_tags", {"note_id": note_id, "tags": tags, **kwargs}))
         workspace_id = str(kwargs["workspace_id"])
         return SimpleNamespace(
-            workspace_id=workspace_id,
             doc_id=note_id,
             web_url=f"https://affine.example/{workspace_id}/{note_id}",
             content_hash=None,
@@ -263,7 +260,6 @@ class _FakeBridgeClient:
             raise _BridgeTitleConflict(*self.title_conflict)
         workspace_id = str(kwargs["workspace_id"])
         return SimpleNamespace(
-            workspace_id=workspace_id,
             doc_id=note_id,
             web_url=f"https://affine.example/{workspace_id}/{note_id}",
             content_hash=None,

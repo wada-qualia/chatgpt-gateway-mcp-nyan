@@ -30,6 +30,8 @@ SAFE_RESEARCH_WRITE_TOOLS = frozenset(
         "research_v1_document_link",
         "research_v1_document_add_source",
         "research_v1_document_update_title",
+        "research_v1_document_trash",
+        "research_v1_document_restore",
     }
 )
 

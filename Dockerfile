@@ -50,8 +50,8 @@ RUN /opt/venv/bin/python /app/scripts/verify_lup_sdk_artifact.py \
   && /opt/venv/bin/python /app/scripts/verify_affine_sdk_artifact.py \
   && /opt/venv/bin/pip install --no-cache-dir --no-deps \
     /app/vendor/llm-usage-sdk/klab_llm_usage-0.1.0b2-py3-none-any.whl \
-    /app/vendor/affine-sdk/affine_py_sdk-0.5.0-py3-none-any.whl \
-  && /opt/venv/bin/python -c 'import klab_llm_usage as sdk; from affine_py_sdk import AffineBridgeClient, AffineGlobalDocumentContent; assert sdk.__version__ == "0.1.0b2"; assert AffineBridgeClient.__name__ == "AffineBridgeClient"; assert AffineGlobalDocumentContent.__name__ == "AffineGlobalDocumentContent"'
+    /app/vendor/affine-sdk/affine_py_sdk-0.6.0-py3-none-any.whl \
+  && /opt/venv/bin/python -c 'import klab_llm_usage as sdk; from affine_py_sdk import AffineBridgeClient, AffineGlobalDocumentContent; assert sdk.__version__ == "0.1.0b2"; assert AffineBridgeClient.__name__ == "AffineBridgeClient"; assert AffineGlobalDocumentContent.__name__ == "AffineGlobalDocumentContent"; assert all(hasattr(AffineBridgeClient, name) for name in ("trash_affine_document", "restore_affine_document", "purge_affine_document"))'
 
 COPY services /app/services
 COPY cli /app/cli

@@ -39,6 +39,10 @@ ONLINE_INDEX_SQL = {
         "(locked_at, id) "
         "WHERE status = 'processing' AND locked_at IS NOT NULL"
     ),
+    "ix_outbox_events_active_created_at": (
+        "CREATE INDEX ix_outbox_events_active_created_at ON outbox_events "
+        "(created_at, id) WHERE status IN ('pending', 'retry', 'processing')"
+    ),
     "ix_agent_tool_calls_lup_pending_schedule": (
         "CREATE INDEX ix_agent_tool_calls_lup_pending_schedule "
         "ON agent_tool_calls (created_at, id) "

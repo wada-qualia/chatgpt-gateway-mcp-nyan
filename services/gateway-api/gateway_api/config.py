@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     gateway_deployment_slot: str = "local"
     public_base_url: str = "http://localhost:8000"
     database_url: str = "sqlite:///./data/gateway.db"
+    gateway_db_pool_size: int = Field(default=5, ge=1, le=100)
+    gateway_db_max_overflow: int = Field(default=10, ge=0, le=100)
+    gateway_db_pool_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
+    gateway_metrics_db_pool_size: int = Field(default=1, ge=1, le=10)
+    gateway_metrics_db_max_overflow: int = Field(default=0, ge=0, le=10)
+    gateway_metrics_db_pool_timeout_seconds: float = Field(
+        default=1.0, ge=0.1, le=30.0
+    )
     gateway_db_migration_lock_timeout_seconds: int = 15
     gateway_db_migration_statement_timeout_seconds: int = 300
     gateway_db_online_index_timeout_seconds: int = 5400

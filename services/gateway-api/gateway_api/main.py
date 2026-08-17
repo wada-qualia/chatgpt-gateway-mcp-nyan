@@ -9,9 +9,10 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from .config import get_settings
-from .database import SessionLocal
+from .database import MetricsSessionLocal, SessionLocal
 from .mcp_federation_runtime import (
     FederationBoundaryError,
     new_traceparent,
@@ -104,7 +105,7 @@ def create_app() -> FastAPI:
     )
     metrics_cache = GatewayMetricsCache(
         settings=settings,
-        session_factory=SessionLocal,
+        session_factory=MetricsSessionLocal,
         outbox=runtime.outbox,
         upstream_mcp_manager=upstream_mcp_manager,
     )
@@ -189,6 +190,18 @@ def create_app() -> FastAPI:
     app.state.database_forward_compatible = False
     app.state.database_schema_valid = False
     app.state.database_compatible = False
+
+    @app.exception_handler(SQLAlchemyTimeoutError)
+    async def database_pool_timeout_handler(
+        _request: Request, _error: SQLAlchemyTimeoutError
+    ) -> JSONResponse:
+        logger.warning("gateway_database_pool_timeout")
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Database connection pool temporarily unavailable"},
+            headers={"Retry-After": "1"},
+        )
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", settings.public_base_url.rstrip("/")],

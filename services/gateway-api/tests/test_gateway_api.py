@@ -5799,7 +5799,7 @@ def test_readiness_accepts_forward_compatible_schema(
     import gateway_api.readiness_cache as readiness_module
     from gateway_api.schema_migrations import HEAD_REVISION, MigrationStatus
 
-    future_revision = "20260812_0001"
+    future_revision = "20260819_0001"
     monkeypatch.setattr(
         readiness_module,
         "get_migration_status",
@@ -5879,6 +5879,8 @@ def test_metrics_handler_is_database_free_and_refresh_sql_is_bounded(
     assert len(statements) <= 40
     normalized = "\n".join(statements).lower()
     assert "group by outbox_events.status" not in normalized
+    assert "min(outbox_events.created_at)" not in normalized
+    assert "order by outbox_events.created_at asc, outbox_events.id asc" in normalized
     assert normalized.count("outbox_events.status =") == 6
     snapshot = cache.snapshot()
     assert snapshot["outbox_counts_estimated"] is False

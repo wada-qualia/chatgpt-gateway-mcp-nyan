@@ -22,7 +22,7 @@ from .migration_operations import CreateIndexConcurrently
 
 BASELINE_REVISION = "20260725_0001"
 PROJECTION_REVISION = "20260725_0002"
-HEAD_REVISION = "20260811_0012"
+HEAD_REVISION = "20260818_0013"
 LEGACY_ANCHOR_TABLES = {"users", "secret_blobs", "oauth_clients"}
 REVISION_PATTERN = re.compile(r"^(?P<date>\d{8})_(?P<sequence>\d{4})$")
 

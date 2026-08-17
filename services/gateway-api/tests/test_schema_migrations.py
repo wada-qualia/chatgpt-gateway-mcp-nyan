@@ -90,7 +90,7 @@ def test_validate_cli_is_read_only(monkeypatch, capsys) -> None:
 
 def test_revision_forward_compatibility_is_strict() -> None:
     assert schema_migrations.revision_is_forward(
-        "20260812_0001", HEAD_REVISION
+        "20260819_0001", HEAD_REVISION
     ) is True
     assert schema_migrations.revision_is_forward(HEAD_REVISION, HEAD_REVISION) is False
     assert schema_migrations.revision_is_forward(
@@ -125,14 +125,30 @@ def test_live_deployment_plan_from_0011_declares_online_indexes(
 
     assert plan.current_revision == "20260727_0011"
     assert plan.head_revision == HEAD_REVISION
-    assert plan.pending_revisions == (HEAD_REVISION,)
-    assert plan.compatibility == ("expand",)
+    assert plan.pending_revisions == ("20260811_0012", HEAD_REVISION)
+    assert plan.compatibility == ("expand", "expand")
     assert plan.safe_for_live_expand is True
     assert plan.online_index_operations == (
         "ix_outbox_events_ready_claim",
         "ix_outbox_events_stale_claim",
         "ix_agent_tool_calls_lup_pending_schedule",
+        "ix_outbox_events_active_created_at",
     )
+
+
+def test_live_deployment_plan_from_0012_is_hot_path_index_only(
+    tmp_path: Path,
+) -> None:
+    target_engine = sqlite_engine(tmp_path / "deployment-plan-0012.sqlite")
+    command.upgrade(alembic_config(str(target_engine.url)), "20260811_0012")
+
+    plan = get_migration_plan(target_engine)
+
+    assert plan.current_revision == "20260811_0012"
+    assert plan.pending_revisions == (HEAD_REVISION,)
+    assert plan.compatibility == ("expand",)
+    assert plan.safe_for_live_expand is True
+    assert plan.online_index_operations == ("ix_outbox_events_active_created_at",)
 
 
 def test_concurrent_index_declarations_are_strictly_typed() -> None:
@@ -187,6 +203,7 @@ def test_module_cli_loads_typed_online_operations_once(tmp_path: Path) -> None:
         "ix_outbox_events_ready_claim",
         "ix_outbox_events_stale_claim",
         "ix_agent_tool_calls_lup_pending_schedule",
+        "ix_outbox_events_active_created_at",
     ]
 
 

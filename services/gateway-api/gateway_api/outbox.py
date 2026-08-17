@@ -587,10 +587,11 @@ class OutboxService:
     def metrics(self, db: Session) -> dict[str, Any]:
         now = utcnow()
         counts, counts_estimated = self._status_counts_for_metrics(db)
-        oldest = (
-            db.query(func.min(OutboxEvent.created_at))
-            .filter(OutboxEvent.status.in_(["pending", "retry", "processing"]))
-            .scalar()
+        oldest = db.scalar(
+            select(OutboxEvent.created_at)
+            .where(OutboxEvent.status.in_(["pending", "retry", "processing"]))
+            .order_by(OutboxEvent.created_at.asc(), OutboxEvent.id.asc())
+            .limit(1)
         )
         online_replicas = (
             db.query(func.count(GatewayReplica.id))

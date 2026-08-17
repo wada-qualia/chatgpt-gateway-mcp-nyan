@@ -1004,6 +1004,8 @@ CREATE INDEX ix_outbox_events_created_at ON outbox_events (created_at);
 
 CREATE INDEX ix_outbox_events_ready_claim ON outbox_events (available_at, created_at, id) WHERE status IN ('pending', 'retry');
 
+CREATE INDEX ix_outbox_events_active_created_at ON outbox_events (created_at, id) WHERE status IN ('pending', 'retry', 'processing');
+
 CREATE INDEX ix_outbox_events_stale_claim ON outbox_events (locked_at, id) WHERE status = 'processing' AND locked_at IS NOT NULL;
 
 CREATE TABLE mcp_credential_bindings (

@@ -4938,6 +4938,20 @@ def test_phase_four_independent_quorum_permit_receipt_and_completion_gate(
             )
         )
         db.commit()
+        visible = agent_autonomy_service.list_approval_requests(db, user=reviewer)
+        assert [item.id for item in visible] == [approval["id"]]
+        stored_request = db.get(ApprovalRequest, approval["id"])
+        assert stored_request is not None
+        projection = agent_autonomy_service.approval_review_projection(
+            db, request=stored_request, user=reviewer
+        )
+        assert projection["authorized"] is True
+        assert projection["can_vote"] is True
+        assert projection["surface"] == "gateway"
+        assert projection["approve_count"] == 0
+        assert projection["quorum_required"] == 2
+        assert projection["quorum_met"] is False
+        assert projection["admin_required"] is True
         request = agent_autonomy_service.cast_vote(
             db,
             request_id=approval["id"],
@@ -6558,6 +6572,11 @@ def test_p0_autonomy_registry_embeds_approval_votes(client: TestClient) -> None:
             "created_at": now.replace(tzinfo=None).isoformat(),
         }
     ]
+    assert approval["review"]["authorized"] is True
+    assert approval["review"]["surface"] == "gateway"
+    assert approval["review"]["approve_count"] == 1
+    assert approval["review"]["quorum_required"] == 2
+    assert approval["review"]["admin_required"] is True
 
 
 def test_p1_registry_routes_are_published(client: TestClient) -> None:

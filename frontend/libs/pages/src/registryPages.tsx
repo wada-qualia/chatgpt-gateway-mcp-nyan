@@ -685,7 +685,17 @@ function RegistryPage({ surfaceId }: { surfaceId: RegistrySurfaceId }) {
             </div>
           </div>
         </div>
-        {selected ? <RegistryDetail record={selected} onClose={() => setSelectedId('')} /> : null}
+        {selected ? (
+          <RegistryDetail
+            activeTabId={activeTab.id}
+            onClose={() => setSelectedId('')}
+            onRefresh={async () => {
+              await query.refetch();
+            }}
+            record={selected}
+            surfaceId={surfaceId}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -742,19 +752,399 @@ function RegistryNotice({ colSpan, text }: { colSpan: number; text: string }) {
   return <tr><td className="registry-notice" colSpan={colSpan}>{text}</td></tr>;
 }
 
-function RegistryDetail({ record, onClose }: { record: RegistryRecord; onClose: () => void }) {
+function RegistryDetail({
+  activeTabId,
+  onClose,
+  onRefresh,
+  record,
+  surfaceId
+}: {
+  activeTabId: string;
+  onClose: () => void;
+  onRefresh: () => Promise<void>;
+  record: RegistryRecord;
+  surfaceId: RegistrySurfaceId;
+}) {
+  if (surfaceId === 'autonomy') {
+    return (
+      <AutonomyRegistryDetail
+        activeTabId={activeTabId}
+        onClose={onClose}
+        onRefresh={onRefresh}
+        record={record}
+      />
+    );
+  }
   return (
     <aside className="registry-detail">
-      <header>
-        <div>
-          <strong>Registry record</strong>
-          <span>{record.id}</span>
-        </div>
-        <Button onClick={onClose} type="button">Close</Button>
-      </header>
+      <RegistryDetailHeader onClose={onClose} record={record} title="Registry record" />
       <pre className="selectable"><code>{JSON.stringify(record, null, 2)}</code></pre>
     </aside>
   );
+}
+
+function RegistryDetailHeader({
+  onClose,
+  record,
+  title
+}: {
+  onClose: () => void;
+  record: RegistryRecord;
+  title: string;
+}) {
+  return (
+    <header>
+      <div>
+        <strong>{title}</strong>
+        <span>{record.id}</span>
+      </div>
+      <Button onClick={onClose} type="button">Close</Button>
+    </header>
+  );
+}
+
+type SemanticField = {
+  key: string;
+  label: string;
+};
+
+const autonomySemanticFields: Record<string, SemanticField[]> = {
+  approvals: [
+    { key: 'status', label: 'Status' },
+    { key: 'action_kind', label: 'Action' },
+    { key: 'action_class', label: 'Risk class' },
+    { key: 'tool', label: 'Tool' },
+    { key: 'command_profile', label: 'Command profile' },
+    { key: 'created_by_subject', label: 'Initiator subject' },
+    { key: 'proposer_agent_id', label: 'Proposer agent' },
+    { key: 'executor_agent_id', label: 'Executor agent' },
+    { key: 'policy_id', label: 'Policy' },
+    { key: 'policy_generation', label: 'Policy generation' },
+    { key: 'command_id', label: 'Command' },
+    { key: 'work_item_id', label: 'Work item' },
+    { key: 'integration_id', label: 'Integration' },
+    { key: 'payload_summary', label: 'Bounded summary' },
+    { key: 'expires_at', label: 'Expires' },
+    { key: 'created_at', label: 'Created' },
+    { key: 'updated_at', label: 'Updated' }
+  ],
+  permits: [
+    { key: 'status', label: 'Status' },
+    { key: 'action_class', label: 'Risk class' },
+    { key: 'tool', label: 'Tool' },
+    { key: 'command_profile', label: 'Command profile' },
+    { key: 'approval_request_id', label: 'Approval request' },
+    { key: 'policy_id', label: 'Policy' },
+    { key: 'policy_generation', label: 'Policy generation' },
+    { key: 'command_id', label: 'Command' },
+    { key: 'executor_agent_id', label: 'Executor agent' },
+    { key: 'fencing_token', label: 'Fencing token' },
+    { key: 'max_uses', label: 'Maximum uses' },
+    { key: 'use_count', label: 'Current uses' },
+    { key: 'issued_by_subject', label: 'Issued by' },
+    { key: 'issued_at', label: 'Issued' },
+    { key: 'expires_at', label: 'Expires' },
+    { key: 'claimed_at', label: 'Claimed' },
+    { key: 'consumed_at', label: 'Consumed' },
+    { key: 'revoked_at', label: 'Revoked' },
+    { key: 'revocation_reason', label: 'Revocation reason' },
+    { key: 'control_snapshot', label: 'Control snapshot' }
+  ],
+  receipts: [
+    { key: 'status', label: 'Status' },
+    { key: 'action_class', label: 'Risk class' },
+    { key: 'tool', label: 'Tool' },
+    { key: 'command_profile', label: 'Command profile' },
+    { key: 'approval_request_id', label: 'Approval request' },
+    { key: 'permit_id', label: 'Permit' },
+    { key: 'command_id', label: 'Command' },
+    { key: 'executor_agent_id', label: 'Executor agent' },
+    { key: 'result_summary', label: 'Result summary' },
+    { key: 'error', label: 'Error' },
+    { key: 'external_references', label: 'External references' },
+    { key: 'started_at', label: 'Started' },
+    { key: 'completed_at', label: 'Completed' }
+  ],
+  policies: [
+    { key: 'name', label: 'Policy' },
+    { key: 'status', label: 'Status' },
+    { key: 'room_id', label: 'Room' },
+    { key: 'assignment_mode', label: 'Assignment mode' },
+    { key: 'coordinator_agent_id', label: 'Coordinator agent' },
+    { key: 'allowed_action_classes', label: 'Allowed action classes' },
+    { key: 'allowed_tools', label: 'Allowed tools' },
+    { key: 'allowed_command_profiles', label: 'Allowed command profiles' },
+    { key: 'max_parallel_assignments', label: 'Maximum parallel assignments' },
+    { key: 'approval_rules', label: 'Approval rules' },
+    { key: 'recovery_policy', label: 'Recovery policy' },
+    { key: 'generation', label: 'Generation' },
+    { key: 'version', label: 'Version' },
+    { key: 'created_by_subject', label: 'Created by' },
+    { key: 'created_at', label: 'Created' },
+    { key: 'updated_at', label: 'Updated' }
+  ],
+  controls: [
+    { key: 'state', label: 'State' },
+    { key: 'scope_type', label: 'Scope type' },
+    { key: 'scope_id', label: 'Scope' },
+    { key: 'owner_subject', label: 'Owner' },
+    { key: 'generation', label: 'Generation' },
+    { key: 'reason', label: 'Reason' },
+    { key: 'changed_by_subject', label: 'Changed by' },
+    { key: 'expires_at', label: 'Expires' },
+    { key: 'created_at', label: 'Created' },
+    { key: 'updated_at', label: 'Updated' }
+  ],
+  assignments: [
+    { key: 'status', label: 'Status' },
+    { key: 'room_id', label: 'Room' },
+    { key: 'policy_id', label: 'Policy' },
+    { key: 'work_item_id', label: 'Work item' },
+    { key: 'selected_agent_id', label: 'Selected agent' },
+    { key: 'score', label: 'Score' },
+    { key: 'rationale', label: 'Rationale' },
+    { key: 'policy_generation', label: 'Policy generation' },
+    { key: 'work_item_version', label: 'Work item version' },
+    { key: 'created_by_subject', label: 'Created by' },
+    { key: 'applied_at', label: 'Applied' },
+    { key: 'revoked_at', label: 'Revoked' },
+    { key: 'created_at', label: 'Created' },
+    { key: 'updated_at', label: 'Updated' }
+  ],
+  recoveries: [
+    { key: 'status', label: 'Status' },
+    { key: 'room_id', label: 'Room' },
+    { key: 'policy_id', label: 'Policy' },
+    { key: 'source_type', label: 'Source type' },
+    { key: 'source_id', label: 'Source' },
+    { key: 'target_agent_id', label: 'Target agent' },
+    { key: 'strategy', label: 'Strategy' },
+    { key: 'attempt_count', label: 'Attempts' },
+    { key: 'max_attempts', label: 'Maximum attempts' },
+    { key: 'base_backoff_seconds', label: 'Base backoff seconds' },
+    { key: 'next_attempt_at', label: 'Next attempt' },
+    { key: 'last_command_id', label: 'Last command' },
+    { key: 'last_error', label: 'Last error' },
+    { key: 'policy_generation', label: 'Policy generation' },
+    { key: 'generation', label: 'Generation' },
+    { key: 'created_by_subject', label: 'Created by' },
+    { key: 'completed_at', label: 'Completed' },
+    { key: 'created_at', label: 'Created' },
+    { key: 'updated_at', label: 'Updated' }
+  ],
+  overrides: [
+    { key: 'action', label: 'Action' },
+    { key: 'scope_type', label: 'Scope type' },
+    { key: 'scope_id', label: 'Scope' },
+    { key: 'previous_state', label: 'Previous state' },
+    { key: 'new_state', label: 'New state' },
+    { key: 'reason', label: 'Reason' },
+    { key: 'actor_subject', label: 'Actor' },
+    { key: 'evidence', label: 'Evidence' },
+    { key: 'created_at', label: 'Created' }
+  ]
+};
+
+function AutonomyRegistryDetail({
+  activeTabId,
+  onClose,
+  onRefresh,
+  record
+}: {
+  activeTabId: string;
+  onClose: () => void;
+  onRefresh: () => Promise<void>;
+  record: RegistryRecord;
+}) {
+  const fields = autonomySemanticFields[activeTabId] ?? [];
+  const title = autonomyTabs.find((tab) => tab.id === activeTabId)?.label ?? 'Safety & Autonomy';
+  return (
+    <aside className="registry-detail registry-detail-semantic">
+      <RegistryDetailHeader onClose={onClose} record={record} title={title} />
+      <div className="registry-detail-body">
+        <section className="registry-detail-section">
+          <h3>Record details</h3>
+          <div className="registry-detail-grid">
+            {fields.map((field) => (
+              <SemanticDetailField
+                key={field.key}
+                label={field.label}
+                value={record[field.key]}
+                valueKey={field.key}
+              />
+            ))}
+          </div>
+        </section>
+        {activeTabId === 'approvals' ? (
+          <ApprovalReviewDetail onRefresh={onRefresh} record={record} />
+        ) : null}
+        <details className="registry-raw">
+          <summary>Raw record</summary>
+          <pre className="selectable"><code>{JSON.stringify(record, null, 2)}</code></pre>
+        </details>
+      </div>
+    </aside>
+  );
+}
+
+function SemanticDetailField({
+  label,
+  value,
+  valueKey
+}: {
+  label: string;
+  value: unknown;
+  valueKey: string;
+}) {
+  return (
+    <div className="registry-detail-field">
+      <span>{label}</span>
+      <strong className="selectable">{semanticValue(valueKey, value)}</strong>
+    </div>
+  );
+}
+
+function ApprovalReviewDetail({
+  onRefresh,
+  record
+}: {
+  onRefresh: () => Promise<void>;
+  record: RegistryRecord;
+}) {
+  const review = objectValue(record.review);
+  const target = objectValue(review.target);
+  const votes = Array.isArray(record.votes) ? record.votes : [];
+  const [reason, setReason] = useState('');
+  const [pendingDecision, setPendingDecision] = useState<'approve' | 'reject' | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const reviewSurface = String(review.surface ?? target.review_surface ?? 'gateway');
+  const canVote = review.can_vote === true;
+
+  async function submitDecision() {
+    if (!pendingDecision) return;
+    setSubmitting(true);
+    setSubmitError('');
+    try {
+      await registryApi.voteApproval(record.id, pendingDecision, reason);
+      setPendingDecision(null);
+      setReason('');
+      await onRefresh();
+    } catch (error) {
+      setSubmitError(errorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <>
+      <section className="registry-detail-section">
+        <h3>Review state</h3>
+        <div className="registry-detail-grid">
+          <SemanticDetailField label="Review surface" value={reviewSurface} valueKey="surface" />
+          <SemanticDetailField label="Eligible reviewer" value={review.authorized} valueKey="authorized" />
+          <SemanticDetailField label="Can vote now" value={review.can_vote} valueKey="can_vote" />
+          <SemanticDetailField label="Approvals" value={review.approve_count} valueKey="approve_count" />
+          <SemanticDetailField label="Required quorum" value={review.quorum_required} valueKey="quorum_required" />
+          <SemanticDetailField label="Quorum met" value={review.quorum_met} valueKey="quorum_met" />
+          <SemanticDetailField label="Admin approval required" value={review.admin_required} valueKey="admin_required" />
+          <SemanticDetailField label="Admin approvals" value={review.admin_approve_count} valueKey="admin_approve_count" />
+          <SemanticDetailField label="Rejections" value={review.reject_count} valueKey="reject_count" />
+          <SemanticDetailField label="Expired" value={review.expired} valueKey="expired" />
+          <SemanticDetailField label="Current reviewer decision" value={review.current_voter_decision} valueKey="current_voter_decision" />
+          <SemanticDetailField label="Eligibility state" value={review.reason} valueKey="reason" />
+        </div>
+      </section>
+      <section className="registry-detail-section">
+        <h3>Immutable target</h3>
+        <div className="registry-detail-grid">
+          <SemanticDetailField label="Target kind" value={target.kind} valueKey="kind" />
+          <SemanticDetailField label="Provider" value={target.provider} valueKey="provider" />
+          <SemanticDetailField label="Server" value={target.server_name ?? target.server_id} valueKey="server_name" />
+          <SemanticDetailField label="Tool" value={target.tool_name ?? target.tool_id} valueKey="tool_name" />
+          <SemanticDetailField label="Preparation" value={target.preparation_id} valueKey="preparation_id" />
+          <SemanticDetailField label="Server ID" value={target.server_id} valueKey="server_id" />
+          <SemanticDetailField label="Tool ID" value={target.tool_id} valueKey="tool_id" />
+          <SemanticDetailField label="Revision ID" value={target.revision_id} valueKey="revision_id" />
+        </div>
+      </section>
+      <section className="registry-detail-section">
+        <h3>Votes</h3>
+        {votes.length === 0 ? (
+          <p className="registry-detail-muted">No votes recorded.</p>
+        ) : (
+          <div className="registry-votes">
+            {votes.map((vote, index) => {
+              const item = objectValue(vote);
+              return (
+                <div className="registry-vote" key={String(item.id ?? index)}>
+                  <strong>{displayValue(item.voter_subject)}</strong>
+                  <StatusPill status={displayValue(item.decision)} />
+                  <span>{formatDate(item.created_at)}</span>
+                  {item.reason ? <p>{displayValue(item.reason)}</p> : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+      <section className="registry-detail-section registry-review-actions">
+        <h3>Decision</h3>
+        {reviewSurface === 'affine' ? (
+          <p className="registry-review-routing">
+            This automated AFFiNE action is reviewed in AFFiNE Notifications. Gateway keeps the canonical approval state but does not expose duplicate decision controls here.
+          </p>
+        ) : canVote ? (
+          <>
+            <label className="registry-review-reason">
+              <span>Decision reason (optional)</span>
+              <textarea
+                disabled={submitting}
+                maxLength={10000}
+                onChange={(event) => setReason(event.target.value)}
+                rows={3}
+                value={reason}
+              />
+            </label>
+            <div className="registry-review-buttons">
+              <Button disabled={submitting} onClick={() => setPendingDecision('approve')} type="button">Approve</Button>
+              <Button disabled={submitting} onClick={() => setPendingDecision('reject')} type="button">Reject</Button>
+            </div>
+          </>
+        ) : (
+          <p className="registry-detail-muted">{displayValue(review.reason ?? 'No decision is available for the current reviewer.')}</p>
+        )}
+        {pendingDecision ? (
+          <div className="registry-confirmation" role="alertdialog" aria-label={`Confirm ${pendingDecision}`}>
+            <strong>Confirm {pendingDecision}</strong>
+            <p>
+              Submit this decision for approval request <span className="selectable">{record.id}</span>? Gateway will revalidate your identity, current policy, expiry and quorum state.
+            </p>
+            <div className="registry-confirmation-actions">
+              <Button disabled={submitting} onClick={() => setPendingDecision(null)} type="button">Cancel</Button>
+              <Button disabled={submitting} onClick={submitDecision} type="button">
+                {submitting ? 'Submitting…' : `Confirm ${pendingDecision}`}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {submitError ? <p className="registry-review-error" role="alert">{submitError}</p> : null}
+      </section>
+    </>
+  );
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function semanticValue(key: string, value: unknown) {
+  if (key.endsWith('_at') || key === 'expires_at') return formatDate(value);
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  return displayValue(value);
 }
 
 function textColumn(key: string, label: string): RegistryColumn {

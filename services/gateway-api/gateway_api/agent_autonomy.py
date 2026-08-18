@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -39,6 +39,9 @@ from .models import (
     AutonomyPolicy,
     CollaborationRoom,
     ExecutionPermit,
+    McpActionPreparation,
+    McpServer,
+    McpTool,
     RecoveryLoop,
     User,
     utcnow,
@@ -55,6 +58,7 @@ APPROVAL_TERMINAL = {"approved", "rejected", "expired", "revoked"}
 PERMIT_TERMINAL = {"consumed", "expired", "revoked"}
 RECOVERY_TERMINAL = {"succeeded", "exhausted", "cancelled"}
 RECEIPT_STATUSES = {"succeeded", "failed", "partial", "unknown"}
+AFFINE_RESEARCH_PROVIDER_MCP_ENDPOINT = "http://affine-research-provider:8010/mcp"
 
 DEFAULT_APPROVAL_RULES: dict[str, dict[str, Any]] = {
     "read": {
@@ -1628,6 +1632,138 @@ class AgentAutonomyService:
         )
         return bool(grant and "approve" in set(grant.scopes or []))
 
+    def approval_visibility_query(self, db: Session, *, user: User):
+        roles = set(user.roles or [])
+        if "gateway-admin" in roles:
+            return db.query(ApprovalRequest)
+        predicates = [ApprovalRequest.owner_subject == user.subject]
+        grants = (
+            db.query(AccessGrant)
+            .filter(
+                AccessGrant.grantee_subject == user.subject,
+                AccessGrant.resource_type == "autonomy_approval",
+                AccessGrant.status == "active",
+            )
+            .all()
+        )
+        for grant in grants:
+            if "approve" not in set(grant.scopes or []):
+                continue
+            resource_id = str(grant.resource_id or "").strip()
+            if not resource_id:
+                continue
+            predicates.append(
+                and_(
+                    ApprovalRequest.owner_subject == grant.owner_subject,
+                    or_(
+                        ApprovalRequest.id == resource_id,
+                        ApprovalRequest.policy_id == resource_id,
+                        ApprovalRequest.room_id == resource_id,
+                    ),
+                )
+            )
+        return db.query(ApprovalRequest).filter(or_(*predicates))
+
+    def approval_review_projection(
+        self,
+        db: Session,
+        *,
+        request: ApprovalRequest,
+        user: User,
+        votes: list[ApprovalVote] | None = None,
+    ) -> dict[str, Any]:
+        if votes is None:
+            votes = (
+                db.query(ApprovalVote)
+                .filter(ApprovalVote.request_id == request.id)
+                .order_by(ApprovalVote.created_at, ApprovalVote.id)
+                .all()
+            )
+        preparation = (
+            db.query(McpActionPreparation)
+            .filter(McpActionPreparation.approval_request_id == request.id)
+            .one_or_none()
+        )
+        target: dict[str, Any] = {
+            "kind": "gateway",
+            "review_surface": "gateway",
+        }
+        if preparation is not None:
+            server = db.get(McpServer, preparation.server_id)
+            tool = db.get(McpTool, preparation.tool_id)
+            is_affine = bool(
+                server is not None
+                and server.origin == "gateway"
+                and server.transport == "streamable_http"
+                and str(server.endpoint_url or "").rstrip("/")
+                == AFFINE_RESEARCH_PROVIDER_MCP_ENDPOINT
+            )
+            target = {
+                "kind": "mcp_federation",
+                "provider": "affine" if is_affine else "mcp",
+                "review_surface": "affine" if is_affine else "gateway",
+                "preparation_id": preparation.id,
+                "server_id": preparation.server_id,
+                "tool_id": preparation.tool_id,
+                "revision_id": preparation.revision_id,
+                "server_name": server.display_name if server is not None else None,
+                "tool_name": tool.upstream_name if tool is not None else None,
+            }
+        elif request.integration_id:
+            target = {
+                "kind": "integration",
+                "review_surface": "gateway",
+                "integration_id": request.integration_id,
+            }
+
+        approvals = [vote for vote in votes if vote.decision == "approve"]
+        rejects = [vote for vote in votes if vote.decision == "reject"]
+        admin_approvals = [
+            vote
+            for vote in approvals
+            if "gateway-admin" in set(vote.voter_roles or [])
+        ]
+        current_vote = next(
+            (vote for vote in votes if vote.voter_subject == user.subject),
+            None,
+        )
+        authorized = self._can_vote(db, request=request, user=user)
+        expires_at = _aware(request.expires_at)
+        expired = bool(expires_at is not None and expires_at <= utcnow())
+        quorum_met = len(approvals) >= int(request.quorum_required or 0) and (
+            not request.require_admin_approval or bool(admin_approvals)
+        )
+        reason: str | None = None
+        can_vote = False
+        if target["review_surface"] == "affine":
+            reason = "AFFiNE-targeted approvals are reviewed in AFFiNE Notifications"
+        elif not authorized:
+            reason = "Approval vote is outside granted scope"
+        elif request.status != "pending" or expired:
+            reason = "Approval request is not pending"
+        elif request.disallow_proposer_vote and user.subject == request.created_by_subject:
+            reason = "Proposer cannot vote on this request"
+        elif current_vote is not None:
+            reason = "Current reviewer already voted"
+        else:
+            can_vote = True
+
+        return {
+            "surface": target["review_surface"],
+            "authorized": authorized,
+            "can_vote": can_vote,
+            "reason": reason,
+            "current_voter_decision": current_vote.decision if current_vote else None,
+            "approve_count": len(approvals),
+            "reject_count": len(rejects),
+            "quorum_required": int(request.quorum_required or 0),
+            "quorum_met": quorum_met,
+            "admin_required": bool(request.require_admin_approval),
+            "admin_approve_count": len(admin_approvals),
+            "expired": expired,
+            "target": target,
+        }
+
     def _expire_approval(self, request: ApprovalRequest) -> None:
         if request.status == "pending" and _aware(request.expires_at) <= utcnow():
             request.status = "expired"
@@ -1638,13 +1774,19 @@ class AgentAutonomyService:
         self,
         db: Session,
         *,
-        owner_subject: str,
+        owner_subject: str | None = None,
+        user: User | None = None,
         room_id: str | None = None,
         status: str | None = None,
     ) -> list[ApprovalRequest]:
-        query = db.query(ApprovalRequest).filter(
-            ApprovalRequest.owner_subject == owner_subject
-        )
+        if user is not None:
+            query = self.approval_visibility_query(db, user=user)
+        elif owner_subject is not None:
+            query = db.query(ApprovalRequest).filter(
+                ApprovalRequest.owner_subject == owner_subject
+            )
+        else:
+            raise ValueError("owner_subject or user is required")
         if room_id:
             query = query.filter(ApprovalRequest.room_id == room_id)
         if status:

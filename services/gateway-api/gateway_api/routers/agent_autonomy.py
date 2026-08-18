@@ -37,6 +37,20 @@ from ..policy import enforce
 router = APIRouter(prefix="/api/agent-autonomy", tags=["agent-autonomy"])
 
 
+def _approval_response(db: Session, *, request: Any, user: User) -> dict[str, Any]:
+    votes = (
+        db.query(ApprovalVote)
+        .filter(ApprovalVote.request_id == request.id)
+        .order_by(ApprovalVote.created_at, ApprovalVote.id)
+        .all()
+    )
+    result = approval_payload(request, votes)
+    result["review"] = agent_autonomy_service.approval_review_projection(
+        db, request=request, user=user, votes=votes
+    )
+    return result
+
+
 @router.post("/policies", status_code=201)
 async def create_policy(
     payload: AutonomyPolicyCreate,
@@ -228,13 +242,7 @@ async def create_approval_request(
         actor_subject=user.subject,
         data=payload.model_dump(),
     )
-    votes = (
-        db.query(ApprovalVote)
-        .filter(ApprovalVote.request_id == request.id)
-        .order_by(ApprovalVote.created_at, ApprovalVote.id)
-        .all()
-    )
-    return approval_payload(request, votes)
+    return _approval_response(db, request=request, user=user)
 
 
 @router.get("/approvals")
@@ -246,16 +254,10 @@ async def list_approval_requests(
 ) -> list[dict[str, Any]]:
     enforce(user, action="read")
     requests = agent_autonomy_service.list_approval_requests(
-        db, owner_subject=user.subject, room_id=room_id, status=status
+        db, user=user, room_id=room_id, status=status
     )
     return [
-        approval_payload(
-            request,
-            db.query(ApprovalVote)
-            .filter(ApprovalVote.request_id == request.id)
-            .order_by(ApprovalVote.created_at, ApprovalVote.id)
-            .all(),
-        )
+        _approval_response(db, request=request, user=user)
         for request in requests
     ]
 
@@ -274,13 +276,7 @@ async def cast_approval_vote(
         decision=payload.decision,
         reason=payload.reason,
     )
-    votes = (
-        db.query(ApprovalVote)
-        .filter(ApprovalVote.request_id == request.id)
-        .order_by(ApprovalVote.created_at, ApprovalVote.id)
-        .all()
-    )
-    return approval_payload(request, votes)
+    return _approval_response(db, request=request, user=user)
 
 
 @router.post("/approvals/{request_id}/permit", status_code=201)

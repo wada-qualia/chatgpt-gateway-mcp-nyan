@@ -49,3 +49,20 @@ def create_index_concurrently(
         columns=columns,
         predicate=predicate,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class DropIndexConcurrently:
+    name: str
+    table: str
+
+    def __post_init__(self) -> None:
+        for field_name, value in (("name", self.name), ("table", self.table)):
+            if not IDENTIFIER_PATTERN.fullmatch(value):
+                raise ValueError(
+                    f"invalid {field_name} for concurrent index drop: {value!r}"
+                )
+
+
+def drop_index_concurrently(*, name: str, table: str) -> DropIndexConcurrently:
+    return DropIndexConcurrently(name=name, table=table)

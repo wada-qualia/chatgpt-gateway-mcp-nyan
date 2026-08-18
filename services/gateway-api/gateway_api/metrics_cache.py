@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import threading
 import time
 from datetime import UTC, datetime
@@ -95,6 +96,7 @@ class GatewayMetricsCache:
                 snapshot["federation"] = (
                     self.upstream_mcp_manager.readiness_snapshot(db)
                 )
+            snapshot["storage"] = self._storage_snapshot()
             now = datetime.now(UTC)
             with self._state_lock:
                 self._snapshot = snapshot
@@ -140,6 +142,7 @@ class GatewayMetricsCache:
     def prometheus(self) -> str:
         metrics = self.snapshot()
         counts = dict(metrics.get("outbox") or {})
+        storage = dict(metrics.get("storage") or {})
         lines = [
             "# HELP gateway_outbox_events Number of outbox events by status.",
             "# TYPE gateway_outbox_events gauge",
@@ -204,6 +207,22 @@ class GatewayMetricsCache:
                 "# TYPE gateway_metrics_cache_last_success_timestamp_seconds gauge",
                 "gateway_metrics_cache_last_success_timestamp_seconds "
                 + str(metrics["metrics_last_success_timestamp_seconds"]),
+                "# HELP gateway_storage_monitor_available 1 when the configured storage filesystem is measurable.",
+                "# TYPE gateway_storage_monitor_available gauge",
+                f"gateway_storage_monitor_available {1 if storage.get('available') else 0}",
+                "# HELP gateway_storage_disk_usage_ratio Fraction of monitored storage bytes in use.",
+                "# TYPE gateway_storage_disk_usage_ratio gauge",
+                f"gateway_storage_disk_usage_ratio {float(storage.get('usage_ratio') or 0.0)}",
+                "# HELP gateway_storage_disk_total_bytes Total bytes on the monitored storage filesystem.",
+                "# TYPE gateway_storage_disk_total_bytes gauge",
+                f"gateway_storage_disk_total_bytes {int(storage.get('total_bytes') or 0)}",
+                "# HELP gateway_storage_disk_free_bytes Free bytes on the monitored storage filesystem.",
+                "# TYPE gateway_storage_disk_free_bytes gauge",
+                f"gateway_storage_disk_free_bytes {int(storage.get('free_bytes') or 0)}",
+                "# HELP gateway_storage_disk_watermark 1 when the monitored storage usage ratio reached the named threshold.",
+                "# TYPE gateway_storage_disk_watermark gauge",
+                f'gateway_storage_disk_watermark{{level="warning"}} {1 if storage.get("warning") else 0}',
+                f'gateway_storage_disk_watermark{{level="critical"}} {1 if storage.get("critical") else 0}',
                 "# TYPE gateway_runtime_info gauge",
                 (
                     'gateway_runtime_info{replica_id="'
@@ -253,6 +272,43 @@ class GatewayMetricsCache:
             for status in statuses
         }
 
+    def _storage_snapshot(self) -> dict[str, Any]:
+        path = self.settings.gateway_storage_monitor_path
+        try:
+            usage = shutil.disk_usage(path)
+        except OSError as error:
+            logger.warning(
+                "gateway_storage_monitor_unavailable path=%s error=%s",
+                path,
+                type(error).__name__,
+            )
+            return {
+                "available": False,
+                "path": path,
+                "total_bytes": 0,
+                "used_bytes": 0,
+                "free_bytes": 0,
+                "usage_ratio": 0.0,
+                "warning": False,
+                "critical": False,
+            }
+        total_bytes = int(usage.total)
+        used_bytes = int(usage.used)
+        free_bytes = int(usage.free)
+        usage_ratio = (
+            (total_bytes - free_bytes) / total_bytes if total_bytes > 0 else 0.0
+        )
+        return {
+            "available": True,
+            "path": path,
+            "total_bytes": total_bytes,
+            "used_bytes": used_bytes,
+            "free_bytes": free_bytes,
+            "usage_ratio": usage_ratio,
+            "warning": usage_ratio >= self.settings.gateway_storage_warning_usage_ratio,
+            "critical": usage_ratio >= self.settings.gateway_storage_critical_usage_ratio,
+        }
+
     def _empty_snapshot(self) -> dict[str, Any]:
         return {
             "replica_id": self.outbox.replica_id,
@@ -275,6 +331,16 @@ class GatewayMetricsCache:
             "oldest_pending_age_seconds": 0.0,
             "online_replicas": 0,
             "online_realtime_routes": 0,
+            "storage": {
+                "available": False,
+                "path": self.settings.gateway_storage_monitor_path,
+                "total_bytes": 0,
+                "used_bytes": 0,
+                "free_bytes": 0,
+                "usage_ratio": 0.0,
+                "warning": False,
+                "critical": False,
+            },
             "autonomy_policies": {status: 0 for status in POLICY_STATUSES},
             "autonomy_approvals": {status: 0 for status in APPROVAL_STATUSES},
             "autonomy_permits": {status: 0 for status in PERMIT_STATUSES},
@@ -292,6 +358,7 @@ class GatewayMetricsCache:
             "autonomy_permits",
             "autonomy_recoveries",
             "federation",
+            "storage",
         ):
             copied[key] = dict(copied.get(key) or {})
         return copied

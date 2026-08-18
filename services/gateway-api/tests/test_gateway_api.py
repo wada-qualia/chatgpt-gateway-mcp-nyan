@@ -5869,6 +5869,10 @@ def test_metrics_handler_is_database_free_and_refresh_sql_is_bounded(
     assert "gateway_metrics_cache_age_seconds" in response.text
     assert "gateway_metrics_cache_stale" in response.text
     assert "gateway_metrics_refresh_failures_total" in response.text
+    assert "gateway_storage_monitor_available" in response.text
+    assert "gateway_storage_disk_usage_ratio" in response.text
+    assert 'gateway_storage_disk_watermark{level="warning"}' in response.text
+    assert 'gateway_storage_disk_watermark{level="critical"}' in response.text
     assert "gateway_outbox_counts_estimated 0" in response.text
 
     event.listen(database.engine, "before_cursor_execute", capture_statement)

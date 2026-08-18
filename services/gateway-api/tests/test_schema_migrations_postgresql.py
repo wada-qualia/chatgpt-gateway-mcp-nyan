@@ -49,6 +49,14 @@ ONLINE_INDEX_SQL = {
         "WHERE traffic_delivery_status = 'pending'"
     ),
 }
+CAPACITY_INDEX_DROPS = (
+    "ix_outbox_events_audit_event_id",
+    "ix_outbox_events_published_at",
+    "ix_outbox_events_lock_token",
+    "ix_outbox_events_locked_by",
+    "ix_outbox_events_subject",
+    "ix_outbox_events_replayed_from_id",
+)
 
 
 @pytest.fixture
@@ -132,6 +140,21 @@ def _index_states(engine: Engine) -> dict[str, bool]:
         return {str(name): bool(valid) for name, valid in rows}
 
 
+def _capacity_indexes_present(engine: Engine) -> set[str]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT index_class.relname "
+                "FROM pg_index AS index_state "
+                "JOIN pg_class AS index_class "
+                "ON index_class.oid = index_state.indexrelid "
+                "WHERE index_class.relname = ANY(:names)"
+            ),
+            {"names": list(CAPACITY_INDEX_DROPS)},
+        )
+        return {str(name) for (name,) in rows}
+
+
 def _create_valid_indexes(engine: Engine) -> None:
     with engine.begin() as connection:
         for statement in ONLINE_INDEX_SQL.values():
@@ -183,10 +206,12 @@ def test_first_run_creates_online_indexes_and_retry_is_idempotent(
 
     assert first.current_revision == HEAD_REVISION
     assert {item.name: item.action for item in first.online_index_operations} == {
-        name: "created" for name in ONLINE_INDEX_SQL
+        **{name: "created" for name in ONLINE_INDEX_SQL},
+        **{name: "dropped" for name in CAPACITY_INDEX_DROPS},
     }
     assert second.online_index_operations == ()
     assert _index_states(pg_engine) == {name: True for name in ONLINE_INDEX_SQL}
+    assert _capacity_indexes_present(pg_engine) == set()
 
 
 def test_existing_valid_indexes_are_reused(pg_engine: Engine) -> None:
@@ -196,8 +221,29 @@ def test_existing_valid_indexes_are_reused(pg_engine: Engine) -> None:
     result = run_schema_migrations(pg_engine)
 
     assert {item.name: item.action for item in result.online_index_operations} == {
-        name: "reused" for name in ONLINE_INDEX_SQL
+        **{name: "reused" for name in ONLINE_INDEX_SQL},
+        **{name: "dropped" for name in CAPACITY_INDEX_DROPS},
     }
+    assert _capacity_indexes_present(pg_engine) == set()
+
+
+def test_previously_absent_capacity_index_is_accepted(pg_engine: Engine) -> None:
+    _prepare_prod_revision(pg_engine)
+    absent_name = CAPACITY_INDEX_DROPS[0]
+    with pg_engine.begin() as connection:
+        connection.exec_driver_sql(f'DROP INDEX "{absent_name}"')
+
+    result = run_schema_migrations(pg_engine)
+
+    actions = {item.name: item.action for item in result.online_index_operations}
+    assert actions[absent_name] == "absent"
+    for name in CAPACITY_INDEX_DROPS[1:]:
+        assert actions[name] == "dropped"
+    assert _capacity_indexes_present(pg_engine) == set()
+    unique_constraints = {
+        item["name"] for item in inspect(pg_engine).get_unique_constraints("outbox_events")
+    }
+    assert "uq_outbox_event_audit_event" in unique_constraints
 
 
 def test_matching_invalid_index_is_rebuilt(pg_engine: Engine) -> None:

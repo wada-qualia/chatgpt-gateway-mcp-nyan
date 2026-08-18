@@ -12,7 +12,9 @@ from gateway_api import schema_migrations
 from gateway_api.database import Base
 from gateway_api.migration_operations import (
     CreateIndexConcurrently,
+    DropIndexConcurrently,
     create_index_concurrently,
+    drop_index_concurrently,
 )
 from gateway_api.schema_migrations import (
     HEAD_REVISION,
@@ -25,6 +27,15 @@ from gateway_api.schema_migrations import (
     run_schema_migrations,
 )
 from sqlalchemy import create_engine, inspect, text
+
+CAPACITY_INDEX_DROPS = (
+    "ix_outbox_events_audit_event_id",
+    "ix_outbox_events_published_at",
+    "ix_outbox_events_lock_token",
+    "ix_outbox_events_locked_by",
+    "ix_outbox_events_subject",
+    "ix_outbox_events_replayed_from_id",
+)
 
 
 def sqlite_engine(path: Path):
@@ -125,15 +136,19 @@ def test_live_deployment_plan_from_0011_declares_online_indexes(
 
     assert plan.current_revision == "20260727_0011"
     assert plan.head_revision == HEAD_REVISION
-    assert plan.pending_revisions == ("20260811_0012", HEAD_REVISION)
-    assert plan.compatibility == ("expand", "expand")
+    assert plan.pending_revisions == (
+        "20260811_0012",
+        "20260818_0013",
+        HEAD_REVISION,
+    )
+    assert plan.compatibility == ("expand", "expand", "expand")
     assert plan.safe_for_live_expand is True
     assert plan.online_index_operations == (
         "ix_outbox_events_ready_claim",
         "ix_outbox_events_stale_claim",
         "ix_agent_tool_calls_lup_pending_schedule",
         "ix_outbox_events_active_created_at",
-    )
+    ) + CAPACITY_INDEX_DROPS
 
 
 def test_live_deployment_plan_from_0012_is_hot_path_index_only(
@@ -145,10 +160,27 @@ def test_live_deployment_plan_from_0012_is_hot_path_index_only(
     plan = get_migration_plan(target_engine)
 
     assert plan.current_revision == "20260811_0012"
+    assert plan.pending_revisions == ("20260818_0013", HEAD_REVISION)
+    assert plan.compatibility == ("expand", "expand")
+    assert plan.safe_for_live_expand is True
+    assert plan.online_index_operations == (
+        "ix_outbox_events_active_created_at",
+    ) + CAPACITY_INDEX_DROPS
+
+
+def test_live_deployment_plan_from_0013_only_drops_capacity_indexes(
+    tmp_path: Path,
+) -> None:
+    target_engine = sqlite_engine(tmp_path / "deployment-plan-0013.sqlite")
+    command.upgrade(alembic_config(str(target_engine.url)), "20260818_0013")
+
+    plan = get_migration_plan(target_engine)
+
+    assert plan.current_revision == "20260818_0013"
     assert plan.pending_revisions == (HEAD_REVISION,)
     assert plan.compatibility == ("expand",)
     assert plan.safe_for_live_expand is True
-    assert plan.online_index_operations == ("ix_outbox_events_active_created_at",)
+    assert plan.online_index_operations == CAPACITY_INDEX_DROPS
 
 
 def test_concurrent_index_declarations_are_strictly_typed() -> None:
@@ -173,6 +205,20 @@ def test_concurrent_index_declarations_are_strictly_typed() -> None:
             table="example_rows",
             columns=("id",),
             predicate="status = 'pending'; DROP TABLE users",
+        )
+
+
+def test_concurrent_index_drop_declarations_are_strictly_typed() -> None:
+    operation = drop_index_concurrently(
+        name="ix_example_history",
+        table="example_rows",
+    )
+
+    assert isinstance(operation, DropIndexConcurrently)
+    with pytest.raises(ValueError, match="concurrent index drop"):
+        drop_index_concurrently(
+            name="ix_example_history;drop",
+            table="example_rows",
         )
 
 
@@ -204,7 +250,7 @@ def test_module_cli_loads_typed_online_operations_once(tmp_path: Path) -> None:
         "ix_outbox_events_stale_claim",
         "ix_agent_tool_calls_lup_pending_schedule",
         "ix_outbox_events_active_created_at",
-    ]
+    ] + list(CAPACITY_INDEX_DROPS)
 
 
 def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
@@ -288,6 +334,12 @@ def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
         "ix_outbox_events_ready_claim",
         "ix_outbox_events_stale_claim",
     } <= outbox_indexes
+    assert set(CAPACITY_INDEX_DROPS).isdisjoint(outbox_indexes)
+    outbox_unique_constraints = {
+        item["name"]
+        for item in inspect(target_engine).get_unique_constraints("outbox_events")
+    }
+    assert "uq_outbox_event_audit_event" in outbox_unique_constraints
 
 
 def test_legacy_database_is_adopted_and_upgraded(tmp_path: Path) -> None:

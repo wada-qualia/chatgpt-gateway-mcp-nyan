@@ -445,9 +445,14 @@ def test_expand_migration_preserves_release_one_slot_contract(
         assert columns <= {
             item["name"] for item in current_inspector.get_columns(table)
         }
-        assert old_indexes[table] <= {
+        current_indexes = {
             item["name"] for item in current_inspector.get_indexes(table)
         }
+        allowed_removed_indexes = (
+            set(CAPACITY_INDEX_DROPS) if table == "outbox_events" else set()
+        )
+        assert old_indexes[table] - allowed_removed_indexes <= current_indexes
+        assert allowed_removed_indexes.isdisjoint(current_indexes)
     new_columns = {
         item["name"]: item for item in current_inspector.get_columns("agent_tool_calls")
     }

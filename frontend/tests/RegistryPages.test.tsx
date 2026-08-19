@@ -288,3 +288,196 @@ test('renders safe administration metadata and provider filtering', async () => 
   expect(await screen.findByText('ChatGPT Connector')).toBeInTheDocument();
   expect(screen.getByText('workspace:read')).toBeInTheDocument();
 });
+
+
+test('renders semantic approval review and submits a canonical vote only after confirmation', async () => {
+  let voted = false;
+  const baseApproval = {
+    id: 'approval-1',
+    status: 'pending',
+    action_kind: 'deploy',
+    action_class: 'production',
+    tool: 'ssh_device_run_command',
+    command_profile: 'deploy',
+    created_by_subject: 'keycloak:operator',
+    proposer_agent_id: 'agent-proposer',
+    executor_agent_id: 'agent-executor',
+    policy_id: 'policy-1',
+    policy_generation: 9,
+    command_id: 'command-1',
+    work_item_id: 'work-1',
+    integration_id: null,
+    payload_summary: { target: 'service-a' },
+    quorum_required: 2,
+    require_admin_approval: true,
+    expires_at: '2026-08-19T12:00:00Z',
+    created_at: '2026-08-18T12:00:00Z',
+    updated_at: '2026-08-18T12:00:00Z',
+    votes: [],
+    review: {
+      surface: 'gateway',
+      authorized: true,
+      can_vote: true,
+      reason: null,
+      current_voter_decision: null,
+      approve_count: 0,
+      reject_count: 0,
+      quorum_required: 2,
+      quorum_met: false,
+      admin_required: true,
+      admin_approve_count: 0,
+      expired: false,
+      target: { kind: 'gateway', review_surface: 'gateway' }
+    }
+  };
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes('/api/agent-autonomy/approvals/approval-1/votes')) {
+      expect(init?.method).toBe('POST');
+      expect(init?.body).toBe(JSON.stringify({ decision: 'approve', reason: 'Reviewed by operator' }));
+      voted = true;
+      return jsonResponse({
+        ...baseApproval,
+        votes: [
+          {
+            id: 'vote-1',
+            voter_subject: 'keycloak:reviewer',
+            decision: 'approve',
+            reason: 'Reviewed by operator',
+            created_at: '2026-08-18T12:05:00Z'
+          }
+        ],
+        review: {
+          ...baseApproval.review,
+          can_vote: false,
+          reason: 'Current reviewer already voted',
+          current_voter_decision: 'approve',
+          approve_count: 1
+        }
+      });
+    }
+    if (url.includes('/api/registry/autonomy/approvals')) {
+      return jsonResponse({
+        items: [
+          voted
+            ? {
+                ...baseApproval,
+                votes: [
+                  {
+                    id: 'vote-1',
+                    voter_subject: 'keycloak:reviewer',
+                    decision: 'approve',
+                    reason: 'Reviewed by operator',
+                    created_at: '2026-08-18T12:05:00Z'
+                  }
+                ],
+                review: {
+                  ...baseApproval.review,
+                  can_vote: false,
+                  reason: 'Current reviewer already voted',
+                  current_voter_decision: 'approve',
+                  approve_count: 1
+                }
+              }
+            : baseApproval
+        ],
+        next_cursor: null,
+        has_more: false
+      });
+    }
+    return jsonResponse({ items: [], next_cursor: null, has_more: false });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  renderRegistry(<AutonomyRegistryPage />);
+  fireEvent.click(await screen.findByText('deploy'));
+
+  expect(screen.getByText('Record details')).toBeInTheDocument();
+  expect(screen.getByText('Review state')).toBeInTheDocument();
+  expect(screen.getByText('Immutable target')).toBeInTheDocument();
+  expect(screen.getByText('Raw record')).toBeInTheDocument();
+  expect(screen.getByText('Required quorum')).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText('Decision reason (optional)'), {
+    target: { value: 'Reviewed by operator' }
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+  expect(fetchMock).not.toHaveBeenCalledWith(
+    '/api/agent-autonomy/approvals/approval-1/votes',
+    expect.any(Object)
+  );
+  expect(screen.getByRole('alertdialog', { name: 'Confirm approve' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm approve' }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/agent-autonomy/approvals/approval-1/votes',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+  expect((await screen.findAllByText('Current reviewer already voted')).length).toBeGreaterThan(0);
+});
+
+test('routes AFFiNE approvals to native notifications without gateway decision controls', async () => {
+  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('/api/registry/autonomy/approvals')) {
+      return jsonResponse({
+        items: [
+          {
+            id: 'approval-affine-1',
+            status: 'pending',
+            action_kind: 'update_document',
+            action_class: 'write',
+            tool: 'research_update_document',
+            command_profile: null,
+            quorum_required: 1,
+            require_admin_approval: false,
+            expires_at: '2026-08-19T12:00:00Z',
+            created_at: '2026-08-18T12:00:00Z',
+            updated_at: '2026-08-18T12:00:00Z',
+            votes: [],
+            review: {
+              surface: 'affine',
+              authorized: true,
+              can_vote: false,
+              reason: 'AFFiNE-targeted approvals are reviewed in AFFiNE Notifications',
+              current_voter_decision: null,
+              approve_count: 0,
+              reject_count: 0,
+              quorum_required: 1,
+              quorum_met: false,
+              admin_required: false,
+              admin_approve_count: 0,
+              expired: false,
+              target: {
+                kind: 'mcp_federation',
+                provider: 'affine',
+                review_surface: 'affine',
+                preparation_id: 'prep-1',
+                server_id: 'server-1',
+                tool_id: 'tool-1',
+                revision_id: 'revision-1',
+                server_name: 'AFFiNE Research Knowledge Provider',
+                tool_name: 'research_update_document'
+              }
+            }
+          }
+        ],
+        next_cursor: null,
+        has_more: false
+      });
+    }
+    return jsonResponse({ items: [], next_cursor: null, has_more: false });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  renderRegistry(<AutonomyRegistryPage />);
+  fireEvent.click(await screen.findByText('update_document'));
+
+  expect(screen.getAllByText(/reviewed in AFFiNE Notifications/).length).toBeGreaterThan(0);
+  expect(screen.getByText('prep-1')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+});

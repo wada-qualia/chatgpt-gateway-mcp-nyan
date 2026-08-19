@@ -18,11 +18,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from . import database
 from . import models as _models
 from .config import get_settings
-from .migration_operations import CreateIndexConcurrently
+from .migration_operations import CreateIndexConcurrently, DropIndexConcurrently
 
 BASELINE_REVISION = "20260725_0001"
 PROJECTION_REVISION = "20260725_0002"
-HEAD_REVISION = "20260818_0013"
+HEAD_REVISION = "20260818_0014"
 LEGACY_ANCHOR_TABLES = {"users", "secret_blobs", "oauth_clients"}
 REVISION_PATTERN = re.compile(r"^(?P<date>\d{8})_(?P<sequence>\d{4})$")
 
@@ -30,7 +30,7 @@ REVISION_PATTERN = re.compile(r"^(?P<date>\d{8})_(?P<sequence>\d{4})$")
 @dataclass(frozen=True, slots=True)
 class OnlineIndexReceipt:
     name: str
-    action: Literal["created", "reused", "rebuilt"]
+    action: Literal["created", "reused", "rebuilt", "dropped", "absent"]
     valid: bool
 
 
@@ -111,8 +111,10 @@ def revision_is_forward(current_revision: str | None, required_revision: str) ->
     return current_order > required_order
 
 
-def _online_operations_for_scripts(scripts: Sequence[object]) -> tuple[CreateIndexConcurrently, ...]:
-    operations: list[CreateIndexConcurrently] = []
+def _online_operations_for_scripts(
+    scripts: Sequence[object],
+) -> tuple[CreateIndexConcurrently | DropIndexConcurrently, ...]:
+    operations: list[CreateIndexConcurrently | DropIndexConcurrently] = []
     names: set[str] = set()
     for script in scripts:
         declared = getattr(script.module, "online_operations", ())
@@ -121,7 +123,9 @@ def _online_operations_for_scripts(scripts: Sequence[object]) -> tuple[CreateInd
                 f"Alembic revision {script.revision} online_operations must be a tuple"
             )
         for operation in declared:
-            if not isinstance(operation, CreateIndexConcurrently):
+            if not isinstance(
+                operation, (CreateIndexConcurrently, DropIndexConcurrently)
+            ):
                 raise TypeError(
                     f"Alembic revision {script.revision} declared an unsupported "
                     "online operation"
@@ -468,7 +472,7 @@ def _apply_online_index_operation(
         schema_name=schema_name,
         index_name=operation.name,
     )
-    action: Literal["created", "reused", "rebuilt"] = "created"
+    action: Literal["created", "reused", "rebuilt", "dropped", "absent"] = "created"
     if current is not None:
         if current.table != operation.table or current.signature != expected:
             raise RuntimeError(
@@ -507,9 +511,51 @@ def _apply_online_index_operation(
     )
 
 
+def _apply_online_drop_index_operation(
+    connection: Connection,
+    operation: DropIndexConcurrently,
+) -> OnlineIndexReceipt:
+    schema_name = str(
+        connection.execute(text("SELECT current_schema()")).scalar_one()
+    )
+    current = _index_state(
+        connection,
+        schema_name=schema_name,
+        index_name=operation.name,
+    )
+    if current is None:
+        return OnlineIndexReceipt(
+            name=operation.name,
+            action="absent",
+            valid=True,
+        )
+    if current.table != operation.table:
+        raise RuntimeError(
+            f"concurrent index drop target drift detected: {operation.name} "
+            f"belongs to {current.table}, expected {operation.table}"
+        )
+    connection.exec_driver_sql(
+        f"DROP INDEX CONCURRENTLY {_quoted_identifier(connection, operation.name)}"
+    )
+    final = _index_state(
+        connection,
+        schema_name=schema_name,
+        index_name=operation.name,
+    )
+    if final is not None:
+        raise RuntimeError(
+            f"concurrent index did not become absent: {operation.name}"
+        )
+    return OnlineIndexReceipt(
+        name=operation.name,
+        action="dropped",
+        valid=True,
+    )
+
+
 def _run_online_index_operations(
     active_engine: Engine,
-    operations: tuple[CreateIndexConcurrently, ...],
+    operations: tuple[CreateIndexConcurrently | DropIndexConcurrently, ...],
 ) -> tuple[OnlineIndexReceipt, ...]:
     if not operations or active_engine.dialect.name != "postgresql":
         return ()
@@ -523,7 +569,13 @@ def _run_online_index_operations(
         connection.exec_driver_sql(f"SET lock_timeout TO '{lock_timeout}s'")
         connection.exec_driver_sql(f"SET statement_timeout TO '{timeout}s'")
         for operation in operations:
-            receipts.append(_apply_online_index_operation(connection, operation))
+            if isinstance(operation, CreateIndexConcurrently):
+                receipt = _apply_online_index_operation(connection, operation)
+            elif isinstance(operation, DropIndexConcurrently):
+                receipt = _apply_online_drop_index_operation(connection, operation)
+            else:  # pragma: no cover - guarded by _online_operations_for_scripts
+                raise TypeError(f"unsupported online operation: {type(operation)!r}")
+            receipts.append(receipt)
     return tuple(receipts)
 
 

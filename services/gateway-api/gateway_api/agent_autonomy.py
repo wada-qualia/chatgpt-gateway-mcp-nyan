@@ -13,6 +13,11 @@ from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from .affine_approval_projection import (
+    AffineApprovalProjectionConfig,
+    emit_affine_approval_projection,
+    is_affine_research_server,
+)
 from .agent_collaboration import (
     COMMAND_TERMINAL_STATUSES,
     agent_collaboration_service,
@@ -58,8 +63,6 @@ APPROVAL_TERMINAL = {"approved", "rejected", "expired", "revoked"}
 PERMIT_TERMINAL = {"consumed", "expired", "revoked"}
 RECOVERY_TERMINAL = {"succeeded", "exhausted", "cancelled"}
 RECEIPT_STATUSES = {"succeeded", "failed", "partial", "unknown"}
-AFFINE_RESEARCH_PROVIDER_MCP_ENDPOINT = "http://affine-research-provider:8010/mcp"
-
 DEFAULT_APPROVAL_RULES: dict[str, dict[str, Any]] = {
     "read": {
         "quorum": 0,
@@ -1691,13 +1694,8 @@ class AgentAutonomyService:
         if preparation is not None:
             server = db.get(McpServer, preparation.server_id)
             tool = db.get(McpTool, preparation.tool_id)
-            is_affine = bool(
-                server is not None
-                and server.origin == "gateway"
-                and server.transport == "streamable_http"
-                and str(server.endpoint_url or "").rstrip("/")
-                == AFFINE_RESEARCH_PROVIDER_MCP_ENDPOINT
-            )
+            affine_config = AffineApprovalProjectionConfig.from_settings(get_settings())
+            is_affine = is_affine_research_server(server, config=affine_config)
             target = {
                 "kind": "mcp_federation",
                 "provider": "affine" if is_affine else "mcp",
@@ -1792,12 +1790,20 @@ class AgentAutonomyService:
         if status:
             query = query.filter(ApprovalRequest.status == status)
         rows = query.order_by(ApprovalRequest.created_at.desc()).all()
-        changed = False
+        changed_rows: list[ApprovalRequest] = []
         for row in rows:
             before = row.status
             self._expire_approval(row)
-            changed = changed or before != row.status
-        if changed:
+            if before != row.status:
+                changed_rows.append(row)
+        if changed_rows:
+            for row in changed_rows:
+                emit_affine_approval_projection(
+                    db,
+                    request=row,
+                    projection_kind="approval_updated",
+                    actor_subject="system:autonomy-worker",
+                )
             db.commit()
         return rows
 
@@ -1892,6 +1898,13 @@ class AgentAutonomyService:
             },
             status="warning" if decision == "reject" else "success",
             commit=False,
+        )
+        emit_affine_approval_projection(
+            db,
+            request=request,
+            projection_kind="approval_updated",
+            actor_subject=user.subject,
+            votes=votes,
         )
         db.commit()
         db.refresh(request)
@@ -2213,6 +2226,15 @@ class AgentAutonomyService:
                 status="success" if status == "succeeded" else "warning",
                 commit=False,
             )
+            request = db.get(ApprovalRequest, permit.approval_request_id)
+            if request is not None:
+                emit_affine_approval_projection(
+                    db,
+                    request=request,
+                    projection_kind="action_result",
+                    actor_subject=owner_subject,
+                    receipt=receipt,
+                )
             db.commit()
         except IntegrityError as exc:
             db.rollback()

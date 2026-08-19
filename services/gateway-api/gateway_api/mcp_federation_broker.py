@@ -13,6 +13,10 @@ from sqlalchemy import and_, bindparam, exists, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .affine_approval_projection import (
+    decorate_preparation_preview,
+    emit_affine_approval_projection,
+)
 from .agent_autonomy import DEFAULT_APPROVAL_RULES, agent_autonomy_service
 from .config import get_settings
 from .crypto import decrypt_text, encrypt_text
@@ -1138,6 +1142,10 @@ def prepare_action(
             "schema_hash": item.revision.schema_hash,
             "arguments_sha256": arguments_hash,
             "justification": payload.justification,
+            "workspace_id": str(payload.arguments.get("workspace_id") or ""),
+            "document_id": (
+                str(payload.arguments.get("document_id") or "") or None
+            ),
         },
         quorum_required=int(rule["quorum"]),
         require_admin_approval=bool(rule["require_admin"]),
@@ -1166,13 +1174,22 @@ def prepare_action(
         arguments_redacted={key: "[REDACTED]" for key in sorted(payload.arguments)},
         arguments_sha256=arguments_hash,
         justification=payload.justification,
-        preview={
-            "server": item.server.display_name,
-            "tool": item.tool.upstream_name,
-            "argument_names": sorted(payload.arguments),
-            "argument_count": len(payload.arguments),
-            "schema_hash": item.revision.schema_hash,
-        },
+        preview=decorate_preparation_preview(
+            server=item.server,
+            tool=item.tool,
+            arguments=payload.arguments,
+            base_preview={
+                "server": item.server.display_name,
+                "tool": item.tool.upstream_name,
+                "argument_names": sorted(payload.arguments),
+                "argument_count": len(payload.arguments),
+                "schema_hash": item.revision.schema_hash,
+                "workspace_id": str(payload.arguments.get("workspace_id") or ""),
+                "document_id": (
+                    str(payload.arguments.get("document_id") or "") or None
+                ),
+            },
+        ),
         approval_class=item.approval_class.value,
         exposure_id=item.exposure.id,
         exposure_version=item.exposure.version,
@@ -1190,6 +1207,17 @@ def prepare_action(
         updated_at=now,
     )
     db.add(preparation)
+    db.flush()
+    emit_affine_approval_projection(
+        db,
+        request=approval,
+        projection_kind="approval_requested",
+        actor_subject=user.subject,
+        preparation=preparation,
+        server=item.server,
+        tool=item.tool,
+        votes=[],
+    )
     emit_event(
         db,
         event_type="gateway.mcp.action.prepared.v1",

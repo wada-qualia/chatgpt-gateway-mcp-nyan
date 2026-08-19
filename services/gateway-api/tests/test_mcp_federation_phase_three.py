@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
-
 from gateway_api.agent_autonomy import agent_autonomy_service
 from gateway_api.config import get_settings
 from gateway_api.dto import (
@@ -32,7 +30,6 @@ from gateway_api.mcp_federation_broker import (
     search_catalog,
 )
 from gateway_api.mcp_upstream import UpstreamCallResult
-from gateway_api.routers.mcp import _tools
 from gateway_api.models import (
     ActionReceipt,
     AgentCommand,
@@ -42,9 +39,15 @@ from gateway_api.models import (
     McpTool,
     McpToolExposure,
     McpToolRevision,
+    OutboxEvent,
     SecretBlob,
     User,
 )
+from gateway_api.routers.mcp import _tools
+from jsonschema import Draft202012Validator
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture
@@ -627,3 +630,179 @@ def test_approved_action_is_rejected_after_exposure_change(db: Session) -> None:
             )
         )
     assert upstream.calls == []
+
+
+def test_affine_guarded_action_projects_atomically_to_outbox(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = _user(db)
+    server = create_server(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        idempotency_key="affine-projection-server",
+        data={
+            "display_name": "AFFiNE Research Knowledge v1",
+            "origin": "gateway",
+            "transport": "streamable_http",
+            "endpoint_url": "http://affine-research-provider:8010/mcp",
+            "thin_client_id": None,
+            "runtime_id": None,
+            "credential_binding_id": None,
+        },
+    )
+    reconcile_catalog_snapshot(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        server_id=server.id,
+        catalog_generation=1,
+        protocol_version="2025-11-25",
+        tools=[
+            {
+                "upstream_name": "research_v1_document_update_title",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "workspace_id": {"type": "string"},
+                        "document_id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "expected_title": {"type": "string"},
+                    },
+                    "required": [
+                        "workspace_id",
+                        "document_id",
+                        "title",
+                        "expected_title",
+                    ],
+                    "additionalProperties": False,
+                },
+                "output_schema": {"type": "object"},
+                "title": "Update title",
+                "description": "Update one AFFiNE document title.",
+                "annotations": {"destructiveHint": False},
+            }
+        ],
+    )
+    _configure_policy(db, server)
+    tool = db.query(McpTool).filter(McpTool.server_id == server.id).one()
+    revision = _classify_and_expose(
+        db,
+        tool,
+        action_class="write",
+        read_only_status="unverified",
+        approval_class="operator",
+    )
+
+    monkeypatch.setenv("GATEWAY_OUTBOX_ENABLED", "true")
+    monkeypatch.setenv("GATEWAY_AFFINE_APPROVAL_PROJECTION_ENABLED", "true")
+    monkeypatch.setenv("GATEWAY_AFFINE_APPROVAL_PREVIEW_MAX_CHARS", "128")
+    get_settings.cache_clear()
+
+    tool_ref = f"mcp-tool://{server.id}/{tool.id}/{revision.id}"
+    prepared = prepare_action(
+        db,
+        user=user,
+        payload=McpActionPrepareInput(
+            tool_ref=tool_ref,
+            schema_hash=revision.schema_hash,
+            arguments={
+                "workspace_id": "workspace-1",
+                "document_id": "document-1",
+                "title": "New title",
+                "expected_title": "Old title",
+            },
+            justification="Review title change.",
+            idempotency_key="affine-title-projection",
+        ),
+        preparation_ttl_seconds=900,
+    )
+    preparation = db.get(
+        McpActionPreparation, prepared["preparation"]["preparation_id"]
+    )
+    assert preparation is not None
+    assert preparation.preview["affine_approval"] == {
+        "kind": "title_update",
+        "summary": "Update document title",
+        "before_text": "Old title",
+        "after_text": "New title",
+        "before_hash": None,
+        "after_hash": None,
+        "items": [],
+        "target_workspace_id": None,
+        "target_document_id": None,
+        "source_url": None,
+        "source_title": None,
+        "lifecycle_from": None,
+        "lifecycle_to": None,
+        "truncated": False,
+    }
+    events = (
+        db.query(OutboxEvent)
+        .filter(OutboxEvent.event_type == "gateway.affine.approval.projected.v1")
+        .order_by(OutboxEvent.created_at, OutboxEvent.id)
+        .all()
+    )
+    assert len(events) == 1
+    requested = events[0].payload
+    assert requested["projection_kind"] == "approval_requested"
+    assert requested["approval_request_id"] == preparation.approval_request_id
+    assert requested["workspace_id"] == "workspace-1"
+    assert requested["document_id"] == "document-1"
+    assert requested["tool_name"] == "research_v1_document_update_title"
+    schema = json.loads(
+        Path("schemas/gateway.affine.approval.projected.v1.schema.json").read_text()
+    )
+    Draft202012Validator(schema).validate(requested)
+
+    approval = agent_autonomy_service.cast_vote(
+        db,
+        request_id=preparation.approval_request_id,
+        user=user,
+        decision="approve",
+        reason="Reviewed in AFFiNE.",
+    )
+    assert approval.status == "approved"
+    events = (
+        db.query(OutboxEvent)
+        .filter(OutboxEvent.event_type == "gateway.affine.approval.projected.v1")
+        .order_by(OutboxEvent.created_at, OutboxEvent.id)
+        .all()
+    )
+    assert len(events) == 2
+    assert events[-1].payload["projection_kind"] == "approval_updated"
+    assert events[-1].payload["status"] == "approved"
+    assert events[-1].payload["approve_count"] == 1
+    Draft202012Validator(schema).validate(events[-1].payload)
+
+    permit = agent_autonomy_service.issue_permit(
+        db,
+        owner_subject=user.subject,
+        actor_subject=user.subject,
+        request_id=approval.id,
+        ttl_seconds=300,
+    )
+    executed = asyncio.run(
+        execute_action(
+            db,
+            user=user,
+            payload=McpActionExecuteInput(
+                preparation_id=preparation.id,
+                permit_id=permit.id,
+                expected_schema_hash=revision.schema_hash,
+            ),
+            upstream=StubUpstream(),
+            gateway_tool_call_id="affine-title-write",
+        )
+    )
+    assert executed["receipt_status"] == "succeeded"
+    events = (
+        db.query(OutboxEvent)
+        .filter(OutboxEvent.event_type == "gateway.affine.approval.projected.v1")
+        .order_by(OutboxEvent.created_at, OutboxEvent.id)
+        .all()
+    )
+    assert len(events) == 3
+    assert events[-1].payload["projection_kind"] == "action_result"
+    assert events[-1].payload["result"]["status"] == "succeeded"
+    Draft202012Validator(schema).validate(events[-1].payload)

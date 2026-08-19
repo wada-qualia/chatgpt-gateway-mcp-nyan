@@ -317,6 +317,170 @@
   word-break: break-word;
 }
 
+.registry-detail-semantic {
+  overflow: visible;
+}
+
+.registry-detail-body {
+  display: grid;
+  gap: 18px;
+  max-height: 72vh;
+  overflow: auto;
+  padding: 16px;
+}
+
+.registry-detail-section {
+  display: grid;
+  gap: 10px;
+}
+
+.registry-detail-section h3 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.registry-detail-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.registry-detail-field {
+  background: #f8fafc;
+  border: 1px solid #eaecf0;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.registry-detail-field > span {
+  color: #667085;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.registry-detail-field > strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.registry-detail-muted,
+.registry-review-routing,
+.registry-review-error {
+  font-size: 13px;
+  margin: 0;
+}
+
+.registry-detail-muted {
+  color: #667085;
+}
+
+.registry-votes {
+  display: grid;
+  gap: 8px;
+}
+
+.registry-vote {
+  align-items: center;
+  border: 1px solid #eaecf0;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding: 10px;
+}
+
+.registry-vote > span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.registry-vote > p {
+  color: #475467;
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.registry-review-actions {
+  border-top: 1px solid #eaecf0;
+  padding-top: 16px;
+}
+
+.registry-review-reason {
+  display: grid;
+  gap: 6px;
+}
+
+.registry-review-reason > span {
+  color: #475467;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.registry-review-reason textarea {
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  font: inherit;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.registry-review-buttons,
+.registry-confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.registry-review-routing {
+  background: #f8fafc;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  color: #344054;
+  line-height: 1.5;
+  padding: 12px;
+}
+
+.registry-confirmation {
+  background: #fffcf5;
+  border: 1px solid #fec84b;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.registry-confirmation > p {
+  color: #475467;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.registry-review-error {
+  color: #b42318;
+}
+
+.registry-raw {
+  border-top: 1px solid #eaecf0;
+  padding-top: 14px;
+}
+
+.registry-raw > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.registry-detail .registry-raw pre {
+  border-radius: 8px;
+  margin-top: 10px;
+  max-height: 40vh;
+}
+
 @media (max-width: 1180px) {
   .registry-content.has-detail {
     grid-template-columns: minmax(0, 1fr);

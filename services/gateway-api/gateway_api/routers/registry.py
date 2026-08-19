@@ -8,6 +8,7 @@ from sqlalchemy import Text, func, or_
 from sqlalchemy.orm import Session
 
 from ..agent_autonomy import (
+    agent_autonomy_service,
     approval_payload,
     assignment_payload,
     control_payload,
@@ -759,7 +760,7 @@ async def autonomy_approvals(
     db: Session = Depends(get_db),
 ) -> CursorPage:
     enforce(user, action="read")
-    query = _owned_query(db, ApprovalRequest, user)
+    query = agent_autonomy_service.approval_visibility_query(db, user=user)
     filters = {
         "room_id": room_id,
         "policy_id": policy_id,
@@ -781,10 +782,7 @@ async def autonomy_approvals(
     if rows:
         votes = (
             db.query(ApprovalVote)
-            .filter(
-                ApprovalVote.owner_subject == user.subject,
-                ApprovalVote.request_id.in_([row.id for row in rows]),
-            )
+            .filter(ApprovalVote.request_id.in_([row.id for row in rows]))
             .order_by(ApprovalVote.created_at, ApprovalVote.id)
             .all()
         )
@@ -792,7 +790,12 @@ async def autonomy_approvals(
             votes_by_request[vote.request_id].append(vote)
 
     def serialize(row: ApprovalRequest) -> dict[str, Any]:
-        return approval_payload(row, votes_by_request.get(row.id, []))
+        votes = votes_by_request.get(row.id, [])
+        result = approval_payload(row, votes)
+        result["review"] = agent_autonomy_service.approval_review_projection(
+            db, request=row, user=user, votes=votes
+        )
+        return result
 
     return _page(rows, serialize, next_cursor, has_more)
 

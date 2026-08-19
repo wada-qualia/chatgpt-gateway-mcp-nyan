@@ -342,6 +342,51 @@ def _seed_research_approval(
     return request_id
 
 
+def test_affine_approval_review_projection_uses_canonical_preparation_identity() -> None:
+    db, _ = _worker_db()
+    request_id = _seed_research_approval(
+        db, tool_name="research_v1_document_append"
+    )
+    request = db.get(ApprovalRequest, request_id)
+    reviewer = db.query(User).filter(User.subject == "research-approver").one()
+    assert request is not None
+
+    projection = agent_autonomy_service.approval_review_projection(
+        db, request=request, user=reviewer
+    )
+    assert projection["surface"] == "affine"
+    assert projection["authorized"] is True
+    assert projection["can_vote"] is False
+    assert (
+        projection["reason"]
+        == "AFFiNE-targeted approvals are reviewed in AFFiNE Notifications"
+    )
+    assert projection["target"] == {
+        "kind": "mcp_federation",
+        "provider": "affine",
+        "review_surface": "affine",
+        "preparation_id": "preparation-1",
+        "server_id": "server-affine",
+        "tool_id": "tool-1",
+        "revision_id": "revision-1",
+        "server_name": "AFFiNE research",
+        "tool_name": "research_v1_document_append",
+    }
+
+    server = db.get(McpServer, "server-affine")
+    assert server is not None
+    server.endpoint_url = "https://unrelated.example.test/mcp"
+    db.commit()
+    non_affine = agent_autonomy_service.approval_review_projection(
+        db, request=request, user=reviewer
+    )
+    assert non_affine["surface"] == "gateway"
+    assert non_affine["can_vote"] is True
+    assert non_affine["target"]["provider"] == "mcp"
+    assert non_affine["target"]["server_name"] == "AFFiNE research"
+    db.close()
+
+
 def _unattended_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "gateway_autonomy_enabled": True,

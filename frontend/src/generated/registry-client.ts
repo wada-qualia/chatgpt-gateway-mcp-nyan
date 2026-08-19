@@ -23,10 +23,11 @@ export type RegistryQuery = {
   resource_id?: string;
 } & Record<string, string | number | null | undefined>;
 
-async function request<T>(url: string): Promise<T> {
+async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
+    ...init,
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' }
+    headers: { 'Content-Type': 'application/json', ...init.headers }
   });
   if (!response.ok) {
     throw new Error(await response.text());
@@ -46,5 +47,10 @@ function queryString(params: RegistryQuery) {
 
 export const registryApi = {
   list: <TItem extends RegistryRecord = RegistryRecord>(path: string, params: RegistryQuery = {}) =>
-    request<CursorPage<TItem>>(`/api/registry/${path}${queryString(params)}`)
+    request<CursorPage<TItem>>(`/api/registry/${path}${queryString(params)}`),
+  voteApproval: (requestId: string, decision: 'approve' | 'reject', reason?: string) =>
+    request<RegistryRecord>(`/api/agent-autonomy/approvals/${encodeURIComponent(requestId)}/votes`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, reason: reason?.trim() || null })
+    })
 };

@@ -1,0 +1,399 @@
+openapi: 3.1.0
+info:
+  title: Gateway Outbox History Store Contract
+  version: 1.0.0
+servers:
+  - url: https://history.internal
+security:
+  - mutualTLS: []
+paths:
+  /v1/health:
+    get:
+      operationId: historyHealth
+      responses:
+        "200":
+          description: Store is queryable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /v1/batches/import:
+    post:
+      operationId: importHistoryBatch
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [manifest_json, batch]
+              properties:
+                manifest_json:
+                  type: string
+                batch:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: Batch is durable and queryable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Receipt"
+        "409":
+          description: Batch identity conflicts with an existing immutable object
+        "422":
+          description: Batch or manifest violates the v1 contract
+  /v1/events:
+    get:
+      operationId: listHistoryEvents
+      parameters:
+        - $ref: "#/components/parameters/Status"
+        - $ref: "#/components/parameters/OwnerSubject"
+        - $ref: "#/components/parameters/EventType"
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/BeforeTimestamp"
+        - $ref: "#/components/parameters/BeforeId"
+        - name: include_attempts
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Deterministically ordered cold event page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventPage"
+  /v1/events/{event_id}:
+    get:
+      operationId: getHistoryEvent
+      parameters:
+        - $ref: "#/components/parameters/EventId"
+      responses:
+        "200":
+          description: Archived outbox event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutboxEvent"
+        "404":
+          description: Event is not present in cold history
+  /v1/events/{event_id}/attempts:
+    get:
+      operationId: listHistoryEventAttempts
+      parameters:
+        - $ref: "#/components/parameters/EventId"
+      responses:
+        "200":
+          description: Attempts ordered by attempt number and id
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OutboxDeliveryAttempt"
+        "404":
+          description: Event is not present in cold history
+  /v1/attempts:
+    get:
+      operationId: listHistoryAttempts
+      parameters:
+        - $ref: "#/components/parameters/Status"
+        - name: outbox_event_id
+          in: query
+          schema:
+            type: string
+        - name: replica_id
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/BeforeTimestamp"
+        - $ref: "#/components/parameters/BeforeId"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Deterministically ordered cold delivery-attempt page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttemptPage"
+  /v1/batches/{batch_id}/manifest:
+    get:
+      operationId: getHistoryBatchManifest
+      parameters:
+        - $ref: "#/components/parameters/BatchId"
+      responses:
+        "200":
+          description: Immutable batch manifest
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: Batch not found
+  /v1/batches/{batch_id}/receipt:
+    get:
+      operationId: getHistoryBatchReceipt
+      parameters:
+        - $ref: "#/components/parameters/BatchId"
+      responses:
+        "200":
+          description: Durable/queryable receipt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Receipt"
+        "404":
+          description: Batch not found
+components:
+  securitySchemes:
+    mutualTLS:
+      type: mutualTLS
+  parameters:
+    EventId:
+      name: event_id
+      in: path
+      required: true
+      schema:
+        type: string
+    BatchId:
+      name: batch_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Status:
+      name: status
+      in: query
+      schema:
+        type: string
+    OwnerSubject:
+      name: owner_subject
+      in: query
+      schema:
+        type: string
+    EventType:
+      name: event_type
+      in: query
+      schema:
+        type: string
+    Search:
+      name: search
+      in: query
+      schema:
+        type: string
+    BeforeTimestamp:
+      name: before_timestamp
+      in: query
+      schema:
+        type: string
+        format: date-time
+    BeforeId:
+      name: before_id
+      in: query
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 25
+  schemas:
+    Health:
+      type: object
+      required: [status, schema, batch_count, event_count, attempt_count]
+      properties:
+        status:
+          const: ok
+        schema:
+          const: gateway.outbox.history.batch.v1
+        batch_count:
+          type: integer
+          minimum: 0
+        event_count:
+          type: integer
+          minimum: 0
+        attempt_count:
+          type: integer
+          minimum: 0
+    Receipt:
+      type: object
+      required:
+        - schema
+        - batch_id
+        - durable
+        - queryable
+        - imported_at
+        - event_count
+        - attempt_count
+        - realtime_reference_count
+        - plaintext_sha256
+        - ciphertext_sha256
+        - ciphertext_size_bytes
+        - encryption
+        - key_id
+      properties:
+        schema:
+          const: gateway.outbox.history.receipt.v1
+        batch_id:
+          type: string
+          format: uuid
+        durable:
+          const: true
+        queryable:
+          const: true
+        imported_at:
+          type: string
+          format: date-time
+        event_count:
+          type: integer
+          minimum: 0
+        attempt_count:
+          type: integer
+          minimum: 0
+        realtime_reference_count:
+          type: integer
+          minimum: 0
+        plaintext_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        ciphertext_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        ciphertext_size_bytes:
+          type: integer
+          minimum: 1
+        encryption:
+          const: AES-256-GCM
+        key_id:
+          type: string
+          minLength: 1
+    OutboxEvent:
+      type: object
+      required:
+        - id
+        - audit_event_id
+        - owner_subject
+        - event_type
+        - subject
+        - payload
+        - headers
+        - status
+        - attempt_count
+        - max_attempts
+        - available_at
+        - replay_count
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        audit_event_id:
+          type: string
+        owner_subject:
+          type: string
+        event_type:
+          type: string
+        subject:
+          type: string
+        payload:
+          type: object
+        headers:
+          type: object
+        status:
+          enum: [published, dead_letter, cancelled]
+        attempt_count:
+          type: integer
+        max_attempts:
+          type: integer
+        available_at:
+          type: string
+          format: date-time
+        locked_by:
+          type: [string, "null"]
+        locked_at:
+          type: [string, "null"]
+          format: date-time
+        published_at:
+          type: [string, "null"]
+          format: date-time
+        broker_stream:
+          type: [string, "null"]
+        broker_sequence:
+          type: [integer, "null"]
+        last_error:
+          type: [string, "null"]
+        replay_count:
+          type: integer
+        replayed_from_id:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        attempts:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutboxDeliveryAttempt"
+    OutboxDeliveryAttempt:
+      type: object
+      required:
+        - id
+        - outbox_event_id
+        - attempt_number
+        - replica_id
+        - status
+        - started_at
+      properties:
+        id:
+          type: string
+        outbox_event_id:
+          type: string
+        attempt_number:
+          type: integer
+        replica_id:
+          type: string
+        status:
+          type: string
+        error:
+          type: [string, "null"]
+        broker_stream:
+          type: [string, "null"]
+        broker_sequence:
+          type: [integer, "null"]
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+    EventPage:
+      type: object
+      required: [items, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutboxEvent"
+        has_more:
+          type: boolean
+    AttemptPage:
+      type: object
+      required: [items, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutboxDeliveryAttempt"
+        has_more:
+          type: boolean

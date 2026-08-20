@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import datetime
+from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import Text, func, or_
 from sqlalchemy.orm import Session
 
@@ -27,6 +29,12 @@ from ..agent_collaboration import (
 )
 from ..agent_coordination import handoff_payload, integration_payload, lease_payload
 from ..auth import get_current_user, require_role
+from ..cold_history import (
+    ColdHistoryClient,
+    ColdHistoryProtocolError,
+    ColdHistoryUnavailable,
+    merge_history_pages,
+)
 from ..database import get_db
 from ..dto import AgentToolCallOut, AuditEventOut, CommandSessionOut, FileChangeSetOut
 from ..models import (
@@ -62,7 +70,7 @@ from ..models import (
     ResourceLease,
     User,
 )
-from ..pagination import CursorPage, page_desc
+from ..pagination import CursorPage, decode_cursor, encode_cursor, page_desc
 from ..policy import enforce
 
 router = APIRouter(prefix="/api/registry", tags=["registry"])
@@ -110,6 +118,53 @@ def _page(
         next_cursor=next_cursor,
         has_more=has_more,
     )
+
+
+def _page_payloads(
+    items: list[dict[str, Any]],
+    next_cursor: str | None,
+    has_more: bool,
+) -> CursorPage:
+    return CursorPage(
+        items=[_redact_for_display(item) for item in items],
+        next_cursor=next_cursor,
+        has_more=has_more,
+    )
+
+
+def _cold_history(request: Request) -> ColdHistoryClient | None:
+    client = getattr(request.app.state, "cold_history_client", None)
+    if client is None:
+        return None
+    if not isinstance(client, ColdHistoryClient):
+        raise HTTPException(status_code=503, detail="Cold history client is unavailable")
+    return client
+
+
+def _cold_history_unavailable(_error: Exception) -> HTTPException:
+    return HTTPException(status_code=503, detail="Cold outbox history is temporarily unavailable")
+
+
+def _cursor_boundary(cursor: str | None) -> tuple[str | None, str | None]:
+    if not cursor:
+        return None, None
+    timestamp, item_id = decode_cursor(cursor)
+    return timestamp.isoformat(), item_id
+
+
+def _merged_next_cursor(
+    items: list[dict[str, Any]],
+    *,
+    has_more: bool,
+    timestamp_key: str,
+) -> str | None:
+    if not has_more or not items:
+        return None
+    last = items[-1]
+    value = last.get(timestamp_key)
+    if not isinstance(value, str):
+        raise HTTPException(status_code=502, detail="Cold history pagination payload is invalid")
+    return encode_cursor(datetime.fromisoformat(value), str(last["id"]))
 
 
 def _owned_query(db: Session, model: Any, user: User):
@@ -1030,6 +1085,7 @@ def _oauth_client_payload(row: OAuthClient) -> dict[str, Any]:
 
 @router.get("/operations/outbox", response_model=CursorPage)
 async def operations_outbox(
+    request: Request,
     status: str | None = None,
     owner_subject: str | None = None,
     event_type: str | None = None,
@@ -1057,7 +1113,7 @@ async def operations_outbox(
                 OutboxEvent.owner_subject.ilike(pattern),
             )
         )
-    rows, next_cursor, has_more = page_desc(
+    rows, hot_next_cursor, hot_has_more = page_desc(
         query,
         timestamp_column=OutboxEvent.created_at,
         id_column=OutboxEvent.id,
@@ -1081,11 +1137,41 @@ async def operations_outbox(
     def serialize(row: OutboxEvent) -> dict[str, Any]:
         return _outbox_payload(row, attempts_by_event.get(row.id, []))
 
-    return _page(rows, serialize, next_cursor, has_more)
+    cold = _cold_history(request)
+    if cold is None:
+        return _page(rows, serialize, hot_next_cursor, hot_has_more)
+    before_timestamp, before_id = _cursor_boundary(cursor)
+    try:
+        cold_page = await cold.list_events(
+            status=status,
+            owner_subject=owner_subject,
+            event_type=event_type,
+            search=search,
+            before_timestamp=before_timestamp,
+            before_id=before_id,
+            include_attempts=True,
+            limit=limit,
+        )
+    except (ColdHistoryUnavailable, ColdHistoryProtocolError) as exc:
+        raise _cold_history_unavailable(exc) from exc
+    merged, has_more = merge_history_pages(
+        [serialize(row) for row in rows],
+        cold_page.items,
+        timestamp_key="created_at",
+        limit=limit,
+        hot_has_more=hot_has_more,
+        cold_has_more=cold_page.has_more,
+    )
+    return _page_payloads(
+        merged,
+        _merged_next_cursor(merged, has_more=has_more, timestamp_key="created_at"),
+        has_more,
+    )
 
 
 @router.get("/operations/outbox-attempts", response_model=CursorPage)
 async def operations_outbox_attempts(
+    request: Request,
     status: str | None = None,
     outbox_event_id: str | None = None,
     replica_id: str | None = None,
@@ -1112,14 +1198,42 @@ async def operations_outbox_attempts(
                 OutboxDeliveryAttempt.error.ilike(pattern),
             )
         )
-    rows, next_cursor, has_more = page_desc(
+    rows, hot_next_cursor, hot_has_more = page_desc(
         query,
         timestamp_column=OutboxDeliveryAttempt.started_at,
         id_column=OutboxDeliveryAttempt.id,
         limit=limit,
         cursor=cursor,
     )
-    return _page(rows, _outbox_attempt_payload, next_cursor, has_more)
+    cold = _cold_history(request)
+    if cold is None:
+        return _page(rows, _outbox_attempt_payload, hot_next_cursor, hot_has_more)
+    before_timestamp, before_id = _cursor_boundary(cursor)
+    try:
+        cold_page = await cold.list_attempts(
+            status=status,
+            outbox_event_id=outbox_event_id,
+            replica_id=replica_id,
+            search=search,
+            before_timestamp=before_timestamp,
+            before_id=before_id,
+            limit=limit,
+        )
+    except (ColdHistoryUnavailable, ColdHistoryProtocolError) as exc:
+        raise _cold_history_unavailable(exc) from exc
+    merged, has_more = merge_history_pages(
+        [_outbox_attempt_payload(row) for row in rows],
+        cold_page.items,
+        timestamp_key="started_at",
+        limit=limit,
+        hot_has_more=hot_has_more,
+        cold_has_more=cold_page.has_more,
+    )
+    return _page_payloads(
+        merged,
+        _merged_next_cursor(merged, has_more=has_more, timestamp_key="started_at"),
+        has_more,
+    )
 
 
 @router.get("/operations/replicas", response_model=CursorPage)

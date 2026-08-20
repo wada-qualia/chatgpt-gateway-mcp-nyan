@@ -27,6 +27,17 @@ class Settings(BaseSettings):
     gateway_storage_monitor_path: str = "./data"
     gateway_storage_warning_usage_ratio: float = Field(default=0.85, ge=0.0, le=1.0)
     gateway_storage_critical_usage_ratio: float = Field(default=0.95, ge=0.0, le=1.0)
+    gateway_cold_history_enabled: bool = False
+    gateway_cold_history_base_url: str = ""
+    gateway_cold_history_ca_cert_path: str = ""
+    gateway_cold_history_client_cert_path: str = ""
+    gateway_cold_history_client_key_path: str = ""
+    gateway_cold_history_connect_timeout_seconds: float = Field(
+        default=2.0, ge=0.1, le=30.0
+    )
+    gateway_cold_history_read_timeout_seconds: float = Field(
+        default=15.0, ge=0.1, le=120.0
+    )
     gateway_db_migration_lock_timeout_seconds: int = 15
     gateway_db_migration_statement_timeout_seconds: int = 300
     gateway_db_online_index_timeout_seconds: int = 5400

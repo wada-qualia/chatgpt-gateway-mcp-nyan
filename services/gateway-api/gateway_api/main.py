@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from .cold_history import ColdHistoryClient
 from .config import get_settings
 from .database import MetricsSessionLocal, SessionLocal
 from .mcp_federation_runtime import (
@@ -64,6 +65,7 @@ def _normalized_request_path(request: Request) -> str:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    cold_history_client = ColdHistoryClient.from_settings(settings)
     runtime = GatewayRuntime(settings=settings, session_factory=SessionLocal)
     upstream_mcp_manager = UpstreamMcpManager(
         public_base_url=settings.public_base_url,
@@ -140,6 +142,9 @@ def create_app() -> FastAPI:
             app.state.database_forward_compatible = forward_compatible
             app.state.database_schema_valid = True
             app.state.database_compatible = True
+            if cold_history_client is not None:
+                app.state.initialization_status = "verifying_cold_history"
+                await cold_history_client.health()
             app.state.initialization_status = "starting_runtime"
             app.state.gateway_runtime = runtime
             await asyncio.to_thread(readiness_cache.seed, migration_status)
@@ -170,6 +175,8 @@ def create_app() -> FastAPI:
             await upstream_mcp_manager.stop()
             if runtime_started:
                 await runtime.stop()
+            if cold_history_client is not None:
+                await cold_history_client.close()
             if app.state.initialization_status != "failed":
                 app.state.initialization_status = "stopped"
 
@@ -180,6 +187,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.state.gateway_runtime = runtime
+    app.state.cold_history_client = cold_history_client
     app.state.upstream_mcp_manager = upstream_mcp_manager
     app.state.readiness_cache = readiness_cache
     app.state.metrics_cache = metrics_cache

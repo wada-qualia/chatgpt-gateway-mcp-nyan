@@ -7323,3 +7323,231 @@ def test_mcp_rejected_tool_call_still_records_traffic(client: TestClient) -> Non
         assert call.request_characters == len(raw)
         assert call.response_characters == len(response.text)
         assert call.traffic_delivery_status == "disabled"
+
+
+def test_cold_history_federates_operations_and_registry_reads(client: TestClient) -> None:
+    import httpx
+    from gateway_api.cold_history import ColdHistoryClient
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import AuditEvent, OutboxDeliveryAttempt, OutboxEvent
+
+    hot_time = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    cold_time = hot_time - timedelta(days=1)
+    with SessionLocal() as db:
+        db.add(
+            AuditEvent(
+                id="audit-hot-history",
+                event_type="gateway.history.test.v1",
+                actor_subject="dev:local",
+                action="publish",
+                resource_type="outbox",
+                resource_id="hot-history-event",
+                status="success",
+                payload={},
+                created_at=hot_time,
+            )
+        )
+        db.add(
+            AuditEvent(
+                id="audit-cold-history",
+                event_type="gateway.history.test.v1",
+                actor_subject="dev:local",
+                action="publish",
+                resource_type="outbox",
+                resource_id="cold-history-event",
+                status="success",
+                payload={},
+                created_at=cold_time,
+            )
+        )
+        db.add(
+            OutboxEvent(
+                id="hot-history-event",
+                audit_event_id="audit-hot-history",
+                owner_subject="dev:local",
+                event_type="gateway.history.test.v1",
+                subject="gateway.events.hot",
+                payload={"tier": "hot"},
+                headers={},
+                status="published",
+                attempt_count=1,
+                max_attempts=10,
+                available_at=hot_time,
+                published_at=hot_time,
+                broker_stream="GATEWAY_EVENTS",
+                broker_sequence=100,
+                replay_count=0,
+                created_at=hot_time,
+                updated_at=hot_time,
+            )
+        )
+        db.add(
+            OutboxDeliveryAttempt(
+                id="hot-history-attempt",
+                outbox_event_id="hot-history-event",
+                attempt_number=1,
+                replica_id="gateway-green",
+                status="published",
+                broker_stream="GATEWAY_EVENTS",
+                broker_sequence=100,
+                started_at=hot_time,
+                completed_at=hot_time + timedelta(seconds=1),
+            )
+        )
+        db.commit()
+
+    cold_event = {
+        "id": "cold-history-event",
+        "audit_event_id": "audit-cold-history",
+        "owner_subject": "dev:local",
+        "event_type": "gateway.history.test.v1",
+        "subject": "gateway.events.cold",
+        "payload": {"tier": "cold", "secret": "registry-secret"},
+        "headers": {},
+        "status": "published",
+        "attempt_count": 1,
+        "max_attempts": 10,
+        "available_at": cold_time.isoformat(),
+        "locked_by": None,
+        "locked_at": None,
+        "published_at": cold_time.isoformat(),
+        "broker_stream": "GATEWAY_EVENTS",
+        "broker_sequence": 90,
+        "last_error": None,
+        "replay_count": 0,
+        "replayed_from_id": None,
+        "created_at": cold_time.isoformat(),
+        "updated_at": cold_time.isoformat(),
+    }
+    cold_attempt = {
+        "id": "cold-history-attempt",
+        "outbox_event_id": "cold-history-event",
+        "attempt_number": 1,
+        "replica_id": "gateway-blue",
+        "status": "published",
+        "error": None,
+        "broker_stream": "GATEWAY_EVENTS",
+        "broker_sequence": 90,
+        "started_at": cold_time.isoformat(),
+        "completed_at": (cold_time + timedelta(seconds=1)).isoformat(),
+    }
+
+    def history_handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/v1/events/cold-history-event":
+            return httpx.Response(200, json=cold_event)
+        if path == "/v1/events/cold-history-event/attempts":
+            return httpx.Response(200, json=[cold_attempt])
+        if path == "/v1/events":
+            payload = dict(cold_event)
+            if request.url.params.get("include_attempts") == "true":
+                payload["attempts"] = [cold_attempt]
+            return httpx.Response(200, json={"items": [payload], "has_more": False})
+        if path == "/v1/attempts":
+            return httpx.Response(200, json={"items": [cold_attempt], "has_more": False})
+        return httpx.Response(404, json={"detail": "not found"})
+
+    async_client = httpx.AsyncClient(
+        base_url="https://history.test",
+        transport=httpx.MockTransport(history_handler),
+    )
+    history_client = ColdHistoryClient(
+        base_url="https://history.test",
+        ca_cert_path="unused",
+        client_cert_path="unused",
+        client_key_path="unused",
+        connect_timeout_seconds=1.0,
+        read_timeout_seconds=1.0,
+        client=async_client,
+    )
+    client.app.state.cold_history_client = history_client
+    try:
+        legacy = client.get("/api/operations/outbox", params={"limit": 10})
+        assert legacy.status_code == 200
+        assert [item["id"] for item in legacy.json()] == [
+            "hot-history-event",
+            "cold-history-event",
+        ]
+        cold_lookup = client.get("/api/operations/outbox/cold-history-event")
+        assert cold_lookup.status_code == 200
+        assert cold_lookup.json()["payload"]["tier"] == "cold"
+        cold_attempts = client.get("/api/operations/outbox/cold-history-event/attempts")
+        assert cold_attempts.status_code == 200
+        assert [item["id"] for item in cold_attempts.json()] == ["cold-history-attempt"]
+        cold_cancel = client.post("/api/operations/outbox/cold-history-event/cancel")
+        assert cold_cancel.status_code == 409
+        assert "rehydrated" in cold_cancel.json()["detail"]
+        rehydrated = client.post("/api/operations/outbox/cold-history-event/rehydrate")
+        assert rehydrated.status_code == 200
+        assert rehydrated.json()["id"] == "cold-history-event"
+        repeated = client.post("/api/operations/outbox/cold-history-event/rehydrate")
+        assert repeated.status_code == 200
+        with SessionLocal() as db:
+            restored = db.get(OutboxEvent, "cold-history-event")
+            assert restored is not None
+            assert restored.payload["tier"] == "cold"
+            restored_attempts = (
+                db.query(OutboxDeliveryAttempt)
+                .filter(OutboxDeliveryAttempt.outbox_event_id == "cold-history-event")
+                .all()
+            )
+            assert [item.id for item in restored_attempts] == ["cold-history-attempt"]
+            audit = (
+                db.query(AuditEvent)
+                .filter(
+                    AuditEvent.event_type == "gateway.outbox.history.rehydrated.v1",
+                    AuditEvent.resource_id == "cold-history-event",
+                )
+                .one()
+            )
+            assert audit.actor_subject == "dev:local"
+        registry = client.get("/api/registry/operations/outbox", params={"limit": 10})
+        assert registry.status_code == 200
+        registry_payload = registry.json()
+        assert [item["id"] for item in registry_payload["items"]] == [
+            "hot-history-event",
+            "cold-history-event",
+        ]
+        assert registry_payload["items"][1]["attempts"][0]["id"] == "cold-history-attempt"
+        assert registry_payload["items"][1]["payload"]["secret"] == "[REDACTED]"
+        attempts_registry = client.get(
+            "/api/registry/operations/outbox-attempts", params={"limit": 10}
+        )
+        assert attempts_registry.status_code == 200
+        assert [item["id"] for item in attempts_registry.json()["items"]] == [
+            "hot-history-attempt",
+            "cold-history-attempt",
+        ]
+    finally:
+        client.app.state.cold_history_client = None
+        asyncio.run(history_client.close())
+
+
+def test_cold_history_unavailability_fails_enabled_read_surface_closed(client: TestClient) -> None:
+    import httpx
+    from gateway_api.cold_history import ColdHistoryClient
+
+    def unavailable_handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("offline")
+
+    async_client = httpx.AsyncClient(
+        base_url="https://history.test",
+        transport=httpx.MockTransport(unavailable_handler),
+    )
+    history_client = ColdHistoryClient(
+        base_url="https://history.test",
+        ca_cert_path="unused",
+        client_cert_path="unused",
+        client_key_path="unused",
+        connect_timeout_seconds=1.0,
+        read_timeout_seconds=1.0,
+        client=async_client,
+    )
+    client.app.state.cold_history_client = history_client
+    try:
+        response = client.get("/api/registry/operations/outbox", params={"limit": 10})
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Cold outbox history is temporarily unavailable"
+    finally:
+        client.app.state.cold_history_client = None
+        asyncio.run(history_client.close())

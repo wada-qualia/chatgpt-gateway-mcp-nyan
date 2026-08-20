@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gateway.example.com/contracts/outbox-history/v1/batch-manifest.schema.json",
+  "title": "Gateway Outbox History Batch Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "batch_id",
+    "created_at",
+    "source",
+    "selection",
+    "resume_after",
+    "event_count",
+    "attempt_count",
+    "realtime_reference_count",
+    "event_created_at",
+    "attempt_started_at",
+    "plaintext"
+  ],
+  "properties": {
+    "schema": {
+      "const": "gateway.outbox.history.batch.v1"
+    },
+    "batch_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gateway_revision", "database_revision"],
+      "properties": {
+        "gateway_revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "database_revision": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terminal_statuses", "before", "after"],
+      "properties": {
+        "terminal_statuses": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["published", "dead_letter", "cancelled"]
+          }
+        },
+        "before": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "after": {
+          "anyOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/cursor"}
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        }
+      }
+    },
+    "resume_after": {
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/cursor"}
+      ]
+    },
+    "event_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "attempt_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "realtime_reference_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "event_created_at": {
+      "$ref": "#/$defs/range"
+    },
+    "attempt_started_at": {
+      "$ref": "#/$defs/range"
+    },
+    "plaintext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "size_bytes"],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "cursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created_at", "id"],
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "max": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

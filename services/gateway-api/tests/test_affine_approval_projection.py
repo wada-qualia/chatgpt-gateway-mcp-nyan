@@ -28,11 +28,13 @@ def test_projection_config_requires_transactional_outbox() -> None:
             gateway_outbox_enabled=True,
             gateway_affine_approval_preview_max_chars=256,
             gateway_affine_approval_preview_max_items=7,
+            gateway_affine_approval_reviewer_max_subjects=9,
         )
     )
     assert config.enabled is True
     assert config.preview_max_chars == 256
     assert config.preview_max_items == 7
+    assert config.reviewer_max_subjects == 9
 
 
 def test_preview_is_bounded_and_source_query_is_removed() -> None:

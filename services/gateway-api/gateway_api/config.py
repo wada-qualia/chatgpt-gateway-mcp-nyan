@@ -187,6 +187,7 @@ class Settings(BaseSettings):
     )
     gateway_affine_approval_preview_max_chars: int = 1200
     gateway_affine_approval_preview_max_items: int = 20
+    gateway_affine_approval_reviewer_max_subjects: int = 100
     gateway_research_persistent_writes_enabled: bool = False
     gateway_research_unattended_approval_enabled: bool = False
     gateway_research_unattended_approver_subject: str = ""

@@ -2,7 +2,7 @@
 
 This contract is the versioned Gateway -> AFFiNE projection boundary for automated research-document approvals. Gateway remains authoritative for approval eligibility, quorum, permits and receipts; AFFiNE owns document ACL/data and the reviewer notification UI.
 
-Transport: existing Gateway transactional outbox and NATS JetStream. The event is at-least-once; consumers MUST deduplicate by event_id and MUST NOT interpret notification state as authorization.
+Transport: existing Gateway transactional outbox and NATS JetStream. The event is at-least-once; consumers MUST deduplicate by event_id and MUST NOT interpret notification state as authorization. Gateway additionally projects a bounded `eligible_reviewer_subjects` list computed from the same canonical vote policy; consumers may use it only for notification routing and Gateway MUST re-authorize every vote.
 
 Canonical event: gateway.affine.approval.projected.v1
 

@@ -750,6 +750,8 @@ def test_affine_guarded_action_projects_atomically_to_outbox(
     assert requested["workspace_id"] == "workspace-1"
     assert requested["document_id"] == "document-1"
     assert requested["tool_name"] == "research_v1_document_update_title"
+    assert requested["eligible_reviewer_subjects"] == [user.subject]
+    assert requested["eligible_reviewers_truncated"] is False
     schema = json.loads(
         Path("schemas/gateway.affine.approval.projected.v1.schema.json").read_text()
     )
@@ -773,6 +775,7 @@ def test_affine_guarded_action_projects_atomically_to_outbox(
     assert events[-1].payload["projection_kind"] == "approval_updated"
     assert events[-1].payload["status"] == "approved"
     assert events[-1].payload["approve_count"] == 1
+    assert events[-1].payload["eligible_reviewer_subjects"] == []
     Draft202012Validator(schema).validate(events[-1].payload)
 
     permit = agent_autonomy_service.issue_permit(

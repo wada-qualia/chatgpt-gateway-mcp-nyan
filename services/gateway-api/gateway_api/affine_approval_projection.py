@@ -10,12 +10,14 @@ from sqlalchemy.orm import Session
 from .config import Settings, get_settings
 from .events import emit_event
 from .models import (
+    AccessGrant,
     ActionReceipt,
     ApprovalRequest,
     ApprovalVote,
     McpActionPreparation,
     McpServer,
     McpTool,
+    User,
 )
 
 AFFINE_APPROVAL_PROJECTION_EVENT_TYPE = "gateway.affine.approval.projected.v1"
@@ -31,6 +33,7 @@ class AffineApprovalProjectionConfig(BaseModel):
     server_endpoint: str = Field(min_length=1)
     preview_max_chars: int = Field(default=1200, ge=128, le=8000)
     preview_max_items: int = Field(default=20, ge=1, le=100)
+    reviewer_max_subjects: int = Field(default=100, ge=1, le=500)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> AffineApprovalProjectionConfig:
@@ -39,6 +42,7 @@ class AffineApprovalProjectionConfig(BaseModel):
             server_endpoint=settings.gateway_affine_approval_server_endpoint,
             preview_max_chars=settings.gateway_affine_approval_preview_max_chars,
             preview_max_items=settings.gateway_affine_approval_preview_max_items,
+            reviewer_max_subjects=settings.gateway_affine_approval_reviewer_max_subjects,
         )
         if config.enabled and not settings.gateway_outbox_enabled:
             raise RuntimeError(
@@ -111,10 +115,80 @@ class AffineApprovalProjectionPayload(BaseModel):
     admin_required: bool
     admin_approve_count: int = Field(ge=0)
     disallow_proposer_vote: bool
+    eligible_reviewer_subjects: list[str] = Field(default_factory=list, max_length=500)
+    eligible_reviewers_truncated: bool = False
     expires_at: str
     preview: AffineApprovalPreview
     result: AffineApprovalResultProjection | None = None
 
+
+
+def approval_user_can_vote(
+    db: Session, *, request: ApprovalRequest, user: User
+) -> bool:
+    roles = set(user.roles or [])
+    if user.subject == request.owner_subject or "gateway-admin" in roles:
+        return True
+    grant = (
+        db.query(AccessGrant)
+        .filter(
+            AccessGrant.owner_subject == request.owner_subject,
+            AccessGrant.grantee_subject == user.subject,
+            AccessGrant.resource_type == "autonomy_approval",
+            AccessGrant.resource_id.in_([request.id, request.policy_id, request.room_id]),
+            AccessGrant.status == "active",
+        )
+        .first()
+    )
+    return bool(grant and "approve" in set(grant.scopes or []))
+
+
+def eligible_approval_reviewer_subjects(
+    db: Session,
+    *,
+    request: ApprovalRequest,
+    votes: list[ApprovalVote],
+    maximum: int,
+) -> tuple[list[str], bool]:
+    if request.status != "pending":
+        return [], False
+    voted = {vote.voter_subject for vote in votes}
+    candidates: list[User] = []
+    owner = db.query(User).filter(User.subject == request.owner_subject).one_or_none()
+    if owner is not None:
+        candidates.append(owner)
+    grant_subjects = {
+        grant.grantee_subject
+        for grant in db.query(AccessGrant)
+        .filter(
+            AccessGrant.owner_subject == request.owner_subject,
+            AccessGrant.resource_type == "autonomy_approval",
+            AccessGrant.resource_id.in_([request.id, request.policy_id, request.room_id]),
+            AccessGrant.status == "active",
+        )
+        .all()
+        if "approve" in set(grant.scopes or [])
+    }
+    if grant_subjects:
+        candidates.extend(
+            db.query(User).filter(User.subject.in_(sorted(grant_subjects))).all()
+        )
+    candidates.extend(
+        user for user in db.query(User).all() if "gateway-admin" in set(user.roles or [])
+    )
+    subjects: list[str] = []
+    seen: set[str] = set()
+    for user in sorted(candidates, key=lambda item: item.subject):
+        if user.subject in seen or user.subject in voted:
+            continue
+        if request.disallow_proposer_vote and user.subject == request.created_by_subject:
+            continue
+        if not approval_user_can_vote(db, request=request, user=user):
+            continue
+        seen.add(user.subject)
+        subjects.append(user.subject)
+    truncated = len(subjects) > maximum
+    return subjects[:maximum], truncated
 
 def is_affine_research_server(
     server: McpServer | None, *, config: AffineApprovalProjectionConfig
@@ -358,6 +432,14 @@ def build_affine_approval_projection(
         for vote in approvals
         if "gateway-admin" in set(vote.voter_roles or [])
     ]
+    eligible_reviewer_subjects, eligible_reviewers_truncated = (
+        eligible_approval_reviewer_subjects(
+            db,
+            request=request,
+            votes=votes,
+            maximum=config.reviewer_max_subjects,
+        )
+    )
     summary = dict(request.payload_summary or {})
     workspace_id = str(summary.get("workspace_id") or "")
     document_id = str(summary.get("document_id") or "") or None
@@ -407,6 +489,8 @@ def build_affine_approval_projection(
         admin_required=bool(request.require_admin_approval),
         admin_approve_count=len(admin_approvals),
         disallow_proposer_vote=bool(request.disallow_proposer_vote),
+        eligible_reviewer_subjects=eligible_reviewer_subjects,
+        eligible_reviewers_truncated=eligible_reviewers_truncated,
         expires_at=request.expires_at.isoformat(),
         preview=preview,
         result=result_projection,

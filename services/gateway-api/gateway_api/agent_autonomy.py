@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .affine_approval_projection import (
     AffineApprovalProjectionConfig,
+    approval_user_can_vote,
     emit_affine_approval_projection,
     is_affine_research_server,
 )
@@ -1619,21 +1620,7 @@ class AgentAutonomyService:
         return request
 
     def _can_vote(self, db: Session, *, request: ApprovalRequest, user: User) -> bool:
-        roles = set(user.roles or [])
-        if user.subject == request.owner_subject or "gateway-admin" in roles:
-            return True
-        grant = (
-            db.query(AccessGrant)
-            .filter(
-                AccessGrant.owner_subject == request.owner_subject,
-                AccessGrant.grantee_subject == user.subject,
-                AccessGrant.resource_type == "autonomy_approval",
-                AccessGrant.resource_id.in_([request.id, request.policy_id, request.room_id]),
-                AccessGrant.status == "active",
-            )
-            .first()
-        )
-        return bool(grant and "approve" in set(grant.scopes or []))
+        return approval_user_can_vote(db, request=request, user=user)
 
     def approval_visibility_query(self, db: Session, *, user: User):
         roles = set(user.roles or [])

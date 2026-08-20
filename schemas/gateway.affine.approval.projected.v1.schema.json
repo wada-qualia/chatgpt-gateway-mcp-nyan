@@ -28,6 +28,8 @@
     "admin_required",
     "admin_approve_count",
     "disallow_proposer_vote",
+    "eligible_reviewer_subjects",
+    "eligible_reviewers_truncated",
     "expires_at",
     "preview"
   ],
@@ -143,6 +145,18 @@
       "minimum": 0
     },
     "disallow_proposer_vote": {
+      "type": "boolean"
+    },
+    "eligible_reviewer_subjects": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      }
+    },
+    "eligible_reviewers_truncated": {
       "type": "boolean"
     },
     "expires_at": {

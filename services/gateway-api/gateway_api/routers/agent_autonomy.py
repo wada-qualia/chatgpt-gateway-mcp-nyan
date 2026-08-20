@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from ..affine_approval_delegation import verify_affine_approval_assertion
+from ..affine_approval_projection import is_affine_approval_request
 from ..agent_autonomy import (
     agent_autonomy_service,
     approval_payload,
@@ -31,7 +33,7 @@ from ..dto import (
     RecoveryLoopCreate,
     RecoveryOutcomeCreate,
 )
-from ..models import ApprovalVote, User
+from ..models import ApprovalRequest, ApprovalVote, User
 from ..policy import enforce
 
 router = APIRouter(prefix="/api/agent-autonomy", tags=["agent-autonomy"])
@@ -260,6 +262,40 @@ async def list_approval_requests(
         _approval_response(db, request=request, user=user)
         for request in requests
     ]
+
+
+@router.post("/affine/v1/approvals/{request_id}/votes")
+async def cast_affine_approval_vote(
+    request: Request,
+    request_id: str,
+    payload: ApprovalVoteCreate,
+    db: Annotated[Session, Depends(get_db)],
+    assertion: str = Header(
+        alias="X-AFFiNE-Approval-Assertion", min_length=1, max_length=8192
+    ),
+) -> dict[str, Any]:
+    _, gateway_subject = verify_affine_approval_assertion(
+        assertion,
+        method=request.method,
+        path=request.url.path,
+        approval_request_id=request_id,
+        decision=payload.decision,
+        reason=payload.reason,
+    )
+    approval = db.get(ApprovalRequest, request_id)
+    if approval is None or not is_affine_approval_request(db, request=approval):
+        raise HTTPException(status_code=404, detail="AFFiNE approval request not found")
+    user = db.query(User).filter(User.subject == gateway_subject).one_or_none()
+    if user is None:
+        raise HTTPException(status_code=403, detail="Mapped Gateway reviewer does not exist")
+    voted = agent_autonomy_service.cast_vote(
+        db,
+        request_id=request_id,
+        user=user,
+        decision=payload.decision,
+        reason=payload.reason,
+    )
+    return _approval_response(db, request=voted, user=user)
 
 
 @router.post("/approvals/{request_id}/votes")

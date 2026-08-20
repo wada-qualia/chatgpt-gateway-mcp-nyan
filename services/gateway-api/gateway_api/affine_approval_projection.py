@@ -7,6 +7,10 @@ from urllib.parse import urlsplit, urlunsplit
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from .affine_approval_delegation import (
+    AffineApprovalDelegationConfig,
+    reviewer_bindings,
+)
 from .config import Settings, get_settings
 from .events import emit_event
 from .models import (
@@ -89,6 +93,13 @@ class AffineApprovalResultProjection(BaseModel):
     invocation_id: str | None = None
 
 
+class AffineApprovalReviewerBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    gateway_subject: str = Field(min_length=1, max_length=255)
+    affine_user_id: str = Field(min_length=1, max_length=160)
+
+
 class AffineApprovalProjectionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -116,6 +127,10 @@ class AffineApprovalProjectionPayload(BaseModel):
     admin_approve_count: int = Field(ge=0)
     disallow_proposer_vote: bool
     eligible_reviewer_subjects: list[str] = Field(default_factory=list, max_length=500)
+    eligible_reviewer_bindings: list[AffineApprovalReviewerBinding] = Field(
+        default_factory=list, max_length=500
+    )
+    unmapped_reviewer_count: int = Field(default=0, ge=0)
     eligible_reviewers_truncated: bool = False
     expires_at: str
     preview: AffineApprovalPreview
@@ -391,6 +406,16 @@ def _load_projection_context(
     return preparation, server, tool
 
 
+def is_affine_approval_request(
+    db: Session,
+    *,
+    request: ApprovalRequest,
+    settings: Settings | None = None,
+) -> bool:
+    config = AffineApprovalProjectionConfig.from_settings(settings or get_settings())
+    return _load_projection_context(db, request, config=config) is not None
+
+
 def build_affine_approval_projection(
     db: Session,
     *,
@@ -404,8 +429,12 @@ def build_affine_approval_projection(
     votes: list[ApprovalVote] | None = None,
     receipt: ActionReceipt | None = None,
     config: AffineApprovalProjectionConfig | None = None,
+    delegation_config: AffineApprovalDelegationConfig | None = None,
 ) -> AffineApprovalProjectionPayload | None:
     config = config or AffineApprovalProjectionConfig.from_settings(get_settings())
+    delegation_config = delegation_config or AffineApprovalDelegationConfig.from_settings(
+        get_settings()
+    )
     if preparation is None or server is None or tool is None:
         context = _load_projection_context(db, request, config=config)
         if context is None:
@@ -440,6 +469,12 @@ def build_affine_approval_projection(
             maximum=config.reviewer_max_subjects,
         )
     )
+    raw_bindings, unmapped_reviewer_count = reviewer_bindings(
+        eligible_reviewer_subjects, config=delegation_config
+    )
+    eligible_reviewer_bindings = [
+        AffineApprovalReviewerBinding.model_validate(item) for item in raw_bindings
+    ]
     summary = dict(request.payload_summary or {})
     workspace_id = str(summary.get("workspace_id") or "")
     document_id = str(summary.get("document_id") or "") or None
@@ -490,6 +525,8 @@ def build_affine_approval_projection(
         admin_approve_count=len(admin_approvals),
         disallow_proposer_vote=bool(request.disallow_proposer_vote),
         eligible_reviewer_subjects=eligible_reviewer_subjects,
+        eligible_reviewer_bindings=eligible_reviewer_bindings,
+        unmapped_reviewer_count=unmapped_reviewer_count,
         eligible_reviewers_truncated=eligible_reviewers_truncated,
         expires_at=request.expires_at.isoformat(),
         preview=preview,
@@ -516,6 +553,7 @@ def emit_affine_approval_projection(
     config = AffineApprovalProjectionConfig.from_settings(settings)
     if not config.enabled:
         return False
+    delegation_config = AffineApprovalDelegationConfig.from_settings(settings)
     projection = build_affine_approval_projection(
         db,
         request=request,
@@ -526,6 +564,7 @@ def emit_affine_approval_projection(
         votes=votes,
         receipt=receipt,
         config=config,
+        delegation_config=delegation_config,
     )
     if projection is None:
         return False

@@ -1,0 +1,71 @@
+openapi: 3.1.0
+info:
+  title: AFFiNE to Gateway Approval Vote Bridge
+  version: 1.0.0
+paths:
+  /api/agent-autonomy/affine/v1/approvals/{request_id}/votes:
+    post:
+      summary: Submit an AFFiNE reviewer vote to the canonical Gateway approval engine
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 160
+        - name: X-AFFiNE-Approval-Assertion
+          in: header
+          required: true
+          description: >-
+            Base64url JSON assertion payload followed by a comma and a base64 EC P-256/SHA-256
+            or Ed25519 signature from AFFiNE's existing asymmetric server key. Gateway validates the
+            payload against affine-approval-vote-assertion.schema.json, pins the AFFiNE public key,
+            enforces TTL/method/path/request/body binding, maps affine_user_id to one Gateway subject,
+            and then invokes the canonical Gateway cast_vote policy.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 8192
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalVote'
+      responses:
+        '200':
+          description: Canonical Gateway approval state after the vote or idempotent replay
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Invalid, expired, or payload-mismatched AFFiNE assertion
+        '403':
+          description: AFFiNE user is unmapped, mapped Gateway user is absent, or canonical vote policy rejects the reviewer
+        '404':
+          description: Vote bridge disabled or target is not a canonical AFFiNE approval request
+        '409':
+          description: Conflicting replay or approval request no longer accepts the requested vote
+        '422':
+          description: Invalid request payload
+components:
+  schemas:
+    ApprovalVote:
+      type: object
+      required:
+        - decision
+      properties:
+        decision:
+          type: string
+          enum:
+            - approve
+            - reject
+        reason:
+          type:
+            - string
+            - 'null'
+          maxLength: 10000
+      additionalProperties: false

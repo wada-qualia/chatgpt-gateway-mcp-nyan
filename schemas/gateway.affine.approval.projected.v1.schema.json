@@ -156,6 +156,34 @@
         "maxLength": 255
       }
     },
+    "eligible_reviewer_bindings": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "required": [
+          "gateway_subject",
+          "affine_user_id"
+        ],
+        "properties": {
+          "gateway_subject": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "affine_user_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "unmapped_reviewer_count": {
+      "type": "integer",
+      "minimum": 0
+    },
     "eligible_reviewers_truncated": {
       "type": "boolean"
     },

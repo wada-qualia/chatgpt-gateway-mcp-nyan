@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+from typing import Self
 
 import pytest
 
@@ -12,6 +13,7 @@ spec = importlib.util.spec_from_file_location("upload_outbox_history_batch", scr
 assert spec is not None and spec.loader is not None
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+build_ssl_context = module.build_ssl_context
 load_manifest = module.load_manifest
 verify_batch_file = module.verify_batch_file
 verify_receipt = module.verify_receipt
@@ -101,3 +103,95 @@ def test_verify_receipt_rejects_mismatched_or_incomplete_binding() -> None:
     receipt["key_id"] = ""
     with pytest.raises(ValueError, match="key id"):
         verify_receipt(manifest, receipt)
+
+
+def test_build_ssl_context_loads_ca_and_client_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, str] = {}
+
+    class FakeContext:
+        def load_cert_chain(self, *, certfile: str, keyfile: str) -> None:
+            calls["certfile"] = certfile
+            calls["keyfile"] = keyfile
+
+    context = FakeContext()
+
+    def fake_create_default_context(*, cafile: str) -> FakeContext:
+        calls["cafile"] = cafile
+        return context
+
+    monkeypatch.setattr(module.ssl, "create_default_context", fake_create_default_context)
+    result = build_ssl_context(
+        ca_cert_path=Path("/pki/ca.crt"),
+        client_cert_path=Path("/pki/writer.crt"),
+        client_key_path=Path("/pki/writer.key"),
+    )
+
+    assert result is context
+    assert calls == {
+        "cafile": "/pki/ca.crt",
+        "certfile": "/pki/writer.crt",
+        "keyfile": "/pki/writer.key",
+    }
+
+
+def test_upload_batch_passes_bound_mtls_context_to_httpx(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ssl_context = object()
+    client_kwargs: dict = {}
+    post_kwargs: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return expected_receipt
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            client_kwargs.update(kwargs)
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def post(self, path: str, **kwargs) -> FakeResponse:
+            post_kwargs["path"] = path
+            post_kwargs.update(kwargs)
+            return FakeResponse()
+
+    manifest = manifest_payload()
+    batch_path = tmp_path / "batch.sqlite3"
+    batch_path.write_bytes(b"payload")
+    manifest["plaintext"] = {
+        "sha256": hashlib.sha256(b"payload").hexdigest(),
+        "size_bytes": len(b"payload"),
+    }
+    expected_receipt = receipt_payload()
+    expected_receipt["plaintext_sha256"] = manifest["plaintext"]["sha256"]
+    manifest_path = tmp_path / "batch.manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(module, "build_ssl_context", lambda **kwargs: ssl_context)
+    monkeypatch.setattr(module.httpx, "Client", FakeClient)
+
+    receipt = module.upload_batch(
+        base_url="https://history.example",
+        manifest_path=manifest_path,
+        batch_path=batch_path,
+        ca_cert_path=Path("/pki/ca.crt"),
+        client_cert_path=Path("/pki/writer.crt"),
+        client_key_path=Path("/pki/writer.key"),
+        timeout_seconds=15.0,
+    )
+
+    assert receipt == expected_receipt
+    assert client_kwargs["verify"] is ssl_context
+    assert "cert" not in client_kwargs
+    assert post_kwargs["path"] == "/v1/batches/import"
+    assert "manifest_json" in post_kwargs["data"]
+    assert "batch" in post_kwargs["files"]

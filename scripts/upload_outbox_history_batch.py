@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import ssl
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,20 @@ def verify_receipt(manifest: dict[str, Any], receipt: dict[str, Any]) -> dict[st
     return receipt
 
 
+def build_ssl_context(
+    *,
+    ca_cert_path: Path,
+    client_cert_path: Path,
+    client_key_path: Path,
+) -> ssl.SSLContext:
+    context = ssl.create_default_context(cafile=str(ca_cert_path))
+    context.load_cert_chain(
+        certfile=str(client_cert_path),
+        keyfile=str(client_key_path),
+    )
+    return context
+
+
 def upload_batch(
     *,
     base_url: str,
@@ -76,11 +91,15 @@ def upload_batch(
 ) -> dict[str, Any]:
     manifest = load_manifest(manifest_path)
     verify_batch_file(manifest, batch_path)
+    ssl_context = build_ssl_context(
+        ca_cert_path=ca_cert_path,
+        client_cert_path=client_cert_path,
+        client_key_path=client_key_path,
+    )
     with (
         httpx.Client(
             base_url=base_url.rstrip("/"),
-            verify=str(ca_cert_path),
-            cert=(str(client_cert_path), str(client_key_path)),
+            verify=ssl_context,
             timeout=httpx.Timeout(
                 connect=min(timeout_seconds, 10.0),
                 read=timeout_seconds,

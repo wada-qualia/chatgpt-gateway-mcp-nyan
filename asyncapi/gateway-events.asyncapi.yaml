@@ -316,6 +316,10 @@ channels:
     publish:
       message:
         $ref: '#/components/messages/McpActionExecuted'
+  gateway.affine.approval.projected.v1:
+    publish:
+      message:
+        $ref: '#/components/messages/AffineApprovalProjected'
 components:
   messages:
     McpCredential_bindingCreated:
@@ -426,6 +430,10 @@ components:
       name: gateway.mcp.action.executed.v1
       payload:
         $ref: ../schemas/gateway.mcp.action.executed.v1.schema.json
+    AffineApprovalProjected:
+      name: gateway.affine.approval.projected.v1
+      payload:
+        $ref: ../schemas/gateway.affine.approval.projected.v1.schema.json
     AutonomyPolicyCreated:
       name: gateway.autonomy.policy.created.v1
       payload:

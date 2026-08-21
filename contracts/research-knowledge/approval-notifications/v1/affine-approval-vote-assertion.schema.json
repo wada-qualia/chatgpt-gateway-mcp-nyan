@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "affine.approval.vote-assertion.v1",
+  "title": "AFFiNE Approval Vote Assertion",
+  "type": "object",
+  "required": [
+    "v",
+    "ts",
+    "nonce",
+    "m",
+    "p",
+    "aud",
+    "affine_user_id",
+    "approval_request_id",
+    "decision",
+    "reason_sha256"
+  ],
+  "properties": {
+    "v": { "const": 1 },
+    "ts": { "type": "integer", "minimum": 0 },
+    "nonce": { "type": "string", "minLength": 16, "maxLength": 160 },
+    "m": { "const": "POST" },
+    "p": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "aud": { "const": "chatgpt-mcp-gateway:affine-approval-v1" },
+    "affine_user_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "approval_request_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "decision": { "enum": ["approve", "reject"] },
+    "reason_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  },
+  "additionalProperties": false
+}

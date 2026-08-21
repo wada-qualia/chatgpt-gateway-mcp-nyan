@@ -5695,7 +5695,7 @@ def test_phase_four_static_contracts_event_payload_and_prometheus_metrics(
     phase_four_paths = {
         path for path in dynamic_paths if path.startswith("/api/agent-autonomy")
     }
-    assert len(phase_four_paths) == 17
+    assert len(phase_four_paths) == 18
     assert phase_four_paths.issubset(static_openapi["paths"])
     assert asyncapi["info"]["version"] == "0.4.0"
     channels = {

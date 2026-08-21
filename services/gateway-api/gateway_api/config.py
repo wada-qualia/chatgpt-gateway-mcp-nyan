@@ -181,6 +181,18 @@ class Settings(BaseSettings):
     gateway_autonomy_assignment_batch_size: int = 10
     gateway_autonomy_approval_ttl_seconds: int = 3600
     gateway_autonomy_permit_ttl_seconds: int = 300
+    gateway_affine_approval_projection_enabled: bool = False
+    gateway_affine_approval_server_endpoint: str = (
+        "http://affine-research-provider:8010/mcp"
+    )
+    gateway_affine_approval_preview_max_chars: int = 1200
+    gateway_affine_approval_preview_max_items: int = 20
+    gateway_affine_approval_reviewer_max_subjects: int = 100
+    gateway_affine_approval_reviewer_map_json: str = "{}"
+    gateway_affine_approval_vote_bridge_enabled: bool = False
+    gateway_affine_approval_public_key_files: str = ""
+    gateway_affine_approval_assertion_ttl_seconds: int = Field(default=60, ge=10, le=300)
+    gateway_affine_approval_assertion_clock_skew_seconds: int = Field(default=15, ge=0, le=120)
     gateway_research_persistent_writes_enabled: bool = False
     gateway_research_unattended_approval_enabled: bool = False
     gateway_research_unattended_approver_subject: str = ""

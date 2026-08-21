@@ -792,6 +792,19 @@ paths:
       operationId: createAutonomyApprovalRequest
       responses:
         '201': {description: Quorum request bound to policy executor and payload hash}
+  /api/agent-autonomy/affine/v1/approvals/{request_id}/votes:
+    post:
+      operationId: castAffineApprovalVote
+      parameters:
+        - in: header
+          name: X-AFFiNE-Approval-Assertion
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 8192}
+      responses:
+        '200': {description: Canonical approval state after an AFFiNE-delegated reviewer vote}
+        '401': {description: Invalid expired or payload-mismatched AFFiNE assertion}
+        '403': {description: Unmapped or unauthorized reviewer}
+        '404': {description: Bridge disabled or approval is not AFFiNE-targeted}
   /api/agent-autonomy/approvals/{request_id}/votes:
     post:
       operationId: castAutonomyApprovalVote

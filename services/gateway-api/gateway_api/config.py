@@ -159,6 +159,7 @@ class Settings(BaseSettings):
     gateway_replica_id: str = ""
     gateway_broker_backend: Literal["disabled", "memory", "nats"] = "disabled"
     gateway_nats_servers: str = "nats://nats:4222"
+    gateway_nats_credentials_file: str = ""
     gateway_nats_stream: str = "GATEWAY_EVENTS"
     gateway_nats_subject_prefix: str = "gateway.events"
     gateway_nats_request_timeout_seconds: float = 15.0

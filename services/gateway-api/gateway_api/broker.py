@@ -181,13 +181,17 @@ class NatsJetStreamBroker:
     async def connect(self) -> None:
         import nats
 
-        self._connection = await nats.connect(
-            servers=self.settings.nats_servers,
-            name=f"gateway-api-{self.replica_id}",
-            connect_timeout=5,
-            reconnect_time_wait=1,
-            max_reconnect_attempts=-1,
-        )
+        connect_options: dict[str, Any] = {
+            "servers": self.settings.nats_servers,
+            "name": f"gateway-api-{self.replica_id}",
+            "connect_timeout": 5,
+            "reconnect_time_wait": 1,
+            "max_reconnect_attempts": -1,
+        }
+        credentials_file = self.settings.gateway_nats_credentials_file.strip()
+        if credentials_file:
+            connect_options["user_credentials"] = credentials_file
+        self._connection = await nats.connect(**connect_options)
         self._jetstream = self._connection.jetstream(
             timeout=max(1.0, float(self.settings.gateway_nats_request_timeout_seconds))
         )

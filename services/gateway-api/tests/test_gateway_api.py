@@ -948,11 +948,10 @@ def test_mcp_missing_command_working_directory_is_a_recorded_failure(
     assert session.json()["exit_code"] == 127
 
 
-def test_nats_connect_uses_credentials_only_when_configured(
+def test_nats_connect_uses_exactly_one_auth_file_when_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import nats
-
     from gateway_api.broker import NatsJetStreamBroker
     from gateway_api.config import Settings
 
@@ -972,20 +971,44 @@ def test_nats_connect_uses_credentials_only_when_configured(
 
     monkeypatch.setattr(nats, "connect", fake_connect)
 
-    configured = NatsJetStreamBroker(
+    credentials = NatsJetStreamBroker(
         Settings(gateway_nats_credentials_file="/etc/gateway/nats/gateway.creds"),
-        replica_id="configured",
+        replica_id="credentials",
     )
-    asyncio.run(configured.connect())
+    asyncio.run(credentials.connect())
     assert calls[-1]["user_credentials"] == "/etc/gateway/nats/gateway.creds"
+    assert "nkeys_seed" not in calls[-1]
+
+    nkey = NatsJetStreamBroker(
+        Settings(gateway_nats_nkey_seed_file="/etc/gateway/nats/gateway.seed"),
+        replica_id="nkey",
+    )
+    asyncio.run(nkey.connect())
+    assert calls[-1]["nkeys_seed"] == "/etc/gateway/nats/gateway.seed"
+    assert "user_credentials" not in calls[-1]
 
     unconfigured = NatsJetStreamBroker(
-        Settings(gateway_nats_credentials_file="   "),
+        Settings(
+            gateway_nats_credentials_file="   ",
+            gateway_nats_nkey_seed_file="   ",
+        ),
         replica_id="unconfigured",
     )
     asyncio.run(unconfigured.connect())
     assert "user_credentials" not in calls[-1]
+    assert "nkeys_seed" not in calls[-1]
 
+    conflicting = NatsJetStreamBroker(
+        Settings(
+            gateway_nats_credentials_file="/etc/gateway/nats/gateway.creds",
+            gateway_nats_nkey_seed_file="/etc/gateway/nats/gateway.seed",
+        ),
+        replica_id="conflicting",
+    )
+    calls_before_conflict = len(calls)
+    with pytest.raises(RuntimeError, match="only one NATS authentication file"):
+        asyncio.run(conflicting.connect())
+    assert len(calls) == calls_before_conflict
 
 def test_nats_publish_retries_an_ack_timeout_with_the_same_message_id() -> None:
     from gateway_api.broker import NatsJetStreamBroker

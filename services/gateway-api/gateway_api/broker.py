@@ -189,8 +189,15 @@ class NatsJetStreamBroker:
             "max_reconnect_attempts": -1,
         }
         credentials_file = self.settings.gateway_nats_credentials_file.strip()
+        nkey_seed_file = self.settings.gateway_nats_nkey_seed_file.strip()
+        if credentials_file and nkey_seed_file:
+            raise RuntimeError(
+                "Configure only one NATS authentication file: credentials or NKey seed"
+            )
         if credentials_file:
             connect_options["user_credentials"] = credentials_file
+        elif nkey_seed_file:
+            connect_options["nkeys_seed"] = nkey_seed_file
         self._connection = await nats.connect(**connect_options)
         self._jetstream = self._connection.jetstream(
             timeout=max(1.0, float(self.settings.gateway_nats_request_timeout_seconds))

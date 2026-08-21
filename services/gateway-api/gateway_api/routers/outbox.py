@@ -281,39 +281,43 @@ async def rehydrate_outbox_event(
         created_at=event_model.created_at,
         updated_at=event_model.updated_at,
     )
-    db.add(event)
-    for attempt_model in attempt_models:
+    try:
+        db.add(event)
+        # No ORM relationship links OutboxEvent to OutboxDeliveryAttempt, so
+        # PostgreSQL cannot rely on SQLAlchemy's unit-of-work ordering here.
+        # Flush the FK parent before staging archived delivery attempts.
+        db.flush()
+        for attempt_model in attempt_models:
+            db.add(
+                OutboxDeliveryAttempt(
+                    id=attempt_model.id,
+                    outbox_event_id=attempt_model.outbox_event_id,
+                    attempt_number=attempt_model.attempt_number,
+                    replica_id=attempt_model.replica_id,
+                    status=attempt_model.status,
+                    error=attempt_model.error,
+                    broker_stream=attempt_model.broker_stream,
+                    broker_sequence=attempt_model.broker_sequence,
+                    started_at=attempt_model.started_at,
+                    completed_at=attempt_model.completed_at,
+                )
+            )
         db.add(
-            OutboxDeliveryAttempt(
-                id=attempt_model.id,
-                outbox_event_id=attempt_model.outbox_event_id,
-                attempt_number=attempt_model.attempt_number,
-                replica_id=attempt_model.replica_id,
-                status=attempt_model.status,
-                error=attempt_model.error,
-                broker_stream=attempt_model.broker_stream,
-                broker_sequence=attempt_model.broker_sequence,
-                started_at=attempt_model.started_at,
-                completed_at=attempt_model.completed_at,
+            AuditEvent(
+                id=str(uuid4()),
+                event_type="gateway.outbox.history.rehydrated.v1",
+                actor_subject=user.subject,
+                action="outbox_history_rehydrate",
+                resource_type="outbox_event",
+                resource_id=event_id,
+                status="success",
+                payload={
+                    "source": "cold_history",
+                    "event_type": event_model.event_type,
+                    "delivery_attempt_count": len(attempt_models),
+                },
             )
         )
-    db.add(
-        AuditEvent(
-            id=str(uuid4()),
-            event_type="gateway.outbox.history.rehydrated.v1",
-            actor_subject=user.subject,
-            action="outbox_history_rehydrate",
-            resource_type="outbox_event",
-            resource_id=event_id,
-            status="success",
-            payload={
-                "source": "cold_history",
-                "event_type": event_model.event_type,
-                "delivery_attempt_count": len(attempt_models),
-            },
-        )
-    )
-    try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()

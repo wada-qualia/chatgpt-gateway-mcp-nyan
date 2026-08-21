@@ -84,6 +84,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends jq \
   && rm -rf /var/lib/apt/lists/*
 COPY requirements-dev.txt /app/
+COPY --chown=appuser:appuser .env.example /app/.env.example
 COPY --chown=appuser:appuser packaging /app/packaging
 COPY --chown=appuser:appuser deploy /app/deploy
 COPY --chown=appuser:appuser .gitlab-ci.yml /app/.gitlab-ci.yml

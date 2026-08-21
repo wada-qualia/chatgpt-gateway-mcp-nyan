@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gateway.affine.approval.projected.v1",
+  "title": "AffineApprovalProjected",
+  "type": "object",
+  "required": [
+    "event_id",
+    "occurred_at",
+    "schema_version",
+    "projection_kind",
+    "approval_request_id",
+    "approval_version",
+    "preparation_id",
+    "owner_subject",
+    "actor_subject",
+    "server_id",
+    "tool_id",
+    "revision_id",
+    "schema_hash",
+    "tool_name",
+    "action_class",
+    "approval_class",
+    "workspace_id",
+    "status",
+    "quorum_required",
+    "approve_count",
+    "reject_count",
+    "admin_required",
+    "admin_approve_count",
+    "disallow_proposer_vote",
+    "eligible_reviewer_subjects",
+    "eligible_reviewers_truncated",
+    "expires_at",
+    "preview"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "projection_kind": {
+      "enum": [
+        "approval_requested",
+        "approval_updated",
+        "action_result"
+      ]
+    },
+    "approval_request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approval_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "preparation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "owner_subject": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actor_subject": {
+      "type": "string",
+      "minLength": 1
+    },
+    "server_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tool_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "tool_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action_class": {
+      "enum": [
+        "write",
+        "destructive",
+        "production"
+      ]
+    },
+    "approval_class": {
+      "enum": [
+        "operator",
+        "quorum",
+        "production"
+      ]
+    },
+    "workspace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "document_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "expired",
+        "revoked"
+      ]
+    },
+    "quorum_required": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "approve_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reject_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "admin_required": {
+      "type": "boolean"
+    },
+    "admin_approve_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "disallow_proposer_vote": {
+      "type": "boolean"
+    },
+    "eligible_reviewer_subjects": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      }
+    },
+    "eligible_reviewer_bindings": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "required": [
+          "gateway_subject",
+          "affine_user_id"
+        ],
+        "properties": {
+          "gateway_subject": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "affine_user_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "unmapped_reviewer_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "eligible_reviewers_truncated": {
+      "type": "boolean"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "preview": {
+      "type": "object",
+      "required": [
+        "kind",
+        "summary",
+        "items",
+        "truncated"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "create",
+            "content_replace",
+            "content_append",
+            "tags_replace",
+            "link_add",
+            "source_add",
+            "title_update",
+            "lifecycle"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "before_text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 8000
+        },
+        "after_text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 8000
+        },
+        "before_hash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "after_hash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string"
+          }
+        },
+        "target_workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        },
+        "target_document_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        },
+        "source_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2048
+        },
+        "source_title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 8000
+        },
+        "lifecycle_from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "lifecycle_to": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "receipt_id",
+            "status"
+          ],
+          "properties": {
+            "receipt_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "enum": [
+                "succeeded",
+                "failed",
+                "partial",
+                "unknown"
+              ]
+            },
+            "invocation_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

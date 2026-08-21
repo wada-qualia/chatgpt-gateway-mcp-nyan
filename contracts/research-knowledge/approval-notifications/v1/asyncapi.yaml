@@ -1,0 +1,16 @@
+asyncapi: 2.6.0
+info:
+  title: Gateway to AFFiNE Approval Notifications
+  version: 1.0.0
+defaultContentType: application/json
+channels:
+  gateway.affine.approval.projected.v1:
+    publish:
+      message:
+        $ref: #/components/messages/AffineApprovalProjected
+components:
+  messages:
+    AffineApprovalProjected:
+      name: gateway.affine.approval.projected.v1
+      payload:
+        $ref: ../../../../schemas/gateway.affine.approval.projected.v1.schema.json

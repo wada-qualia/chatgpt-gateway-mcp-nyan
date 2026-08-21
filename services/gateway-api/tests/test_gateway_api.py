@@ -948,6 +948,45 @@ def test_mcp_missing_command_working_directory_is_a_recorded_failure(
     assert session.json()["exit_code"] == 127
 
 
+def test_nats_connect_uses_credentials_only_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import nats
+
+    from gateway_api.broker import NatsJetStreamBroker
+    from gateway_api.config import Settings
+
+    calls: list[dict[str, object]] = []
+
+    class FakeJetStream:
+        async def stream_info(self, _name: str) -> object:
+            return object()
+
+    class FakeConnection:
+        def jetstream(self, **_kwargs: object) -> FakeJetStream:
+            return FakeJetStream()
+
+    async def fake_connect(**kwargs: object) -> FakeConnection:
+        calls.append(kwargs)
+        return FakeConnection()
+
+    monkeypatch.setattr(nats, "connect", fake_connect)
+
+    configured = NatsJetStreamBroker(
+        Settings(gateway_nats_credentials_file="/etc/gateway/nats/gateway.creds"),
+        replica_id="configured",
+    )
+    asyncio.run(configured.connect())
+    assert calls[-1]["user_credentials"] == "/etc/gateway/nats/gateway.creds"
+
+    unconfigured = NatsJetStreamBroker(
+        Settings(gateway_nats_credentials_file="   "),
+        replica_id="unconfigured",
+    )
+    asyncio.run(unconfigured.connect())
+    assert "user_credentials" not in calls[-1]
+
+
 def test_nats_publish_retries_an_ack_timeout_with_the_same_message_id() -> None:
     from gateway_api.broker import NatsJetStreamBroker
     from gateway_api.config import Settings

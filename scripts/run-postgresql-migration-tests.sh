@@ -62,6 +62,6 @@ docker run --rm \
   -e "GATEWAY_TEST_POSTGRES_URL=postgresql+psycopg://postgres@${container}:5432/gateway_test" \
   --entrypoint /bin/sh \
   "${image}" \
-  -lc 'cd /app && python -m pytest services/gateway-api/tests/test_schema_migrations_postgresql.py -q'
+  -lc 'cd /app && python -m pytest services/gateway-api/tests/test_schema_migrations_postgresql.py services/gateway-api/tests/test_outbox_history_delete_postgresql.py -q'
 
-echo "PostgreSQL 16 schema-migration gate passed commit=${commit} build=${build_number}"
+echo "PostgreSQL 16 schema-migration and outbox-offload gate passed commit=${commit} build=${build_number}"

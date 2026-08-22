@@ -97,6 +97,14 @@ class Settings(BaseSettings):
         "workspace:read workspace:write workspace:exec devices:manage "
         "docker:manage audit:read usage:write usage:read"
     )
+    gateway_browser_extension_client_id: str = "atlas-chatgpt-browser-extension"
+    gateway_browser_extension_redirect_uri: str = (
+        "https://cgaalfflopmcbaodnlphklclnnhmdhcn.chromiumapp.org/oauth2"
+    )
+    gateway_browser_extension_oauth_scopes: str = "workspace:read"
+    gateway_browser_extension_access_token_ttl_seconds: int = Field(
+        default=3600, ge=300, le=86400
+    )
     gateway_mcp_federation_enabled: bool = True
     gateway_mcp_federation_writes_paused: bool = False
     gateway_mcp_federation_pilot_owner_subjects: str = ""

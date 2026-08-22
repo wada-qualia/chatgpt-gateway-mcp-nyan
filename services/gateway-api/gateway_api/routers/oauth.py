@@ -6,6 +6,7 @@ import secrets
 import time
 from datetime import timedelta
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -62,9 +63,53 @@ def protected_resource_metadata(base_url: str, settings: Settings) -> dict[str, 
     }
 
 
-def _is_allowed_redirect(uri: str) -> bool:
+def _split_scope(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return list(dict.fromkeys(value.replace(",", " ").split()))
+
+
+def _extension_scopes(settings: Settings) -> list[str]:
+    scopes = _split_scope(settings.gateway_browser_extension_oauth_scopes)
+    if not scopes or not set(scopes).issubset(settings.supported_scopes):
+        raise RuntimeError(
+            "Browser extension OAuth scopes must be supported Gateway scopes"
+        )
+    return scopes
+
+
+def _validated_scope(requested: str | None, *, allowed: list[str]) -> str:
+    requested_scopes = _split_scope(requested) or list(allowed)
+    if not requested_scopes or not set(requested_scopes).issubset(allowed):
+        raise HTTPException(status_code=400, detail="Invalid OAuth scope")
+    return " ".join(requested_scopes)
+
+
+def _is_extension_identity(
+    client_id: str,
+    redirect_uris: list[str],
+    settings: Settings,
+) -> bool:
+    exact_redirect = settings.gateway_browser_extension_redirect_uri
+    id_matches = client_id == settings.gateway_browser_extension_client_id
+    redirect_matches = exact_redirect in redirect_uris
+    if id_matches or redirect_matches:
+        if not id_matches or redirect_uris != [exact_redirect]:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Browser extension OAuth identity must use the pinned "
+                    "client and redirect URI"
+                ),
+            )
+        return True
+    return False
+
+
+def _is_allowed_redirect(uri: str, settings: Settings) -> bool:
     return (
-        uri.startswith("https://chatgpt.com/connector/oauth/")
+        uri == settings.gateway_browser_extension_redirect_uri
+        or uri.startswith("https://chatgpt.com/connector/oauth/")
         or uri == "https://chatgpt.com/connector_platform_oauth_redirect"
         or uri.startswith("http://localhost:")
         or uri.startswith("http://127.0.0.1:")
@@ -72,7 +117,11 @@ def _is_allowed_redirect(uri: str) -> bool:
 
 
 def _pkce_s256(verifier: str) -> str:
-    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    try:
+        encoded = verifier.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid PKCE verifier") from exc
+    digest = hashlib.sha256(encoded).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
@@ -120,15 +169,34 @@ async def register_client(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    redirect_uris = [str(uri) for uri in payload.get("redirect_uris", [])]
-    if not redirect_uris or any(not _is_allowed_redirect(uri) for uri in redirect_uris):
+    raw_redirect_uris = payload.get("redirect_uris", [])
+    if not isinstance(raw_redirect_uris, list):
         raise HTTPException(status_code=400, detail="Unsupported redirect_uri")
-    client_id = payload.get("client_id") or f"chatgpt-{secrets.token_urlsafe(18)}"
+    redirect_uris = [str(uri) for uri in raw_redirect_uris]
+    if not redirect_uris:
+        raise HTTPException(status_code=400, detail="Unsupported redirect_uri")
+    client_id = str(payload.get("client_id") or f"chatgpt-{secrets.token_urlsafe(18)}")
+    is_extension = _is_extension_identity(client_id, redirect_uris, settings)
+    if any(not _is_allowed_redirect(uri, settings) for uri in redirect_uris):
+        raise HTTPException(status_code=400, detail="Unsupported redirect_uri")
+    allowed_scopes = (
+        _extension_scopes(settings) if is_extension else settings.supported_scopes
+    )
+    requested_scope = payload.get("scope")
+    if requested_scope is not None and not isinstance(requested_scope, str):
+        raise HTTPException(status_code=400, detail="Invalid OAuth scope")
     client = OAuthClient(
         client_id=client_id,
-        client_name=str(payload.get("client_name") or "ChatGPT Connector"),
+        client_name=str(
+            payload.get("client_name")
+            or (
+                "ATLAS ChatGPT Browser Extension"
+                if is_extension
+                else "ChatGPT Connector"
+            )
+        ),
         redirect_uris=redirect_uris,
-        scope=str(payload.get("scope") or " ".join(settings.supported_scopes)),
+        scope=_validated_scope(requested_scope, allowed=allowed_scopes),
     )
     db.merge(client)
     db.commit()
@@ -149,49 +217,90 @@ async def authorize(
     client_id: str,
     redirect_uri: str,
     code_challenge: str,
+    request: Request,
     code_challenge_method: str = "S256",
     scope: str | None = None,
     state: str | None = None,
-    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> RedirectResponse:
     if response_type != "code" or code_challenge_method != "S256":
         raise HTTPException(status_code=400, detail="Unsupported OAuth request")
+    if not code_challenge or len(code_challenge) > 255:
+        raise HTTPException(status_code=400, detail="Invalid PKCE challenge")
+    is_extension = _is_extension_identity(client_id, [redirect_uri], settings)
+    if not _is_allowed_redirect(redirect_uri, settings):
+        raise HTTPException(status_code=400, detail="Unsupported redirect_uri")
+    try:
+        user = await get_current_user(request, db=db, settings=settings)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        next_path = request.url.path
+        if request.url.query:
+            next_path = f"{next_path}?{request.url.query}"
+        return RedirectResponse(
+            url=f"/auth/login?{urlencode({'next': next_path})}",
+            status_code=307,
+        )
     client = db.get(OAuthClient, client_id)
     if client is None:
-        if not _is_allowed_redirect(redirect_uri):
+        if not _is_allowed_redirect(redirect_uri, settings):
             raise HTTPException(status_code=400, detail="Unsupported redirect_uri")
+        initial_scopes = (
+            _extension_scopes(settings) if is_extension else settings.supported_scopes
+        )
         client = OAuthClient(
             client_id=client_id,
-            client_name="Auto-registered MCP client",
+            client_name=(
+                "ATLAS ChatGPT Browser Extension"
+                if is_extension
+                else "Auto-registered MCP client"
+            ),
             redirect_uris=[redirect_uri],
-            scope=" ".join(settings.supported_scopes),
+            scope=" ".join(initial_scopes),
         )
         db.add(client)
         db.commit()
     if redirect_uri not in client.redirect_uris or not _is_allowed_redirect(
-        redirect_uri
+        redirect_uri, settings
     ):
         raise HTTPException(status_code=400, detail="redirect_uri is not registered")
+    client_scopes = _split_scope(client.scope)
+    if not client_scopes or not set(client_scopes).issubset(settings.supported_scopes):
+        raise HTTPException(
+            status_code=400, detail="OAuth client has invalid registered scope"
+        )
+    if is_extension:
+        if client.redirect_uris != [settings.gateway_browser_extension_redirect_uri]:
+            raise HTTPException(
+                status_code=400,
+                detail="Browser extension OAuth redirect configuration mismatch",
+            )
+        if set(client_scopes) != set(_extension_scopes(settings)):
+            raise HTTPException(
+                status_code=400,
+                detail="Browser extension OAuth client scope configuration mismatch",
+            )
+    authorized_scope = _validated_scope(scope, allowed=client_scopes)
     code = secrets.token_urlsafe(36)
     auth_code = OAuthCode(
         code=code,
         client_id=client_id,
         redirect_uri=redirect_uri,
         code_challenge=code_challenge,
-        scope=scope or client.scope,
+        scope=authorized_scope,
         subject=user.subject,
         expires_at=utcnow() + timedelta(seconds=settings.gateway_auth_code_ttl_seconds),
     )
     db.add(auth_code)
     db.commit()
     query = {"code": code}
-    if state:
+    if state is not None:
         query["state"] = state
     separator = "&" if "?" in redirect_uri else "?"
     return RedirectResponse(
-        url=f"{redirect_uri}{separator}{'&'.join(f'{k}={v}' for k, v in query.items())}",
+        url=f"{redirect_uri}{separator}{urlencode(query)}",
         status_code=307,
     )
 
@@ -208,6 +317,7 @@ async def token(
 ) -> JSONResponse:
     if grant_type != "authorization_code":
         raise HTTPException(status_code=400, detail="Unsupported grant_type")
+    is_extension = _is_extension_identity(client_id, [redirect_uri], settings)
     auth_code = db.get(OAuthCode, code)
     if (
         auth_code is None
@@ -223,21 +333,53 @@ async def token(
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if expires_at < utcnow():
         raise HTTPException(status_code=400, detail="Authorization code expired")
-    if _pkce_s256(code_verifier) != auth_code.code_challenge:
-        raise HTTPException(status_code=400, detail="Invalid PKCE verifier")
-    user = db.query(User).filter(User.subject == auth_code.subject).one()
     oauth_client = db.get(OAuthClient, client_id)
     if oauth_client is None:
         raise HTTPException(status_code=400, detail="OAuth client is not registered")
+    if redirect_uri not in oauth_client.redirect_uris or not _is_allowed_redirect(
+        redirect_uri, settings
+    ):
+        raise HTTPException(status_code=400, detail="redirect_uri is not registered")
+    client_scopes = _split_scope(oauth_client.scope)
+    code_scopes = _split_scope(auth_code.scope)
+    if (
+        not client_scopes
+        or not set(client_scopes).issubset(settings.supported_scopes)
+        or not code_scopes
+        or not set(code_scopes).issubset(client_scopes)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid OAuth scope")
+    if is_extension:
+        if oauth_client.redirect_uris != [
+            settings.gateway_browser_extension_redirect_uri
+        ]:
+            raise HTTPException(
+                status_code=400,
+                detail="Browser extension OAuth redirect configuration mismatch",
+            )
+        if set(client_scopes) != set(_extension_scopes(settings)):
+            raise HTTPException(
+                status_code=400,
+                detail="Browser extension OAuth client scope configuration mismatch",
+            )
+    expected_challenge = _pkce_s256(code_verifier)
+    if not secrets.compare_digest(expected_challenge, auth_code.code_challenge):
+        raise HTTPException(status_code=400, detail="Invalid PKCE verifier")
+    user = db.query(User).filter(User.subject == auth_code.subject).one()
     auth_code.consumed = True
     db.commit()
+    token_ttl_seconds = (
+        settings.gateway_browser_extension_access_token_ttl_seconds
+        if is_extension
+        else settings.gateway_access_token_ttl_seconds
+    )
     access_token = create_jwt(
         subject=user.subject,
         username=user.username,
         roles=user.roles,
-        scopes=auth_code.scope.split(),
+        scopes=code_scopes,
         token_type="access",
-        ttl_seconds=settings.gateway_access_token_ttl_seconds,
+        ttl_seconds=token_ttl_seconds,
         extra={
             "client_id": client_id,
             "presentation_profile": oauth_client.presentation_profile,
@@ -254,8 +396,8 @@ async def token(
         {
             "access_token": access_token,
             "token_type": "Bearer",
-            "expires_in": settings.gateway_access_token_ttl_seconds,
-            "scope": auth_code.scope,
+            "expires_in": token_ttl_seconds,
+            "scope": " ".join(code_scopes),
         }
     )
 

@@ -21,6 +21,7 @@ from .mcp_federation_runtime import (
 )
 from .mcp_upstream import UpstreamMcpManager
 from .metrics_cache import GatewayMetricsCache
+from .prompt_registry_facade import PromptRegistryFacade
 from .readiness_cache import ReadinessCache
 from .research_write_approval import ResearchWriteApprovalWorker
 from .routers import (
@@ -40,6 +41,7 @@ from .routers import (
     monitoring,
     oauth,
     outbox,
+    prompt_registry,
     realtime,
     registry,
     thin_clients,
@@ -115,6 +117,7 @@ def create_app() -> FastAPI:
         settings=settings,
         session_factory=SessionLocal,
     )
+    prompt_registry_facade = PromptRegistryFacade(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -173,6 +176,7 @@ def create_app() -> FastAPI:
             if readiness_cache_started:
                 await readiness_cache.stop()
             await upstream_mcp_manager.stop()
+            await prompt_registry_facade.close()
             if runtime_started:
                 await runtime.stop()
             if cold_history_client is not None:
@@ -189,6 +193,7 @@ def create_app() -> FastAPI:
     app.state.gateway_runtime = runtime
     app.state.cold_history_client = cold_history_client
     app.state.upstream_mcp_manager = upstream_mcp_manager
+    app.state.prompt_registry_facade = prompt_registry_facade
     app.state.readiness_cache = readiness_cache
     app.state.metrics_cache = metrics_cache
     app.state.initialization_status = "created"
@@ -380,6 +385,7 @@ def create_app() -> FastAPI:
     app.include_router(agent_autonomy.router)
     app.include_router(outbox.router)
     app.include_router(outbox.metrics_router)
+    app.include_router(prompt_registry.router)
     app.include_router(realtime.router)
     app.include_router(registry.router)
     app.include_router(usage_accounting.router)

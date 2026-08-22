@@ -1,0 +1,125 @@
+openapi: 3.1.0
+info:
+  title: ChatGPT Prompt Registry Gateway Facade
+  version: 1.0.0
+paths:
+  /api/prompts/v1/releases/{channel}/manifest:
+    get:
+      operationId: getPromptReleaseManifest
+      description: Authenticated Gateway read-through view of one Prompt Registry channel.
+      security:
+        - gatewaySession: []
+        - gatewayBearer: []
+      parameters:
+        - name: channel
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Current validated manifest.
+          headers:
+            ETag:
+              schema: {type: string}
+            Cache-Control:
+              schema: {const: 'private, max-age=0, must-revalidate'}
+            X-Prompt-Cache:
+              schema: {$ref: '#/components/schemas/CacheStatus'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Manifest'}
+        '304':
+          description: Browser ETag matches the currently valid Gateway entry.
+        '401': {description: Gateway authentication required.}
+        '404': {description: Channel is not present upstream.}
+        '410': {description: The current release is revoked and cache state was purged.}
+        '502': {description: Registry authentication, protocol, or integrity failure.}
+        '503': {description: Registry unavailable and no eligible LKG entry exists.}
+  /api/prompts/v1/bundles/{bundle_id}:
+    get:
+      operationId: getPromptBundle
+      description: Authenticated Gateway read-through view of one immutable bundle.
+      security:
+        - gatewaySession: []
+        - gatewayBearer: []
+      parameters:
+        - name: bundle_id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-f]{64}$'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Validated bundle payload.
+          headers:
+            ETag:
+              schema: {type: string}
+            Cache-Control:
+              schema: {const: 'private, max-age=0, must-revalidate'}
+            X-Prompt-Cache:
+              schema: {$ref: '#/components/schemas/CacheStatus'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Bundle'}
+        '304':
+          description: Browser ETag matches the currently valid Gateway entry.
+        '401': {description: Gateway authentication required.}
+        '404': {description: Bundle is not present upstream.}
+        '410': {description: Bundle release is revoked and related cache state was purged.}
+        '502': {description: Registry authentication, protocol, or integrity failure.}
+        '503': {description: Registry unavailable and no eligible LKG entry exists.}
+components:
+  securitySchemes:
+    gatewaySession:
+      type: apiKey
+      in: cookie
+      name: gateway_session
+    gatewayBearer:
+      type: http
+      scheme: bearer
+  parameters:
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      schema: {type: string}
+  schemas:
+    CacheStatus:
+      type: string
+      enum: [miss, fresh, revalidated, stale]
+    Manifest:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - channel
+        - release_id
+        - generation
+        - release_generation
+        - bundle_id
+        - sha256
+        - etag
+        - cache_scope_id
+        - max_stale_seconds
+      properties:
+        schema_version: {type: integer, const: 1}
+        channel: {type: string}
+        release_id: {type: string}
+        generation: {type: integer, minimum: 0}
+        release_generation: {type: integer, minimum: 0}
+        bundle_id: {type: string, pattern: '^[0-9a-f]{64}$'}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        etag: {type: string}
+        cache_scope_id: {type: string, minLength: 1}
+        max_stale_seconds: {type: integer, minimum: 0}
+    Bundle:
+      type: object
+      required: [sha256]
+      properties:
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+      additionalProperties: true

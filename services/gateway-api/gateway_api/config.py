@@ -38,6 +38,21 @@ class Settings(BaseSettings):
     gateway_cold_history_read_timeout_seconds: float = Field(
         default=15.0, ge=0.1, le=120.0
     )
+    gateway_prompt_registry_enabled: bool = False
+    gateway_prompt_registry_base_url: str = "http://prompt-registry:8080"
+    gateway_prompt_registry_service_token: SecretStr = SecretStr("")
+    gateway_prompt_registry_connect_timeout_seconds: float = Field(
+        default=2.0, ge=0.1, le=30.0
+    )
+    gateway_prompt_registry_read_timeout_seconds: float = Field(
+        default=5.0, ge=0.1, le=60.0
+    )
+    gateway_prompt_registry_revalidate_after_seconds: float = Field(
+        default=15.0, ge=0.0, le=300.0
+    )
+    gateway_prompt_registry_max_stale_seconds: int = Field(
+        default=3600, ge=0, le=86400
+    )
     gateway_db_migration_lock_timeout_seconds: int = 15
     gateway_db_migration_statement_timeout_seconds: int = 300
     gateway_db_online_index_timeout_seconds: int = 5400

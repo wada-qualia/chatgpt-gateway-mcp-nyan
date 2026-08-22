@@ -43,7 +43,7 @@ docker run -d \
 
 ready=false
 for _attempt in $(seq 1 60); do
-  if docker exec "${container}" pg_isready -U postgres -d gateway_test >/dev/null 2>&1; then
+  if docker exec "${container}" pg_isready -h 127.0.0.1 -U postgres -d gateway_test >/dev/null 2>&1; then
     ready=true
     break
   fi
@@ -55,7 +55,7 @@ if [[ "${ready}" != "true" ]]; then
   exit 1
 fi
 
-docker exec "${container}" pg_isready -U postgres -d gateway_test
+docker exec "${container}" pg_isready -h 127.0.0.1 -U postgres -d gateway_test
 
 docker run --rm \
   --network "${network}" \

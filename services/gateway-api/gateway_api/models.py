@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
-from sqlalchemy import CheckConstraint, Index, text
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -91,11 +91,161 @@ class ThinClient(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ChatContext(Base):
+    __tablename__ = "chat_contexts"
+    __table_args__ = (
+        UniqueConstraint("id", "owner_subject", name="uq_chat_context_id_owner"),
+        CheckConstraint(
+            "host_kind = 'chatgpt'",
+            name="ck_chat_context_host_kind",
+        ),
+        CheckConstraint(
+            "state in ('active', 'dormant', 'closed')",
+            name="ck_chat_context_state",
+        ),
+        CheckConstraint("generation >= 0", name="ck_chat_context_generation"),
+        CheckConstraint(
+            "conversation_key_version IS NULL OR conversation_key_version >= 1",
+            name="ck_chat_context_conversation_key_version",
+        ),
+        Index("ix_chat_context_owner_state", "owner_subject", "state"),
+        Index(
+            "uq_chat_context_owner_client_nonce",
+            "owner_subject",
+            "client_nonce",
+            unique=True,
+            postgresql_where=text("client_nonce IS NOT NULL"),
+            sqlite_where=text("client_nonce IS NOT NULL"),
+        ),
+        Index(
+            "uq_chat_context_owner_host_conversation",
+            "owner_subject",
+            "host_kind",
+            "conversation_ref_hmac",
+            unique=True,
+            postgresql_where=text("conversation_ref_hmac IS NOT NULL"),
+            sqlite_where=text("conversation_ref_hmac IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    host_kind: Mapped[str] = mapped_column(String(40), default="chatgpt")
+    state: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    project_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    client_nonce: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    conversation_ref_hmac: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    conversation_key_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    generation: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ChatContextAlias(Base):
+    __tablename__ = "chat_context_aliases"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["context_id", "owner_subject"],
+            ["chat_contexts.id", "chat_contexts.owner_subject"],
+            name="fk_chat_context_alias_context_owner",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "owner_subject",
+            "code",
+            name="uq_chat_context_alias_owner_code",
+        ),
+        UniqueConstraint(
+            "context_id",
+            "generation",
+            name="uq_chat_context_alias_context_generation",
+        ),
+        CheckConstraint("length(code) = 4", name="ck_chat_context_alias_code_length"),
+        CheckConstraint(
+            "status in ('active', 'quarantined', 'released', 'revoked')",
+            name="ck_chat_context_alias_status",
+        ),
+        CheckConstraint("generation >= 1", name="ck_chat_context_alias_generation"),
+        Index("ix_chat_context_alias_owner_context", "owner_subject", "context_id"),
+        Index(
+            "uq_chat_context_alias_live_code",
+            "code",
+            unique=True,
+            postgresql_where=text("status IN ('active', 'quarantined')"),
+            sqlite_where=text("status IN ('active', 'quarantined')"),
+        ),
+        Index(
+            "uq_chat_context_alias_active_context",
+            "context_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+            sqlite_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    context_id: Mapped[str] = mapped_column(String(36), index=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    code: Mapped[str] = mapped_column(String(4), index=True)
+    generation: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    quarantine_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    replaced_by_alias_id: Mapped[str | None] = mapped_column(
+        ForeignKey("chat_context_aliases.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ChatContextEvent(Base):
+    __tablename__ = "chat_context_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["context_id", "owner_subject"],
+            ["chat_contexts.id", "chat_contexts.owner_subject"],
+            name="fk_chat_context_event_context_owner",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "action in ('created', 'issued', 'renewed', 'bound', 'expired', "
+            "'quarantined', 'rotated', 'released', 'revoked', 'closed')",
+            name="ck_chat_context_event_action",
+        ),
+        CheckConstraint(
+            "actor_kind in ('browser_extension', 'mcp', 'gateway', 'operator')",
+            name="ck_chat_context_event_actor_kind",
+        ),
+        CheckConstraint(
+            "alias_generation IS NULL OR alias_generation >= 1",
+            name="ck_chat_context_event_alias_generation",
+        ),
+        Index("ix_chat_context_event_context_created", "context_id", "created_at"),
+        Index("ix_chat_context_event_owner_created", "owner_subject", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    context_id: Mapped[str] = mapped_column(String(36), index=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    alias_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actor_kind: Mapped[str] = mapped_column(String(40))
+    event_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class CommandSession(Base):
     __tablename__ = "command_sessions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    chat_context_id: Mapped[str | None] = mapped_column(
+        ForeignKey("chat_contexts.id", ondelete="RESTRICT"), nullable=True
+    )
     origin: Mapped[str] = mapped_column(String(40), index=True)
     resource_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
     name: Mapped[str | None] = mapped_column(String(160), nullable=True)
@@ -146,6 +296,9 @@ class AgentToolCall(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    chat_context_id: Mapped[str | None] = mapped_column(
+        ForeignKey("chat_contexts.id", ondelete="RESTRICT"), nullable=True
+    )
     tool_name: Mapped[str] = mapped_column(String(120), index=True)
     arguments: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(40), default="running", index=True)
@@ -179,6 +332,9 @@ class FileChangeSet(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    chat_context_id: Mapped[str | None] = mapped_column(
+        ForeignKey("chat_contexts.id", ondelete="RESTRICT"), nullable=True
+    )
     origin: Mapped[str] = mapped_column(String(40), index=True)
     resource_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
     tool_call_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)

@@ -22,7 +22,7 @@ from .migration_operations import CreateIndexConcurrently, DropIndexConcurrently
 
 BASELINE_REVISION = "20260725_0001"
 PROJECTION_REVISION = "20260725_0002"
-HEAD_REVISION = "20260818_0014"
+HEAD_REVISION = "20260828_0015"
 LEGACY_ANCHOR_TABLES = {"users", "secret_blobs", "oauth_clients"}
 REVISION_PATTERN = re.compile(r"^(?P<date>\d{8})_(?P<sequence>\d{4})$")
 
@@ -201,6 +201,9 @@ def _validate_legacy_identity(connection: Connection) -> None:
         "mcp_projection_generations",
         "mcp_projection_tools",
         "mcp_projection_verifications",
+        "chat_contexts",
+        "chat_context_aliases",
+        "chat_context_events",
     }
     required_legacy_tables = (
         set(_models.Base.metadata.tables) - adoptable_missing_tables

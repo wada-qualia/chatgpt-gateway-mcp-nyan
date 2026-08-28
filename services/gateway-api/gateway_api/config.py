@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -105,6 +105,17 @@ class Settings(BaseSettings):
     gateway_browser_extension_access_token_ttl_seconds: int = Field(
         default=3600, ge=300, le=86400
     )
+    gateway_chat_context_enabled: bool = False
+    gateway_chat_context_ttl_seconds: int = Field(default=172800, ge=300, le=2678400)
+    gateway_chat_context_renew_threshold_seconds: int = Field(
+        default=43200, ge=60, le=604800
+    )
+    gateway_chat_context_quarantine_seconds: int = Field(
+        default=604800, ge=3600, le=7776000
+    )
+    gateway_chat_context_allocation_attempts: int = Field(default=64, ge=1, le=512)
+    gateway_chat_context_hmac_key: SecretStr = SecretStr("")
+    gateway_chat_context_hmac_key_version: int = Field(default=1, ge=1, le=65535)
     gateway_mcp_federation_enabled: bool = True
     gateway_mcp_federation_writes_paused: bool = False
     gateway_mcp_federation_pilot_owner_subjects: str = ""
@@ -235,6 +246,25 @@ class Settings(BaseSettings):
     max_file_read_bytes: int = 200000
     max_file_write_bytes: int = 1000000
     max_output_chars: int = 30000
+
+    @model_validator(mode="after")
+    def validate_chat_context_settings(self) -> Settings:
+        if (
+            self.gateway_chat_context_renew_threshold_seconds
+            >= self.gateway_chat_context_ttl_seconds
+        ):
+            raise ValueError(
+                "gateway_chat_context_renew_threshold_seconds must be lower than "
+                "gateway_chat_context_ttl_seconds"
+            )
+        if self.gateway_chat_context_enabled:
+            key = self.gateway_chat_context_hmac_key.get_secret_value().encode("utf-8")
+            if len(key) < 32:
+                raise ValueError(
+                    "gateway_chat_context_hmac_key must contain at least 32 bytes "
+                    "when chat context is enabled"
+                )
+        return self
 
     @property
     def nats_servers(self) -> list[str]:

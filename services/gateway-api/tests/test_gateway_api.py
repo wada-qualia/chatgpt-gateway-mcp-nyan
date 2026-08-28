@@ -5875,7 +5875,8 @@ def test_readiness_accepts_forward_compatible_schema(
     import gateway_api.readiness_cache as readiness_module
     from gateway_api.schema_migrations import HEAD_REVISION, MigrationStatus
 
-    future_revision = "20260819_0001"
+    head_date, _head_sequence = HEAD_REVISION.split("_", maxsplit=1)
+    future_revision = f"{int(head_date) + 1:08d}_0001"
     monkeypatch.setattr(
         readiness_module,
         "get_migration_status",
@@ -6270,7 +6271,7 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert "writeFile file: '.release-skipped'" in jenkinsfile
     assert "writeFile file: '.release-required'" in jenkinsfile
     assert "expression { fileExists('.release-skipped') }" in jenkinsfile
-    assert jenkinsfile.count("expression { fileExists('.release-required') }") == 10
+    assert jenkinsfile.count("expression { fileExists('.release-required') }") == 11
     assert "SKIP_RELEASE" not in jenkinsfile
     assert "RELEASE_DECISION" not in jenkinsfile
     assert "docker build --platform linux/amd64 --target production" in jenkinsfile

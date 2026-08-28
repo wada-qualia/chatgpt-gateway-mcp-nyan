@@ -95,13 +95,13 @@ class Settings(BaseSettings):
     oauth_audience: str = "chatgpt-mcp-ssh-gateway"
     oauth_supported_scopes: str = (
         "workspace:read workspace:write workspace:exec devices:manage "
-        "docker:manage audit:read usage:write usage:read"
+        "docker:manage audit:read usage:write usage:read chat-context:write"
     )
     gateway_browser_extension_client_id: str = "atlas-chatgpt-browser-extension"
     gateway_browser_extension_redirect_uri: str = (
         "https://cgaalfflopmcbaodnlphklclnnhmdhcn.chromiumapp.org/oauth2"
     )
-    gateway_browser_extension_oauth_scopes: str = "workspace:read"
+    gateway_browser_extension_oauth_scopes: str = "workspace:read chat-context:write"
     gateway_browser_extension_access_token_ttl_seconds: int = Field(
         default=3600, ge=300, le=86400
     )

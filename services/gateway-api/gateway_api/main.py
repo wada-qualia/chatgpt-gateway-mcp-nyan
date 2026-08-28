@@ -32,6 +32,7 @@ from .routers import (
     agent_coordination,
     audit,
     auth,
+    chat_contexts,
     devices,
     docker,
     file_changes,
@@ -372,6 +373,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(account.router)
     app.include_router(oauth.router)
+    app.include_router(chat_contexts.router)
     app.include_router(devices.router)
     app.include_router(docker.router)
     app.include_router(thin_clients.activation_router)

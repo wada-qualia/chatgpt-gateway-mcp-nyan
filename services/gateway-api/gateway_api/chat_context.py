@@ -392,6 +392,26 @@ class ChatContextService:
         db.flush()
         return context.id
 
+    def resolve_conversation_lease(
+        self,
+        db: Session,
+        *,
+        owner_subject: str,
+        conversation_reference: str,
+        actor_kind: str = "browser_extension",
+    ) -> ChatContextLease:
+        context_id = self.resolve_conversation(
+            db,
+            owner_subject=owner_subject,
+            conversation_reference=conversation_reference,
+        )
+        context = self._lock_context(db, self._owner(owner_subject), context_id)
+        return self._ensure_context_alias(
+            db,
+            context,
+            actor_kind=self._actor(actor_kind),
+        )
+
     def _create_context(
         self,
         db: Session,

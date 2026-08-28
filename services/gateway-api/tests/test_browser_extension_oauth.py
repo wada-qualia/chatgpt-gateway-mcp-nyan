@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 EXTENSION_CLIENT_ID = "atlas-chatgpt-browser-extension"
 EXTENSION_REDIRECT = "https://cgaalfflopmcbaodnlphklclnnhmdhcn.chromiumapp.org/oauth2"
+EXTENSION_SCOPE = "workspace:read chat-context:write"
 
 
 def pkce_challenge(verifier: str) -> str:
@@ -72,7 +73,7 @@ def register_extension(client: TestClient):
             "client_id": EXTENSION_CLIENT_ID,
             "client_name": "ATLAS ChatGPT Browser Extension",
             "redirect_uris": [EXTENSION_REDIRECT],
-            "scope": "workspace:read",
+            "scope": EXTENSION_SCOPE,
         },
     )
 
@@ -81,7 +82,7 @@ def authorize_extension(
     client: TestClient,
     verifier: str,
     *,
-    scope: str = "workspace:read",
+    scope: str = EXTENSION_SCOPE,
     state: str = "state-value",
 ):
     return client.get(
@@ -126,7 +127,7 @@ def test_extension_registration_is_exact_public_and_least_privilege(
     payload = registered.json()
     assert payload["client_id"] == EXTENSION_CLIENT_ID
     assert payload["redirect_uris"] == [EXTENSION_REDIRECT]
-    assert payload["scope"] == "workspace:read"
+    assert payload["scope"] == EXTENSION_SCOPE
     assert payload["token_endpoint_auth_method"] == "none"
     assert "client_secret" not in payload
 
@@ -135,7 +136,7 @@ def test_extension_registration_is_exact_public_and_least_privilege(
         json={
             "client_id": EXTENSION_CLIENT_ID,
             "redirect_uris": ["https://*.chromiumapp.org/oauth2"],
-            "scope": "workspace:read",
+            "scope": EXTENSION_SCOPE,
         },
     )
     assert wildcard.status_code == 400
@@ -145,7 +146,7 @@ def test_extension_registration_is_exact_public_and_least_privilege(
         json={
             "client_id": "other-extension",
             "redirect_uris": [EXTENSION_REDIRECT],
-            "scope": "workspace:read",
+            "scope": EXTENSION_SCOPE,
         },
     )
     assert wrong_client.status_code == 400
@@ -159,6 +160,17 @@ def test_extension_registration_is_exact_public_and_least_privilege(
         },
     )
     assert elevated.status_code == 400
+
+    legacy_scope = client.post(
+        "/oauth/register",
+        json={
+            "client_id": EXTENSION_CLIENT_ID,
+            "redirect_uris": [EXTENSION_REDIRECT],
+            "scope": "workspace:read",
+        },
+    )
+    assert legacy_scope.status_code == 400
+    assert legacy_scope.json()["detail"] == "Invalid OAuth scope"
 
 
 def test_extension_pkce_state_token_ttl_and_replay(client: TestClient) -> None:
@@ -177,14 +189,14 @@ def test_extension_pkce_state_token_ttl_and_replay(client: TestClient) -> None:
     token = exchange_extension(client, code, verifier)
     assert token.status_code == 200
     assert token.json()["token_type"] == "Bearer"
-    assert token.json()["scope"] == "workspace:read"
+    assert token.json()["scope"] == EXTENSION_SCOPE
     assert token.json()["expires_in"] == 3600
 
     from gateway_api.auth import decode_jwt
 
     claims = decode_jwt(token.json()["access_token"])
     assert claims["client_id"] == EXTENSION_CLIENT_ID
-    assert claims["scope"] == "workspace:read"
+    assert claims["scope"] == EXTENSION_SCOPE
     assert claims["exp"] - claims["iat"] == 3600
 
     replay = exchange_extension(client, code, verifier)
@@ -234,6 +246,10 @@ def test_authorize_rejects_scope_elevation_non_s256_and_identity_mismatch(
     assert elevated.status_code == 400
     assert elevated.json()["detail"] == "Invalid OAuth scope"
 
+    legacy_scope = authorize_extension(client, verifier, scope="workspace:read")
+    assert legacy_scope.status_code == 400
+    assert legacy_scope.json()["detail"] == "Invalid OAuth scope"
+
     non_s256 = client.get(
         "/oauth/authorize",
         params={
@@ -242,7 +258,7 @@ def test_authorize_rejects_scope_elevation_non_s256_and_identity_mismatch(
             "redirect_uri": EXTENSION_REDIRECT,
             "code_challenge": pkce_challenge(verifier),
             "code_challenge_method": "plain",
-            "scope": "workspace:read",
+            "scope": EXTENSION_SCOPE,
         },
         follow_redirects=False,
     )
@@ -256,7 +272,7 @@ def test_authorize_rejects_scope_elevation_non_s256_and_identity_mismatch(
             "redirect_uri": "https://other.chromiumapp.org/oauth2",
             "code_challenge": pkce_challenge(verifier),
             "code_challenge_method": "S256",
-            "scope": "workspace:read",
+            "scope": EXTENSION_SCOPE,
         },
         follow_redirects=False,
     )
@@ -297,7 +313,7 @@ def test_unauthenticated_authorize_resumes_through_keycloak_login(
             "redirect_uri": EXTENSION_REDIRECT,
             "code_challenge": pkce_challenge(verifier),
             "code_challenge_method": "S256",
-            "scope": "workspace:read",
+            "scope": EXTENSION_SCOPE,
             "state": "resume-state",
         }
         first = client.get(

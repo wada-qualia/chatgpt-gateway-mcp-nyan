@@ -1,0 +1,142 @@
+openapi: 3.1.0
+info:
+  title: ATLAS Chat Context Browser Contract
+  version: 1.0.0
+  description: |
+    First-party Browser Extension contract for provisional ChatGPT conversation
+    contexts. Requests require a short-lived pinned extension access token with
+    chat-context:write. Raw ChatGPT conversation references are accepted only for
+    bind/resolve and are stored by Gateway solely as versioned HMAC digests.
+paths:
+  /api/chat-contexts/v1/contexts:
+    post:
+      operationId: createProvisionalChatContext
+      security:
+        - browserExtensionOAuth: [chat-context:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChatContextRequest'
+      responses:
+        '200':
+          description: Owner-scoped idempotent context lease.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatContextLease'
+        '401': {description: Browser extension bearer required.}
+        '403': {description: Pinned extension identity or scope rejected.}
+        '422': {description: Request validation failed.}
+        '503': {description: Chat-context service unavailable.}
+  /api/chat-contexts/v1/contexts/{context_id}/bind:
+    post:
+      operationId: bindChatContextConversation
+      security:
+        - browserExtensionOAuth: [chat-context:write]
+      parameters:
+        - name: context_id
+          in: path
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 64}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BindChatContextRequest'
+      responses:
+        '200':
+          description: Idempotent owner-bound conversation receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatContextBinding'
+        '401': {description: Browser extension bearer required.}
+        '403': {description: Pinned extension identity or scope rejected.}
+        '404': {description: Context is absent for the authenticated owner.}
+        '409': {description: Context or conversation is already bound incompatibly.}
+        '422': {description: Request validation failed.}
+  /api/chat-contexts/v1/resolve:
+    post:
+      operationId: resolveBoundChatContext
+      security:
+        - browserExtensionOAuth: [chat-context:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveChatContextRequest'
+      responses:
+        '200':
+          description: Current lease for the authenticated owner's bound conversation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatContextLease'
+        '401': {description: Browser extension bearer required.}
+        '403': {description: Pinned extension identity or scope rejected.}
+        '404': {description: Bound conversation is not known for this owner.}
+        '409': {description: Binding is closed or ambiguous.}
+        '422': {description: Request validation failed.}
+        '503': {description: Chat-context service unavailable.}
+components:
+  securitySchemes:
+    browserExtensionOAuth:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /oauth/authorize
+          tokenUrl: /oauth/token
+          scopes:
+            chat-context:write: Create, bind, and resolve browser chat contexts.
+  schemas:
+    CreateChatContextRequest:
+      type: object
+      additionalProperties: false
+      required: [client_nonce]
+      properties:
+        client_nonce:
+          type: string
+          minLength: 1
+          maxLength: 128
+        project_ref:
+          type: [string, 'null']
+          maxLength: 255
+    BindChatContextRequest:
+      type: object
+      additionalProperties: false
+      required: [conversation_ref]
+      properties:
+        conversation_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+    ResolveChatContextRequest:
+      type: object
+      additionalProperties: false
+      required: [conversation_ref]
+      properties:
+        conversation_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+    ChatContextLease:
+      type: object
+      additionalProperties: false
+      required: [context_id, chat_context, generation, expires_at]
+      properties:
+        context_id: {type: string, minLength: 1, maxLength: 64}
+        chat_context: {type: string, pattern: '^[A-Za-z0-9]{4}$'}
+        generation: {type: integer, minimum: 1}
+        expires_at: {type: string, format: date-time}
+    ChatContextBinding:
+      type: object
+      additionalProperties: false
+      required: [context_id, key_version, newly_bound]
+      properties:
+        context_id: {type: string, minLength: 1, maxLength: 64}
+        key_version: {type: integer, minimum: 1}
+        newly_bound: {type: boolean}

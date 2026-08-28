@@ -116,6 +116,7 @@ class MonitoringService:
         owner_subject: str | None,
         origin: str | None,
         resource_id: str | None,
+        chat_context_id: str | None = None,
     ) -> bool:
         if owner_subject is not None and session.owner_subject != owner_subject:
             return False
@@ -123,7 +124,7 @@ class MonitoringService:
             return False
         if resource_id is not None and session.resource_id != resource_id:
             return False
-        return True
+        return chat_context_id is None or session.chat_context_id == chat_context_id
 
     def _spool_root(self, settings: Settings | None = None) -> Path:
         resolved = settings or get_settings()
@@ -134,10 +135,19 @@ class MonitoringService:
     def _output_path(self, session_id: str, settings: Settings | None = None) -> Path:
         return self._spool_root(settings) / f"{session_id}.jsonl"
 
-    def create_tool_call(self, db: Session, *, owner_subject: str, tool_name: str, arguments: dict[str, Any]) -> AgentToolCall:
+    def create_tool_call(
+        self,
+        db: Session,
+        *,
+        owner_subject: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        chat_context_id: str | None = None,
+    ) -> AgentToolCall:
         call = AgentToolCall(
             id=str(uuid.uuid4()),
             owner_subject=owner_subject,
+            chat_context_id=chat_context_id,
             tool_name=tool_name,
             arguments=redacted_arguments(arguments),
             status="running",
@@ -179,6 +189,7 @@ class MonitoringService:
         name: str | None,
         settings: Settings,
         meta: dict[str, Any] | None = None,
+        chat_context_id: str | None = None,
     ) -> CommandSession:
         session_id = str(uuid.uuid4())
         output_path = self._output_path(session_id, settings)
@@ -186,6 +197,7 @@ class MonitoringService:
         session = CommandSession(
             id=session_id,
             owner_subject=owner_subject,
+            chat_context_id=chat_context_id,
             origin=origin,
             resource_id=resource_id,
             name=name,
@@ -338,6 +350,7 @@ class MonitoringService:
         background: bool = False,
         session_name: str | None = None,
         meta: dict[str, Any] | None = None,
+        chat_context_id: str | None = None,
     ) -> CommandRunResult:
         session = self.create_session(
             db,
@@ -349,6 +362,7 @@ class MonitoringService:
             name=session_name,
             settings=settings,
             meta=meta,
+            chat_context_id=chat_context_id,
         )
         done = threading.Event()
         try:
@@ -583,15 +597,22 @@ class MonitoringService:
                 markers.setdefault(line, set()).add(delivery.reason)
         return markers
 
-    def background_tails(self, db: Session, *, owner_subject: str, tool_call_id: str | None) -> list[dict[str, Any]]:
-        sessions = (
+    def background_tails(
+        self,
+        db: Session,
+        *,
+        owner_subject: str,
+        tool_call_id: str | None,
+        chat_context_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = (
             db.query(CommandSession)
             .filter(CommandSession.owner_subject == owner_subject)
             .filter(CommandSession.status.in_(list(ACTIVE_STATUSES | TERMINAL_STATUSES)))
-            .order_by(CommandSession.updated_at.desc())
-            .limit(20)
-            .all()
         )
+        if chat_context_id is not None:
+            query = query.filter(CommandSession.chat_context_id == chat_context_id)
+        sessions = query.order_by(CommandSession.updated_at.desc()).limit(20).all()
         tails: list[dict[str, Any]] = []
         for session in sessions:
             already_reported = bool((session.meta or {}).get("terminal_tail_reported"))

@@ -404,11 +404,13 @@ def _persist_file_change(
     tool_call_id: str | None,
     structured: dict[str, Any],
     lease_context: WriteLeaseContext | None = None,
+    chat_context_id: str | None = None,
 ) -> FileChangeSet:
     diff = structured.get("diff") if isinstance(structured.get("diff"), dict) else {}
     change = FileChangeSet(
         id=str(uuid.uuid4()),
         owner_subject=user.subject,
+        chat_context_id=chat_context_id,
         origin=origin,
         resource_id=resource_id,
         tool_call_id=tool_call_id,
@@ -1627,6 +1629,7 @@ async def _run_ssh_command_monitored(
     background: bool,
     session_name: str | None,
     settings: Settings,
+    chat_context_id: str | None = None,
 ) -> CommandRunResult:
     credentials = load_device_credentials(device, db)
     session = monitoring_service.create_session(
@@ -1639,6 +1642,7 @@ async def _run_ssh_command_monitored(
         name=session_name,
         settings=settings,
         meta=_ssh_session_meta(device, action=action),
+        chat_context_id=chat_context_id,
     )
     if background:
         threading.Thread(
@@ -1846,6 +1850,9 @@ async def mcp(
             except McpChatContextAdmissionError as exc:
                 result = _result(exc.payload(), is_error=True)
             else:
+                if admission.context_id is not None:
+                    tool_call.chat_context_id = admission.context_id
+                    db.commit()
                 arguments = _validate_tool_arguments(
                     name,
                     admission.arguments,
@@ -1865,6 +1872,7 @@ async def mcp(
                         tool_call_id=tool_call.id,
                         dispatch_target=registry.target(name),
                         presentation=presentation,
+                        chat_context_id=admission.context_id,
                     )
                 finally:
                     request.state.upstream_duration_seconds = max(
@@ -1879,10 +1887,15 @@ async def mcp(
                 session_id=str(session_id) if session_id else None,
                 error=str(structured.get("error")) if result.get("isError") else None,
             )
-            structured["background_session_tails"] = monitoring_service.background_tails(
-                db,
-                owner_subject=user.subject,
-                tool_call_id=tool_call.id,
+            structured["background_session_tails"] = (
+                []
+                if chat_context_mode == "required" and tool_call.chat_context_id is None
+                else monitoring_service.background_tails(
+                    db,
+                    owner_subject=user.subject,
+                    tool_call_id=tool_call.id,
+                    chat_context_id=tool_call.chat_context_id,
+                )
             )
             result["structuredContent"] = structured
             result = _refresh_result_content(result)
@@ -2029,6 +2042,7 @@ async def _call_tool(
     tool_call_id: str | None = None,
     dispatch_target: ToolDispatchTarget | None = None,
     presentation: PresentationContext | None = None,
+    chat_context_id: str | None = None,
 ) -> dict[str, Any]:
     if name == "chat_context_start":
         try:
@@ -2203,6 +2217,7 @@ async def _call_tool(
             background=bool(args.get("background", False)),
             session_name=str(args.get("session_name") or "") or None,
             settings=settings,
+            chat_context_id=chat_context_id,
         )
         return _command_result(
             command=command,
@@ -2211,20 +2226,40 @@ async def _call_tool(
             extra={"device_id": device.id, "action": action},
         )
     if name == "monitoring_list_sessions":
-        query = (
-            db.query(CommandSession).filter(CommandSession.owner_subject == user.subject).order_by(CommandSession.updated_at.desc()))
+        query = db.query(CommandSession).filter(
+            CommandSession.owner_subject == user.subject
+        )
+        if chat_context_id is not None:
+            query = query.filter(CommandSession.chat_context_id == chat_context_id)
         if args.get("status"):
             query = query.filter(CommandSession.status == str(args.get("status")))
-        sessions = [_session_payload(session) for session in query.limit(20).all()]
+        sessions = [
+            _session_payload(session)
+            for session in query.order_by(CommandSession.updated_at.desc()).limit(20).all()
+        ]
         return _result({"sessions": sessions})
     if name == "monitoring_get_session":
         session = db.get(CommandSession, str(args.get("session_id", "")))
-        if session is None or session.owner_subject != user.subject:
+        if (
+            session is None
+            or session.owner_subject != user.subject
+            or (
+                chat_context_id is not None
+                and session.chat_context_id != chat_context_id
+            )
+        ):
             raise HTTPException(status_code=404, detail="Command session not found")
         return _result({"session": _session_payload(session)})
     if name == "monitoring_read_output":
         session = db.get(CommandSession, str(args.get("session_id", "")))
-        if session is None or session.owner_subject != user.subject:
+        if (
+            session is None
+            or session.owner_subject != user.subject
+            or (
+                chat_context_id is not None
+                and session.chat_context_id != chat_context_id
+            )
+        ):
             raise HTTPException(status_code=404, detail="Command session not found")
         output = monitoring_service.output_window(
             db,
@@ -2239,7 +2274,14 @@ async def _call_tool(
         return _result({"output": output})
     if name == "monitoring_terminate_session":
         session = db.get(CommandSession, str(args.get("session_id", "")))
-        if session is None or session.owner_subject != user.subject:
+        if (
+            session is None
+            or session.owner_subject != user.subject
+            or (
+                chat_context_id is not None
+                and session.chat_context_id != chat_context_id
+            )
+        ):
             raise HTTPException(status_code=404, detail="Command session not found")
         if session.origin == "thin_client" and session.resource_id:
             try:
@@ -2267,13 +2309,25 @@ async def _call_tool(
     if name == "file_changes_list":
         enforce(user, action="read")
         safe_limit = min(max(int(args.get("limit", 100) or 100), 1), 500)
-        query = (
-            db.query(FileChangeSet).filter(FileChangeSet.owner_subject == user.subject).order_by(FileChangeSet.created_at.desc()))
+        query = db.query(FileChangeSet).filter(
+            FileChangeSet.owner_subject == user.subject
+        )
+        if chat_context_id is not None:
+            query = query.filter(FileChangeSet.chat_context_id == chat_context_id)
         if args.get("origin"):
             query = query.filter(FileChangeSet.origin == str(args["origin"]))
         if args.get("resource_id"):
             query = query.filter(FileChangeSet.resource_id == str(args["resource_id"]))
-        return _result({"changes": [_file_change_payload(change) for change in query.limit(safe_limit).all()]})
+        return _result(
+            {
+                "changes": [
+                    _file_change_payload(change)
+                    for change in query.order_by(FileChangeSet.created_at.desc())
+                    .limit(safe_limit)
+                    .all()
+                ]
+            }
+        )
     if name == "list_files":
         root = _workspace(user, settings)
         target = _safe_path(user, settings, str(args.get("path", ".")))
@@ -2371,6 +2425,7 @@ async def _call_tool(
             tool_call_id=tool_call_id,
             structured=structured,
             lease_context=lease_context,
+            chat_context_id=chat_context_id,
         )
         return _result(
             {
@@ -2394,6 +2449,7 @@ async def _call_tool(
             settings=settings,
             background=bool(args.get("background", False)),
             session_name=str(args.get("session_name") or "") or None,
+            chat_context_id=chat_context_id,
         )
         return _command_result(
             command=command,
@@ -2423,6 +2479,7 @@ async def _call_tool(
             background=bool(args.get("background", False)),
             session_name=str(args.get("session_name") or "") or None,
             meta={"container_id": workspace.container_id, "workspace_id": workspace.id},
+            chat_context_id=chat_context_id,
         )
         return _command_result(
             command=command,
@@ -2635,6 +2692,7 @@ async def _call_tool(
                 settings=settings,
                 meta={"client_id": client.id, "hostname": client.hostname, "directory": client.directory,
                 },
+                chat_context_id=chat_context_id,
             )
             arguments = {
                 "session_id": session.id,
@@ -2724,6 +2782,7 @@ async def _call_tool(
                 tool_call_id=tool_call_id,
                 structured=structured,
                 lease_context=lease_context,
+                chat_context_id=chat_context_id,
             )
             structured["file_change_id"] = file_change.id
         elif tool.startswith("browser_"):

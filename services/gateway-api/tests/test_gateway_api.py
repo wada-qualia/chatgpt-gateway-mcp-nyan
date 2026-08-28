@@ -7898,3 +7898,271 @@ def test_mcp_chat_context_global_flag_forces_required_client_off(
     )
     assert called.status_code == 200
     assert called.json()["result"]["structuredContent"]["ok"] is True
+
+
+def test_mcp_chat_context_execution_state_isolation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gateway_api import config
+    from gateway_api.auth import create_jwt
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import (
+        AgentToolCall,
+        ChatContextAlias,
+        CommandSession,
+        FileChangeSet,
+        OAuthClient,
+    )
+    from gateway_api.monitoring import monitoring_service
+
+    owner_subject = "chat-context-isolation-user"
+    monkeypatch.setenv("GATEWAY_CHAT_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv(
+        "GATEWAY_CHAT_CONTEXT_HMAC_KEY",
+        "test-hmac-key-000000000000000000",
+    )
+    config.get_settings.cache_clear()
+    try:
+        with SessionLocal() as db:
+            oauth_client = OAuthClient(
+                client_id="chat-context-isolation-client",
+                client_name="Chat context isolation client",
+                redirect_uris=["https://example.test/callback"],
+                scope="mcp:read",
+                presentation_profile="developer-dynamic",
+                presentation_policy_generation=1,
+                presentation_mode="catalog_broker",
+                presentation_capabilities=[],
+                chat_context_mode="required",
+            )
+            db.add(oauth_client)
+            db.commit()
+
+        token = create_jwt(
+            subject=owner_subject,
+            username=owner_subject,
+            roles=["gateway-user"],
+            scopes=["mcp:read"],
+            token_type="access",
+            ttl_seconds=300,
+            extra={
+                "client_id": oauth_client.client_id,
+                "presentation_profile": oauth_client.presentation_profile,
+                "presentation_policy_generation": 1,
+                "presentation_mode": oauth_client.presentation_mode,
+                "presentation_capabilities": [],
+                "workspace_plan": "none",
+                "chat_context_mode": "required",
+                "allowed_tool_names": [],
+            },
+        )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "MCP-Protocol-Version": "2025-11-25",
+        }
+
+        def call_tool(name: str, arguments: dict[str, object], request_id: str) -> dict:
+            response = client.post(
+                "/mcp",
+                headers=headers,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "tools/call",
+                    "params": {"name": name, "arguments": arguments},
+                },
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["id"] == request_id
+            return payload
+
+        start_a = call_tool("chat_context_start", {}, "ctx-isolation-start-a")
+        start_b = call_tool("chat_context_start", {}, "ctx-isolation-start-b")
+        code_a = start_a["result"]["structuredContent"]["chat_context"]
+        code_b = start_b["result"]["structuredContent"]["chat_context"]
+        assert code_a != code_b
+
+        with SessionLocal() as db:
+            aliases = (
+                db.query(ChatContextAlias)
+                .filter(
+                    ChatContextAlias.owner_subject == owner_subject,
+                    ChatContextAlias.code.in_([code_a, code_b]),
+                )
+                .all()
+            )
+            context_by_code = {alias.code: alias.context_id for alias in aliases}
+        context_a = context_by_code[code_a]
+        context_b = context_by_code[code_b]
+        assert context_a != context_b
+
+        info_a = call_tool(
+            "workspace_info",
+            {"chat_context": code_a},
+            "ctx-isolation-info-a",
+        )
+        info_b = call_tool(
+            "workspace_info",
+            {"chat_context": code_b},
+            "ctx-isolation-info-b",
+        )
+        assert info_a["result"]["isError"] is False
+        assert info_b["result"]["isError"] is False
+
+        run_a = call_tool(
+            "run_cli_command",
+            {"chat_context": code_a, "command": "printf context-a", "cwd": "."},
+            "ctx-isolation-run-a",
+        )
+        run_b = call_tool(
+            "run_cli_command",
+            {"chat_context": code_b, "command": "printf context-b", "cwd": "."},
+            "ctx-isolation-run-b",
+        )
+        session_a = run_a["result"]["structuredContent"]["session_id"]
+        session_b = run_b["result"]["structuredContent"]["session_id"]
+        assert session_a != session_b
+
+        listed_a = call_tool(
+            "monitoring_list_sessions",
+            {"chat_context": code_a},
+            "ctx-isolation-list-a",
+        )
+        visible_a = {
+            item["session_id"]
+            for item in listed_a["result"]["structuredContent"]["sessions"]
+        }
+        assert session_a in visible_a
+        assert session_b not in visible_a
+
+        denied_get = call_tool(
+            "monitoring_get_session",
+            {"chat_context": code_a, "session_id": session_b},
+            "ctx-isolation-get-b-from-a",
+        )
+        denied_read = call_tool(
+            "monitoring_read_output",
+            {"chat_context": code_a, "session_id": session_b, "tail": 5},
+            "ctx-isolation-read-b-from-a",
+        )
+        denied_terminate = call_tool(
+            "monitoring_terminate_session",
+            {"chat_context": code_a, "session_id": session_b, "force": False},
+            "ctx-isolation-terminate-b-from-a",
+        )
+        for denied in (denied_get, denied_read, denied_terminate):
+            assert denied["error"] == {
+                "code": 404,
+                "message": "Command session not found",
+            }
+
+        write_a = call_tool(
+            "write_file",
+            {"chat_context": code_a, "path": "ctx-a.txt", "content": "context-a"},
+            "ctx-isolation-write-a",
+        )
+        write_b = call_tool(
+            "write_file",
+            {"chat_context": code_b, "path": "ctx-b.txt", "content": "context-b"},
+            "ctx-isolation-write-b",
+        )
+        change_a = write_a["result"]["structuredContent"]["file_change_id"]
+        change_b = write_b["result"]["structuredContent"]["file_change_id"]
+
+        changes_a = call_tool(
+            "file_changes_list",
+            {"chat_context": code_a, "limit": 100},
+            "ctx-isolation-changes-a",
+        )
+        visible_changes_a = {
+            item["id"]
+            for item in changes_a["result"]["structuredContent"]["changes"]
+        }
+        assert change_a in visible_changes_a
+        assert change_b not in visible_changes_a
+
+        with SessionLocal() as db:
+            assert db.get(CommandSession, session_a).chat_context_id == context_a
+            assert db.get(CommandSession, session_b).chat_context_id == context_b
+            assert db.get(FileChangeSet, change_a).chat_context_id == context_a
+            assert db.get(FileChangeSet, change_b).chat_context_id == context_b
+            attributed_contexts = {
+                item.chat_context_id
+                for item in db.query(AgentToolCall)
+                .filter(AgentToolCall.owner_subject == owner_subject)
+                .all()
+                if item.chat_context_id is not None
+            }
+            assert {context_a, context_b} <= attributed_contexts
+
+            settings = config.get_settings()
+            tail_a = monitoring_service.create_session(
+                db,
+                owner_subject=owner_subject,
+                origin="server",
+                resource_id=None,
+                command="tail-a",
+                cwd=".",
+                name="tail-a",
+                settings=settings,
+                chat_context_id=context_a,
+            )
+            tail_b = monitoring_service.create_session(
+                db,
+                owner_subject=owner_subject,
+                origin="server",
+                resource_id=None,
+                command="tail-b",
+                cwd=".",
+                name="tail-b",
+                settings=settings,
+                chat_context_id=context_b,
+            )
+            tail_a_id = tail_a.id
+            tail_b_id = tail_b.id
+
+        assert monitoring_service.append_output(
+            tail_a_id,
+            stream="stdout",
+            text="tail-a\n",
+            owner_subject=owner_subject,
+        )
+        assert monitoring_service.append_output(
+            tail_b_id,
+            stream="stdout",
+            text="tail-b\n",
+            owner_subject=owner_subject,
+        )
+
+        tails_a = call_tool(
+            "workspace_info",
+            {"chat_context": code_a},
+            "ctx-isolation-tails-a",
+        )["result"]["structuredContent"]["background_session_tails"]
+        tail_ids_a = {item["session_id"] for item in tails_a}
+        assert tail_a_id in tail_ids_a
+        assert tail_b_id not in tail_ids_a
+
+        shared_a = call_tool(
+            "list_resources",
+            {"chat_context": code_a},
+            "ctx-isolation-shared-a",
+        )["result"]["structuredContent"]
+        shared_b = call_tool(
+            "list_resources",
+            {"chat_context": code_b},
+            "ctx-isolation-shared-b",
+        )["result"]["structuredContent"]
+        for key in (
+            "devices",
+            "docker_workspaces",
+            "thin_clients",
+            "ssh_devices",
+            "docker_workspace_items",
+            "thin_client_items",
+        ):
+            assert shared_a[key] == shared_b[key]
+    finally:
+        config.get_settings.cache_clear()

@@ -139,9 +139,16 @@ def test_live_deployment_plan_from_0011_declares_online_indexes(
         "20260811_0012",
         "20260818_0013",
         "20260818_0014",
+        "20260828_0015",
         HEAD_REVISION,
     )
-    assert plan.compatibility == ("expand", "expand", "expand", "expand")
+    assert plan.compatibility == (
+        "expand",
+        "expand",
+        "expand",
+        "expand",
+        "expand",
+    )
     assert plan.safe_for_live_expand is True
     assert plan.online_index_operations == (
         "ix_outbox_events_ready_claim",
@@ -163,9 +170,10 @@ def test_live_deployment_plan_from_0012_is_hot_path_index_only(
     assert plan.pending_revisions == (
         "20260818_0013",
         "20260818_0014",
+        "20260828_0015",
         HEAD_REVISION,
     )
-    assert plan.compatibility == ("expand", "expand", "expand")
+    assert plan.compatibility == ("expand", "expand", "expand", "expand")
     assert plan.safe_for_live_expand is True
     assert plan.online_index_operations == (
         "ix_outbox_events_active_created_at",
@@ -181,13 +189,17 @@ def test_live_deployment_plan_from_0013_only_drops_capacity_indexes(
     plan = get_migration_plan(target_engine)
 
     assert plan.current_revision == "20260818_0013"
-    assert plan.pending_revisions == ("20260818_0014", HEAD_REVISION)
-    assert plan.compatibility == ("expand", "expand")
+    assert plan.pending_revisions == (
+        "20260818_0014",
+        "20260828_0015",
+        HEAD_REVISION,
+    )
+    assert plan.compatibility == ("expand", "expand", "expand")
     assert plan.safe_for_live_expand is True
     assert plan.online_index_operations == CAPACITY_INDEX_DROPS
 
 
-def test_live_deployment_plan_from_0014_is_chat_context_expand_only(
+def test_live_deployment_plan_from_0014_includes_chat_context_expands(
     tmp_path: Path,
 ) -> None:
     target_engine = sqlite_engine(tmp_path / "deployment-plan-0014.sqlite")
@@ -196,6 +208,21 @@ def test_live_deployment_plan_from_0014_is_chat_context_expand_only(
     plan = get_migration_plan(target_engine)
 
     assert plan.current_revision == "20260818_0014"
+    assert plan.pending_revisions == ("20260828_0015", HEAD_REVISION)
+    assert plan.compatibility == ("expand", "expand")
+    assert plan.safe_for_live_expand is True
+    assert plan.online_index_operations == ()
+
+
+def test_live_deployment_plan_from_0015_is_mcp_policy_expand_only(
+    tmp_path: Path,
+) -> None:
+    target_engine = sqlite_engine(tmp_path / "deployment-plan-0015.sqlite")
+    command.upgrade(alembic_config(str(target_engine.url)), "20260828_0015")
+
+    plan = get_migration_plan(target_engine)
+
+    assert plan.current_revision == "20260828_0015"
     assert plan.pending_revisions == (HEAD_REVISION,)
     assert plan.compatibility == ("expand",)
     assert plan.safe_for_live_expand is True

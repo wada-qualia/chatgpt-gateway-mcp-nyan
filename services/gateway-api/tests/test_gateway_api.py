@@ -7614,3 +7614,287 @@ def test_cold_history_unavailability_fails_enabled_read_surface_closed(client: T
     finally:
         client.app.state.cold_history_client = None
         asyncio.run(history_client.close())
+
+
+def test_mcp_chat_context_default_off_preserves_public_tool_schema(
+    client: TestClient,
+) -> None:
+    initialized = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": "chat-context-off-init",
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25"},
+        },
+    )
+    assert initialized.status_code == 200
+    assert initialized.json()["result"]["_meta"]["gateway"]["chat_context"] == {
+        "contract_version": 1,
+        "mode": "off",
+        "pattern": "^[A-Za-z0-9]{4}$",
+        "bootstrap_tool": "chat_context_start",
+        "refresh_tool": "chat_context_refresh",
+    }
+
+    listed = client.post(
+        "/mcp",
+        headers={"MCP-Protocol-Version": "2025-11-25"},
+        json={
+            "jsonrpc": "2.0",
+            "id": "chat-context-off-list",
+            "method": "tools/list",
+        },
+    )
+    assert listed.status_code == 200
+    tools = {tool["name"]: tool for tool in listed.json()["result"]["tools"]}
+    assert "chat_context_start" not in tools
+    assert "chat_context_refresh" not in tools
+    assert "chat_context" not in tools["workspace_info"]["inputSchema"]["properties"]
+
+
+def test_mcp_chat_context_required_bootstrap_retry_and_refresh(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gateway_api import config
+    from gateway_api.auth import create_jwt
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import OAuthClient
+
+    monkeypatch.setenv("GATEWAY_CHAT_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv(
+        "GATEWAY_CHAT_CONTEXT_HMAC_KEY",
+        "test-hmac-key-000000000000000000",
+    )
+    config.get_settings.cache_clear()
+    try:
+        with SessionLocal() as db:
+            oauth_client = OAuthClient(
+                client_id="chat-context-required-client",
+                client_name="Chat context required client",
+                redirect_uris=["https://example.test/callback"],
+                scope="mcp:read",
+                presentation_profile="developer-dynamic",
+                presentation_policy_generation=1,
+                presentation_mode="catalog_broker",
+                presentation_capabilities=[],
+                chat_context_mode="required",
+            )
+            db.add(oauth_client)
+            db.commit()
+
+        token = create_jwt(
+            subject="chat-context-required-user",
+            username="chat-context-required-user",
+            roles=["gateway-user"],
+            scopes=["mcp:read"],
+            token_type="access",
+            ttl_seconds=300,
+            extra={
+                "client_id": oauth_client.client_id,
+                "presentation_profile": oauth_client.presentation_profile,
+                "presentation_policy_generation": 1,
+                "presentation_mode": oauth_client.presentation_mode,
+                "presentation_capabilities": [],
+                "workspace_plan": "none",
+                "chat_context_mode": "required",
+                "allowed_tool_names": [],
+            },
+        )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "MCP-Protocol-Version": "2025-11-25",
+        }
+
+        initialized = client.post(
+            "/mcp",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-init",
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-11-25"},
+            },
+        )
+        assert initialized.status_code == 200
+        assert (
+            initialized.json()["result"]["_meta"]["gateway"]["chat_context"]["mode"]
+            == "required"
+        )
+
+        listed = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-list",
+                "method": "tools/list",
+            },
+        )
+        assert listed.status_code == 200
+        tools = {tool["name"]: tool for tool in listed.json()["result"]["tools"]}
+        assert {"chat_context_start", "chat_context_refresh"}.issubset(tools)
+        assert tools["workspace_info"]["inputSchema"]["required"][0] == "chat_context"
+        assert next(iter(tools["workspace_info"]["inputSchema"]["properties"])) == "chat_context"
+
+        missing = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-missing",
+                "method": "tools/call",
+                "params": {"name": "workspace_info", "arguments": {}},
+            },
+        )
+        missing_result = missing.json()["result"]
+        assert missing_result["isError"] is True
+        assert missing_result["structuredContent"]["error_code"] == "CHAT_CONTEXT_REQUIRED"
+        assert missing_result["structuredContent"]["recovery_tool"] == "chat_context_start"
+        assert missing_result["structuredContent"]["retry_original_call"] is True
+
+        started = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-start",
+                "method": "tools/call",
+                "params": {"name": "chat_context_start", "arguments": {}},
+            },
+        )
+        started_result = started.json()["result"]
+        assert started_result["isError"] is False
+        code = started_result["structuredContent"]["chat_context"]
+        assert len(code) == 4
+
+        retried = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-retry",
+                "method": "tools/call",
+                "params": {
+                    "name": "workspace_info",
+                    "arguments": {"chat_context": code},
+                },
+            },
+        )
+        retried_result = retried.json()["result"]
+        assert retried_result["isError"] is False
+        assert retried_result["structuredContent"]["user"] == (
+            "chat-context-required-user"
+        )
+
+        refreshed = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-refresh",
+                "method": "tools/call",
+                "params": {
+                    "name": "chat_context_refresh",
+                    "arguments": {"previous_chat_context": code},
+                },
+            },
+        )
+        refreshed_result = refreshed.json()["result"]
+        assert refreshed_result["isError"] is False
+        assert refreshed_result["structuredContent"]["chat_context"] == code
+        assert refreshed_result["structuredContent"]["rotated"] is False
+    finally:
+        config.get_settings.cache_clear()
+
+
+def test_mcp_chat_context_global_flag_forces_required_client_off(
+    client: TestClient,
+) -> None:
+    from gateway_api.auth import create_jwt
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import OAuthClient
+
+    with SessionLocal() as db:
+        oauth_client = OAuthClient(
+            client_id="chat-context-globally-disabled-client",
+            client_name="Chat context globally disabled client",
+            redirect_uris=["https://example.test/callback"],
+            scope="mcp:read",
+            presentation_profile="developer-dynamic",
+            presentation_policy_generation=1,
+            presentation_mode="catalog_broker",
+            presentation_capabilities=[],
+            chat_context_mode="required",
+        )
+        db.add(oauth_client)
+        db.commit()
+
+    token = create_jwt(
+        subject="chat-context-globally-disabled-user",
+        username="chat-context-globally-disabled-user",
+        roles=["gateway-user"],
+        scopes=["mcp:read"],
+        token_type="access",
+        ttl_seconds=300,
+        extra={
+            "client_id": oauth_client.client_id,
+            "presentation_profile": oauth_client.presentation_profile,
+            "presentation_policy_generation": 1,
+            "presentation_mode": oauth_client.presentation_mode,
+            "presentation_capabilities": [],
+            "workspace_plan": "none",
+            "chat_context_mode": "required",
+            "allowed_tool_names": [],
+        },
+    )
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    headers = {
+        **auth_headers,
+        "MCP-Protocol-Version": "2025-11-25",
+    }
+
+    initialized = client.post(
+        "/mcp",
+        headers=auth_headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": "chat-context-global-off-init",
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25"},
+        },
+    )
+    assert initialized.status_code == 200
+    assert (
+        initialized.json()["result"]["_meta"]["gateway"]["chat_context"]["mode"]
+        == "off"
+    )
+
+    listed = client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": "chat-context-global-off-list",
+            "method": "tools/list",
+        },
+    )
+    assert listed.status_code == 200
+    tools = {tool["name"]: tool for tool in listed.json()["result"]["tools"]}
+    assert "chat_context_start" not in tools
+    assert "chat_context_refresh" not in tools
+    assert "chat_context" not in tools["workspace_info"]["inputSchema"]["properties"]
+
+    called = client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": "chat-context-global-off-call",
+            "method": "tools/call",
+            "params": {"name": "workspace_info", "arguments": {}},
+        },
+    )
+    assert called.status_code == 200
+    assert called.json()["result"]["structuredContent"]["ok"] is True

@@ -372,6 +372,10 @@ class OAuthClient(Base):
             name="ck_oauth_client_presentation_mode",
         ),
         CheckConstraint(
+            "chat_context_mode in ('off', 'optional', 'required')",
+            name="ck_oauth_client_chat_context_mode",
+        ),
+        CheckConstraint(
             "workspace_plan in ('none', 'business', 'enterprise', 'edu')",
             name="ck_oauth_client_workspace_plan",
         ),
@@ -387,6 +391,9 @@ class OAuthClient(Base):
     presentation_policy_generation: Mapped[int] = mapped_column(Integer, default=1)
     presentation_mode: Mapped[str] = mapped_column(
         String(40), default="native_projected", index=True
+    )
+    chat_context_mode: Mapped[str] = mapped_column(
+        String(16), default="off", server_default="off", index=True
     )
     presentation_capabilities: Mapped[list[str]] = mapped_column(
         JSON, default=lambda: ["native_tools"]

@@ -12,7 +12,22 @@ from gateway_api.chat_context import (
     ChatContextService,
 )
 from gateway_api.config import Settings
-from gateway_api.models import ChatContext, ChatContextAlias, ChatContextEvent
+from gateway_api.mcp_chat_context import (
+    McpChatContextAdmissionError,
+    McpChatContextReservedArgumentCollision,
+    admit_chat_context,
+    chat_context_initialize_metadata,
+    decorate_public_tool,
+    refresh_chat_context,
+    start_chat_context,
+)
+from gateway_api.mcp_presentation import update_oauth_client_profile
+from gateway_api.models import (
+    ChatContext,
+    ChatContextAlias,
+    ChatContextEvent,
+    OAuthClient,
+)
 from gateway_api.schema_migrations import run_schema_migrations
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import IntegrityError
@@ -401,3 +416,231 @@ def test_database_rejects_non_base62_alias(db: Session) -> None:
             },
         )
         db.flush()
+
+
+def test_mcp_chat_context_schema_modes_preserve_provider_contract() -> None:
+    provider_tool = {
+        "name": "echo_value",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+    }
+
+    off = decorate_public_tool(provider_tool, "off")
+    optional = decorate_public_tool(provider_tool, "optional")
+    required = decorate_public_tool(provider_tool, "required")
+
+    assert off == provider_tool
+    assert off is not provider_tool
+    assert list(optional["inputSchema"]["properties"]) == ["chat_context", "value"]
+    assert optional["inputSchema"]["required"] == ["value"]
+    assert required["inputSchema"]["required"] == ["chat_context", "value"]
+    assert required["inputSchema"]["properties"]["chat_context"] == {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9]{4}$",
+        "description": (
+            "ATLAS chat context code for the current conversation. "
+            "This is not an authentication credential."
+        ),
+    }
+    assert provider_tool["inputSchema"]["properties"] == {
+        "value": {"type": "string"}
+    }
+    assert provider_tool["inputSchema"]["required"] == ["value"]
+
+
+def test_mcp_chat_context_reserved_provider_argument_is_rejected() -> None:
+    provider_tool = {
+        "name": "conflicting_tool",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"chat_context": {"type": "string"}},
+        },
+    }
+
+    with pytest.raises(McpChatContextReservedArgumentCollision):
+        decorate_public_tool(provider_tool, "optional")
+
+    assert decorate_public_tool(provider_tool, "off") == provider_tool
+
+
+def test_mcp_chat_context_initialize_metadata_is_versioned() -> None:
+    assert chat_context_initialize_metadata("required") == {
+        "contract_version": 1,
+        "mode": "required",
+        "pattern": "^[A-Za-z0-9]{4}$",
+        "bootstrap_tool": "chat_context_start",
+        "refresh_tool": "chat_context_refresh",
+    }
+
+
+def test_mcp_chat_context_start_admission_and_owner_isolation(db: Session) -> None:
+    settings = make_settings()
+    started = start_chat_context(
+        db,
+        settings,
+        owner_subject="owner-a",
+    )
+    code = started["chat_context"]
+
+    admitted = admit_chat_context(
+        db,
+        settings,
+        owner_subject="owner-a",
+        tool_name="workspace_info",
+        arguments={"chat_context": code, "value": "payload"},
+        mode="required",
+    )
+
+    assert admitted.code == code
+    assert admitted.context_id is not None
+    assert admitted.arguments == {"value": "payload"}
+
+    optional = admit_chat_context(
+        db,
+        settings,
+        owner_subject="owner-a",
+        tool_name="workspace_info",
+        arguments={"value": "payload"},
+        mode="optional",
+    )
+    assert optional.context_id is None
+    assert optional.arguments == {"value": "payload"}
+
+    with pytest.raises(McpChatContextAdmissionError) as other_owner:
+        admit_chat_context(
+            db,
+            settings,
+            owner_subject="owner-b",
+            tool_name="workspace_info",
+            arguments={"chat_context": code},
+            mode="required",
+        )
+    assert other_owner.value.error_code == "CHAT_CONTEXT_UNKNOWN"
+    assert other_owner.value.recovery_tool == "chat_context_start"
+
+
+def test_mcp_chat_context_required_and_refresh_results_are_recoverable(
+    db: Session,
+) -> None:
+    settings = make_settings()
+
+    with pytest.raises(McpChatContextAdmissionError) as missing:
+        admit_chat_context(
+            db,
+            settings,
+            owner_subject="owner-a",
+            tool_name="workspace_info",
+            arguments={},
+            mode="required",
+        )
+    assert missing.value.payload() == {
+        "error": "ATLAS chat context is required.",
+        "error_code": "CHAT_CONTEXT_REQUIRED",
+        "recovery_tool": "chat_context_start",
+        "retry_original_call": True,
+    }
+
+    with pytest.raises(McpChatContextAdmissionError) as invalid:
+        admit_chat_context(
+            db,
+            settings,
+            owner_subject="owner-a",
+            tool_name="workspace_info",
+            arguments={"chat_context": "bad!"},
+            mode="required",
+        )
+    assert invalid.value.error_code == "CHAT_CONTEXT_INVALID"
+
+    started = start_chat_context(db, settings, owner_subject="owner-a")
+    refreshed = refresh_chat_context(
+        db,
+        settings,
+        owner_subject="owner-a",
+        previous_chat_context=started["chat_context"],
+    )
+    assert refreshed["chat_context"] == started["chat_context"]
+    assert refreshed["rotated"] is False
+
+
+def test_chat_context_mode_change_uses_presentation_generation_fence(
+    db: Session,
+) -> None:
+    client = OAuthClient(
+        client_id="chat-context-policy-client",
+        client_name="Chat context policy client",
+        redirect_uris=["https://example.test/callback"],
+        scope="mcp:read",
+    )
+    db.add(client)
+    db.commit()
+    assert client.presentation_policy_generation == 1
+    assert client.chat_context_mode == "off"
+
+    updated = update_oauth_client_profile(
+        db,
+        client_id=client.client_id,
+        profile_id="chatgpt-stable",
+        allowed_tool_names=[],
+        chat_context_mode="optional",
+    )
+    assert updated.chat_context_mode == "optional"
+    assert updated.presentation_policy_generation == 2
+
+    unchanged = update_oauth_client_profile(
+        db,
+        client_id=client.client_id,
+        profile_id="chatgpt-stable",
+        allowed_tool_names=[],
+        chat_context_mode="optional",
+    )
+    assert unchanged.presentation_policy_generation == 2
+
+
+def test_mcp_chat_context_nested_provider_field_survives_decoration_and_admission(
+    db: Session,
+) -> None:
+    provider_tool = {
+        "name": "nested_context_tool",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "type": "object",
+                    "properties": {"chat_context": {"type": "string"}},
+                    "required": ["chat_context"],
+                }
+            },
+            "required": ["payload"],
+        },
+    }
+
+    decorated = decorate_public_tool(provider_tool, "required")
+
+    assert decorated["inputSchema"]["properties"]["payload"] == {
+        "type": "object",
+        "properties": {"chat_context": {"type": "string"}},
+        "required": ["chat_context"],
+    }
+    assert provider_tool["inputSchema"]["properties"].keys() == {"payload"}
+
+    settings = make_settings()
+    started = start_chat_context(db, settings, owner_subject="owner-a")
+    admission = admit_chat_context(
+        db,
+        settings,
+        owner_subject="owner-a",
+        tool_name="nested_context_tool",
+        arguments={
+            "chat_context": started["chat_context"],
+            "payload": {"chat_context": "provider-owned-value"},
+        },
+        mode="required",
+    )
+
+    assert admission.arguments == {
+        "payload": {"chat_context": "provider-owned-value"}
+    }

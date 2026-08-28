@@ -385,6 +385,7 @@ async def token(
             "presentation_profile": oauth_client.presentation_profile,
             "presentation_policy_generation": oauth_client.presentation_policy_generation,
             "presentation_mode": oauth_client.presentation_mode,
+            "chat_context_mode": oauth_client.chat_context_mode,
             "presentation_capabilities": list(
                 oauth_client.presentation_capabilities or []
             ),

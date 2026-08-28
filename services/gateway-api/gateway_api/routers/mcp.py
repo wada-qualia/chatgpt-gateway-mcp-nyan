@@ -43,6 +43,16 @@ from ..auth import get_bearer_or_dev_user
 from ..config import Settings, get_settings
 from ..database import get_db
 from ..events import emit_event
+from ..mcp_chat_context import (
+    McpChatContextAdmissionError,
+    admit_chat_context,
+    chat_context_initialize_metadata,
+    chat_context_tool_definitions,
+    decorate_public_tools,
+    refresh_chat_context,
+    start_chat_context,
+    tool_declares_reserved_chat_context,
+)
 from ..mcp_deferred_native import (
     deferred_entries_for_context,
     deferred_native_dispatch_target,
@@ -1252,6 +1262,15 @@ def _tool_registry(
     legacy = _legacy_tools(settings, ssh_command_profile)
     order_by_name = {str(tool["name"]): index for index, tool in enumerate(legacy)}
     broker_names = set(mcp_federation_broker_tool_names())
+    chat_context_mode = (
+        presentation.chat_context_mode
+        if presentation is not None and settings.gateway_chat_context_enabled
+        else "off"
+    )
+    context_tools = (
+        chat_context_tool_definitions() if chat_context_mode != "off" else []
+    )
+    context_tool_names = {str(tool["name"]) for tool in context_tools}
     registry = ToolRegistry()
     registry.register(
         "gateway",
@@ -1263,6 +1282,12 @@ def _tool_registry(
         [tool for tool in legacy if str(tool["name"]) in broker_names],
         order_by_name=order_by_name,
     )
+    if context_tools:
+        registry.register(
+            "gateway_chat_context",
+            context_tools,
+            start_order=len(legacy) + 100,
+        )
     if (
         db is not None
         and user is not None
@@ -1275,7 +1300,16 @@ def _tool_registry(
             user_roles=user.roles,
             context=presentation,
         )
-        native_tools = [native_tool_definition(entry) for entry in entries]
+        native_pairs = [
+            (entry, native_tool_definition(entry)) for entry in entries
+        ]
+        if chat_context_mode != "off":
+            native_pairs = [
+                (entry, tool)
+                for entry, tool in native_pairs
+                if not tool_declares_reserved_chat_context(tool)
+            ]
+        native_tools = [tool for _, tool in native_pairs]
         native_targets = {
             entry.tool.public_name: ToolDispatchTarget(
                 provider="native_projection",
@@ -1289,7 +1323,7 @@ def _tool_registry(
                     "profile_id": entry.generation.profile_id,
                 },
             )
-            for entry in entries
+            for entry, _ in native_pairs
         }
         registry.register(
             "native_projection",
@@ -1308,12 +1342,20 @@ def _tool_registry(
             user=user,
             context=presentation,
         )
-        deferred_tools = [
-            deferred_native_tool_definition(entry) for entry in deferred_entries
+        deferred_pairs = [
+            (entry, deferred_native_tool_definition(entry))
+            for entry in deferred_entries
         ]
+        if chat_context_mode != "off":
+            deferred_pairs = [
+                (entry, tool)
+                for entry, tool in deferred_pairs
+                if not tool_declares_reserved_chat_context(tool)
+            ]
+        deferred_tools = [tool for _, tool in deferred_pairs]
         deferred_targets = {
             entry.public_name: deferred_native_dispatch_target(entry)
-            for entry in deferred_entries
+            for entry, _ in deferred_pairs
         }
         registry.register(
             "deferred_native",
@@ -1323,7 +1365,11 @@ def _tool_registry(
         )
     allowed_names = None
     if presentation is not None and presentation.allowed_tool_names is not None:
-        allowed_names = set(presentation.allowed_tool_names) | broker_names
+        allowed_names = (
+            set(presentation.allowed_tool_names)
+            | broker_names
+            | context_tool_names
+        )
     return registry.filtered(allowed_names)
 
 
@@ -1716,6 +1762,9 @@ async def mcp(
             )
     ssh_profile = effective_ssh_command_profile(user, settings)
     presentation = resolve_presentation_context(request, db, user)
+    chat_context_mode = (
+        presentation.chat_context_mode if settings.gateway_chat_context_enabled else "off"
+    )
     registry = _tool_registry(
         settings,
         ssh_profile,
@@ -1757,12 +1806,20 @@ async def mcp(
                             "policy_generation": presentation.policy_generation,
                             "capabilities": sorted(presentation.capabilities),
                             "selection_reason": presentation.selection_reason,
-                        }
+                        },
+                        "chat_context": chat_context_initialize_metadata(
+                            chat_context_mode
+                        ),
                     }
                 },
             }
         elif method == "tools/list":
-            result = {"tools": registry.tools()}
+            result = {
+                "tools": decorate_public_tools(
+                    registry.tools(),
+                    chat_context_mode,
+                )
+            }
         elif method == "tools/call":
             params = body.get("params") if isinstance(body.get("params"), dict) else {}
             name = str(params.get("name") or "")
@@ -1777,30 +1834,42 @@ async def mcp(
                 tool_name=name or "invalid-tools-call",
                 arguments=raw_arguments,
             )
-            arguments = _validate_tool_arguments(
-                name,
-                raw_arguments,
-                settings,
-                ssh_profile,
-                registry=registry,
-            )
-            upstream_started = time.monotonic()
             try:
-                result = await _call_tool(
-                    name,
-                    arguments,
-                    user,
+                admission = admit_chat_context(
                     db,
                     settings,
-                    upstream=request.app.state.upstream_mcp_manager,
-                    tool_call_id=tool_call.id,
-                    dispatch_target=registry.target(name),
-                    presentation=presentation,
+                    owner_subject=user.subject,
+                    tool_name=name,
+                    arguments=raw_arguments,
+                    mode=chat_context_mode,
                 )
-            finally:
-                request.state.upstream_duration_seconds = max(
-                    0.0, time.monotonic() - upstream_started
+            except McpChatContextAdmissionError as exc:
+                result = _result(exc.payload(), is_error=True)
+            else:
+                arguments = _validate_tool_arguments(
+                    name,
+                    admission.arguments,
+                    settings,
+                    ssh_profile,
+                    registry=registry,
                 )
+                upstream_started = time.monotonic()
+                try:
+                    result = await _call_tool(
+                        name,
+                        arguments,
+                        user,
+                        db,
+                        settings,
+                        upstream=request.app.state.upstream_mcp_manager,
+                        tool_call_id=tool_call.id,
+                        dispatch_target=registry.target(name),
+                        presentation=presentation,
+                    )
+                finally:
+                    request.state.upstream_duration_seconds = max(
+                        0.0, time.monotonic() - upstream_started
+                    )
             structured = result.get("structuredContent") or {}
             session_id = structured.get("session_id")
             monitoring_service.finish_tool_call(
@@ -1961,6 +2030,43 @@ async def _call_tool(
     dispatch_target: ToolDispatchTarget | None = None,
     presentation: PresentationContext | None = None,
 ) -> dict[str, Any]:
+    if name == "chat_context_start":
+        try:
+            return _result(
+                start_chat_context(
+                    db,
+                    settings,
+                    owner_subject=user.subject,
+                )
+            )
+        except McpChatContextAdmissionError as exc:
+            return _result(exc.payload(), is_error=True)
+    if name == "chat_context_refresh":
+        previous_chat_context = args.get("previous_chat_context")
+        if not isinstance(previous_chat_context, str):
+            return _result(
+                McpChatContextAdmissionError(
+                    error_code="CHAT_CONTEXT_INVALID",
+                    message=(
+                        "Previous ATLAS chat context must contain exactly four "
+                        "Base62 characters."
+                    ),
+                    recovery_tool="chat_context_start",
+                    retry_original_call=False,
+                ).payload(),
+                is_error=True,
+            )
+        try:
+            return _result(
+                refresh_chat_context(
+                    db,
+                    settings,
+                    owner_subject=user.subject,
+                    previous_chat_context=previous_chat_context,
+                )
+            )
+        except McpChatContextAdmissionError as exc:
+            return _result(exc.payload(), is_error=True)
     if dispatch_target is not None and dispatch_target.provider == "native_projection":
         if presentation is None:
             raise HTTPException(status_code=409, detail="Presentation context is required")

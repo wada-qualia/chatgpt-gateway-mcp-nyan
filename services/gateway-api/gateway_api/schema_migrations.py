@@ -22,7 +22,7 @@ from .migration_operations import CreateIndexConcurrently, DropIndexConcurrently
 
 BASELINE_REVISION = "20260725_0001"
 PROJECTION_REVISION = "20260725_0002"
-HEAD_REVISION = "20260828_0015"
+HEAD_REVISION = "20260828_0016"
 LEGACY_ANCHOR_TABLES = {"users", "secret_blobs", "oauth_clients"}
 REVISION_PATTERN = re.compile(r"^(?P<date>\d{8})_(?P<sequence>\d{4})$")
 
@@ -278,6 +278,7 @@ def _validate_metadata_schema(connection: Connection) -> None:
         "presentation_profile",
         "presentation_policy_generation",
         "presentation_mode",
+        "chat_context_mode",
         "presentation_capabilities",
         "workspace_plan",
         "allowed_tool_names",

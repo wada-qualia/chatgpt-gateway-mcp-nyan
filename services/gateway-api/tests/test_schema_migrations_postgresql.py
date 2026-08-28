@@ -642,3 +642,66 @@ def test_postgresql_planner_selects_partial_claim_indexes(
     assert "ix_outbox_events_ready_claim" in json.dumps(ready_plan)
     assert "ix_outbox_events_stale_claim" in json.dumps(stale_plan)
     assert "ix_agent_tool_calls_lup_pending_schedule" in json.dumps(lup_plan)
+
+
+def test_chat_context_mcp_policy_postgresql_upgrade_old_slot_and_downgrade(
+    pg_engine: Engine,
+) -> None:
+    config = alembic_config(str(pg_engine.url))
+    command.upgrade(config, "20260828_0015")
+
+    before = inspect(pg_engine)
+    assert "chat_context_mode" not in {
+        item["name"] for item in before.get_columns("oauth_clients")
+    }
+
+    command.upgrade(config, HEAD_REVISION)
+
+    upgraded = inspect(pg_engine)
+    columns = {
+        item["name"]: item for item in upgraded.get_columns("oauth_clients")
+    }
+    assert columns["chat_context_mode"]["nullable"] is False
+    assert "ck_oauth_client_chat_context_mode" in {
+        item["name"] for item in upgraded.get_check_constraints("oauth_clients")
+    }
+    assert "ix_oauth_clients_chat_context_mode" in {
+        item["name"] for item in upgraded.get_indexes("oauth_clients")
+    }
+
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO oauth_clients "
+                "(client_id, client_name, redirect_uris, scope, "
+                "presentation_profile, presentation_policy_generation, "
+                "presentation_mode, presentation_capabilities, workspace_plan, "
+                "allowed_tool_names, created_at, updated_at) VALUES "
+                "(:client_id, :client_name, '[]'::json, '', 'developer-dynamic', "
+                "1, 'catalog_broker', '[]'::json, 'none', '[]'::json, now(), now())"
+            ),
+            {
+                "client_id": "old-slot-chat-context-client",
+                "client_name": "Old slot chat context client",
+            },
+        )
+        assert connection.execute(
+            text(
+                "SELECT chat_context_mode FROM oauth_clients "
+                "WHERE client_id = :client_id"
+            ),
+            {"client_id": "old-slot-chat-context-client"},
+        ).scalar_one() == "off"
+
+    command.downgrade(config, "20260828_0015")
+
+    downgraded = inspect(pg_engine)
+    assert "chat_context_mode" not in {
+        item["name"] for item in downgraded.get_columns("oauth_clients")
+    }
+    assert {
+        "chat_contexts",
+        "chat_context_aliases",
+        "chat_context_events",
+    } <= set(downgraded.get_table_names())
+    assert _revision(pg_engine) == "20260828_0015"

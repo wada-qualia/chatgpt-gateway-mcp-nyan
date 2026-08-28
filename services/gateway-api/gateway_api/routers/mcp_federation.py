@@ -569,6 +569,7 @@ async def patch_oauth_client_presentation(
         presentation_mode=payload.presentation_mode,
         presentation_capabilities=payload.presentation_capabilities,
         workspace_plan=payload.workspace_plan,
+        chat_context_mode=payload.chat_context_mode,
     )
     return oauth_client_presentation_payload(client)
 

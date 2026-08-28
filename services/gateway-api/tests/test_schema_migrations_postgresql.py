@@ -648,7 +648,11 @@ def test_chat_context_mcp_policy_postgresql_upgrade_old_slot_and_downgrade(
     pg_engine: Engine,
 ) -> None:
     config = alembic_config(str(pg_engine.url))
-    command.upgrade(config, "20260828_0015")
+    config.attributes["gateway_online_index_bootstrap"] = True
+    try:
+        command.upgrade(config, "20260828_0015")
+    finally:
+        config.attributes.pop("gateway_online_index_bootstrap", None)
 
     before = inspect(pg_engine)
     assert "chat_context_mode" not in {

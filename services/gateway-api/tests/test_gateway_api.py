@@ -6263,6 +6263,7 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "Automated candidate resilience gate",
         "CD: promote candidate",
         "CD: verify promoted release",
+        "CD: NATS authentication cutover",
         "CD: finalize release",
     ):
         assert stage in jenkinsfile

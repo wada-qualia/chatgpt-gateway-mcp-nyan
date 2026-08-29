@@ -185,6 +185,12 @@ async def register_client(
     requested_scope = payload.get("scope")
     if requested_scope is not None and not isinstance(requested_scope, str):
         raise HTTPException(status_code=400, detail="Invalid OAuth scope")
+    if (
+        is_extension
+        and requested_scope is not None
+        and _split_scope(requested_scope) != allowed_scopes
+    ):
+        raise HTTPException(status_code=400, detail="Invalid OAuth scope")
     client = OAuthClient(
         client_id=client_id,
         client_name=str(
@@ -283,6 +289,8 @@ async def authorize(
                 detail="Browser extension OAuth client scope configuration mismatch",
             )
     authorized_scope = _validated_scope(scope, allowed=client_scopes)
+    if is_extension and _split_scope(authorized_scope) != _extension_scopes(settings):
+        raise HTTPException(status_code=400, detail="Invalid OAuth scope")
     code = secrets.token_urlsafe(36)
     auth_code = OAuthCode(
         code=code,
@@ -357,11 +365,14 @@ async def token(
                 status_code=400,
                 detail="Browser extension OAuth redirect configuration mismatch",
             )
-        if set(client_scopes) != set(_extension_scopes(settings)):
+        extension_scopes = _extension_scopes(settings)
+        if set(client_scopes) != set(extension_scopes):
             raise HTTPException(
                 status_code=400,
                 detail="Browser extension OAuth client scope configuration mismatch",
             )
+        if code_scopes != extension_scopes:
+            raise HTTPException(status_code=400, detail="Invalid OAuth scope")
     expected_challenge = _pkce_s256(code_verifier)
     if not secrets.compare_digest(expected_challenge, auth_code.code_challenge):
         raise HTTPException(status_code=400, detail="Invalid PKCE verifier")
@@ -385,6 +396,7 @@ async def token(
             "presentation_profile": oauth_client.presentation_profile,
             "presentation_policy_generation": oauth_client.presentation_policy_generation,
             "presentation_mode": oauth_client.presentation_mode,
+            "chat_context_mode": oauth_client.chat_context_mode,
             "presentation_capabilities": list(
                 oauth_client.presentation_capabilities or []
             ),

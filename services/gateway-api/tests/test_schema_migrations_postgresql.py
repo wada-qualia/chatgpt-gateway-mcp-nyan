@@ -11,6 +11,7 @@ from collections.abc import Iterator
 import pytest
 from alembic import command
 from gateway_api import schema_migrations
+from gateway_api.chat_context import ChatContextService
 from gateway_api.config import Settings
 from gateway_api.schema_migrations import (
     HEAD_REVISION,
@@ -21,6 +22,8 @@ from gateway_api.schema_migrations import (
 )
 from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import sessionmaker
 
 POSTGRES_URL = os.getenv("GATEWAY_TEST_POSTGRES_URL")
 pytestmark = pytest.mark.skipif(
@@ -458,6 +461,16 @@ def test_expand_migration_preserves_release_one_slot_contract(
     }
     assert new_columns["traffic_next_attempt_at"]["nullable"] is True
     assert new_columns["traffic_last_attempt_at"]["nullable"] is True
+    for table_name in ("agent_tool_calls", "command_sessions", "file_change_sets"):
+        columns = {
+            item["name"]: item for item in current_inspector.get_columns(table_name)
+        }
+        assert columns["chat_context_id"]["nullable"] is True
+    assert {
+        "chat_contexts",
+        "chat_context_aliases",
+        "chat_context_events",
+    } <= set(current_inspector.get_table_names())
     with pg_engine.begin() as connection:
         connection.exec_driver_sql(
             "INSERT INTO agent_tool_calls "
@@ -467,6 +480,102 @@ def test_expand_migration_preserves_release_one_slot_contract(
             "'not_recorded', 0, now())"
         )
     assert revision_is_forward(_revision(pg_engine), PROD_REVISION) is True
+
+
+def test_chat_context_postgresql_downgrade_restores_0014_schema(
+    pg_engine: Engine,
+) -> None:
+    run_schema_migrations(pg_engine)
+    config = alembic_config(str(pg_engine.url))
+
+    command.downgrade(config, "20260818_0014")
+
+    inspector = inspect(pg_engine)
+    tables = set(inspector.get_table_names())
+    assert "chat_contexts" not in tables
+    assert "chat_context_aliases" not in tables
+    assert "chat_context_events" not in tables
+    for table_name in ("agent_tool_calls", "command_sessions", "file_change_sets"):
+        columns = {item["name"] for item in inspector.get_columns(table_name)}
+        assert "chat_context_id" not in columns
+    assert _revision(pg_engine) == "20260818_0014"
+
+
+def test_chat_context_alias_allocation_is_transactional_under_concurrency(
+    pg_engine: Engine,
+) -> None:
+    run_schema_migrations(pg_engine)
+    settings = Settings(
+        gateway_chat_context_enabled=True,
+        gateway_chat_context_hmac_key="x" * 32,
+        gateway_chat_context_ttl_seconds=300,
+        gateway_chat_context_renew_threshold_seconds=60,
+        gateway_chat_context_quarantine_seconds=3600,
+        gateway_chat_context_allocation_attempts=4,
+    )
+    barrier = threading.Barrier(2)
+    results: queue.Queue[tuple[str, str] | Exception] = queue.Queue()
+    SessionFactory = sessionmaker(bind=pg_engine, expire_on_commit=False)
+
+    def worker(fallback_code: str) -> None:
+        candidates = iter(("AAAA", fallback_code))
+        first = True
+
+        def candidate() -> str:
+            nonlocal first
+            value = next(candidates)
+            if first:
+                first = False
+                barrier.wait(timeout=5)
+            return value
+
+        try:
+            with SessionFactory() as session, session.begin():
+                lease = ChatContextService(
+                    settings,
+                    code_factory=candidate,
+                ).start_context(
+                    session,
+                    owner_subject="owner-race",
+                )
+                result = (lease.context_id, lease.code)
+            results.put(result)
+        except (RuntimeError, SQLAlchemyError, StopIteration) as error:
+            results.put(error)
+
+    threads = (
+        threading.Thread(target=worker, args=("BBBA",), daemon=True),
+        threading.Thread(target=worker, args=("BBBB",), daemon=True),
+    )
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
+    outcomes = [results.get_nowait(), results.get_nowait()]
+    errors = [item for item in outcomes if isinstance(item, BaseException)]
+    assert errors == []
+    leases = [item for item in outcomes if isinstance(item, tuple)]
+    assert len(leases) == 2
+    assert len({context_id for context_id, _code in leases}) == 2
+    codes = {code for _context_id, code in leases}
+    assert "AAAA" in codes
+    assert len(codes) == 2
+    with pg_engine.connect() as connection:
+        alias_rows = connection.execute(
+            text(
+                "SELECT code FROM chat_context_aliases "
+                "WHERE owner_subject = 'owner-race' ORDER BY code"
+            )
+        ).scalars().all()
+        context_count = connection.execute(
+            text(
+                "SELECT COUNT(*) FROM chat_contexts "
+                "WHERE owner_subject = 'owner-race'"
+            )
+        ).scalar_one()
+    assert set(alias_rows) == codes
+    assert context_count == 2
 
 
 def test_postgresql_planner_selects_partial_claim_indexes(
@@ -533,3 +642,70 @@ def test_postgresql_planner_selects_partial_claim_indexes(
     assert "ix_outbox_events_ready_claim" in json.dumps(ready_plan)
     assert "ix_outbox_events_stale_claim" in json.dumps(stale_plan)
     assert "ix_agent_tool_calls_lup_pending_schedule" in json.dumps(lup_plan)
+
+
+def test_chat_context_mcp_policy_postgresql_upgrade_old_slot_and_downgrade(
+    pg_engine: Engine,
+) -> None:
+    config = alembic_config(str(pg_engine.url))
+    config.attributes["gateway_online_index_bootstrap"] = True
+    try:
+        command.upgrade(config, "20260828_0015")
+    finally:
+        config.attributes.pop("gateway_online_index_bootstrap", None)
+
+    before = inspect(pg_engine)
+    assert "chat_context_mode" not in {
+        item["name"] for item in before.get_columns("oauth_clients")
+    }
+
+    command.upgrade(config, HEAD_REVISION)
+
+    upgraded = inspect(pg_engine)
+    columns = {
+        item["name"]: item for item in upgraded.get_columns("oauth_clients")
+    }
+    assert columns["chat_context_mode"]["nullable"] is False
+    assert "ck_oauth_client_chat_context_mode" in {
+        item["name"] for item in upgraded.get_check_constraints("oauth_clients")
+    }
+    assert "ix_oauth_clients_chat_context_mode" in {
+        item["name"] for item in upgraded.get_indexes("oauth_clients")
+    }
+
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO oauth_clients "
+                "(client_id, client_name, redirect_uris, scope, "
+                "presentation_profile, presentation_policy_generation, "
+                "presentation_mode, presentation_capabilities, workspace_plan, "
+                "allowed_tool_names, created_at, updated_at) VALUES "
+                "(:client_id, :client_name, '[]'::json, '', 'developer-dynamic', "
+                "1, 'catalog_broker', '[]'::json, 'none', '[]'::json, now(), now())"
+            ),
+            {
+                "client_id": "old-slot-chat-context-client",
+                "client_name": "Old slot chat context client",
+            },
+        )
+        assert connection.execute(
+            text(
+                "SELECT chat_context_mode FROM oauth_clients "
+                "WHERE client_id = :client_id"
+            ),
+            {"client_id": "old-slot-chat-context-client"},
+        ).scalar_one() == "off"
+
+    command.downgrade(config, "20260828_0015")
+
+    downgraded = inspect(pg_engine)
+    assert "chat_context_mode" not in {
+        item["name"] for item in downgraded.get_columns("oauth_clients")
+    }
+    assert {
+        "chat_contexts",
+        "chat_context_aliases",
+        "chat_context_events",
+    } <= set(downgraded.get_table_names())
+    assert _revision(pg_engine) == "20260828_0015"

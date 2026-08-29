@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 from alembic import command
 from gateway_api import schema_migrations
-from gateway_api.database import Base
 from gateway_api.migration_operations import (
     CreateIndexConcurrently,
     DropIndexConcurrently,
@@ -101,7 +100,7 @@ def test_validate_cli_is_read_only(monkeypatch, capsys) -> None:
 
 def test_revision_forward_compatibility_is_strict() -> None:
     assert schema_migrations.revision_is_forward(
-        "20260819_0001", HEAD_REVISION
+        "20260829_0001", HEAD_REVISION
     ) is True
     assert schema_migrations.revision_is_forward(HEAD_REVISION, HEAD_REVISION) is False
     assert schema_migrations.revision_is_forward(
@@ -139,9 +138,17 @@ def test_live_deployment_plan_from_0011_declares_online_indexes(
     assert plan.pending_revisions == (
         "20260811_0012",
         "20260818_0013",
+        "20260818_0014",
+        "20260828_0015",
         HEAD_REVISION,
     )
-    assert plan.compatibility == ("expand", "expand", "expand")
+    assert plan.compatibility == (
+        "expand",
+        "expand",
+        "expand",
+        "expand",
+        "expand",
+    )
     assert plan.safe_for_live_expand is True
     assert plan.online_index_operations == (
         "ix_outbox_events_ready_claim",
@@ -160,8 +167,13 @@ def test_live_deployment_plan_from_0012_is_hot_path_index_only(
     plan = get_migration_plan(target_engine)
 
     assert plan.current_revision == "20260811_0012"
-    assert plan.pending_revisions == ("20260818_0013", HEAD_REVISION)
-    assert plan.compatibility == ("expand", "expand")
+    assert plan.pending_revisions == (
+        "20260818_0013",
+        "20260818_0014",
+        "20260828_0015",
+        HEAD_REVISION,
+    )
+    assert plan.compatibility == ("expand", "expand", "expand", "expand")
     assert plan.safe_for_live_expand is True
     assert plan.online_index_operations == (
         "ix_outbox_events_active_created_at",
@@ -177,10 +189,44 @@ def test_live_deployment_plan_from_0013_only_drops_capacity_indexes(
     plan = get_migration_plan(target_engine)
 
     assert plan.current_revision == "20260818_0013"
+    assert plan.pending_revisions == (
+        "20260818_0014",
+        "20260828_0015",
+        HEAD_REVISION,
+    )
+    assert plan.compatibility == ("expand", "expand", "expand")
+    assert plan.safe_for_live_expand is True
+    assert plan.online_index_operations == CAPACITY_INDEX_DROPS
+
+
+def test_live_deployment_plan_from_0014_includes_chat_context_expands(
+    tmp_path: Path,
+) -> None:
+    target_engine = sqlite_engine(tmp_path / "deployment-plan-0014.sqlite")
+    command.upgrade(alembic_config(str(target_engine.url)), "20260818_0014")
+
+    plan = get_migration_plan(target_engine)
+
+    assert plan.current_revision == "20260818_0014"
+    assert plan.pending_revisions == ("20260828_0015", HEAD_REVISION)
+    assert plan.compatibility == ("expand", "expand")
+    assert plan.safe_for_live_expand is True
+    assert plan.online_index_operations == ()
+
+
+def test_live_deployment_plan_from_0015_is_mcp_policy_expand_only(
+    tmp_path: Path,
+) -> None:
+    target_engine = sqlite_engine(tmp_path / "deployment-plan-0015.sqlite")
+    command.upgrade(alembic_config(str(target_engine.url)), "20260828_0015")
+
+    plan = get_migration_plan(target_engine)
+
+    assert plan.current_revision == "20260828_0015"
     assert plan.pending_revisions == (HEAD_REVISION,)
     assert plan.compatibility == ("expand",)
     assert plan.safe_for_live_expand is True
-    assert plan.online_index_operations == CAPACITY_INDEX_DROPS
+    assert plan.online_index_operations == ()
 
 
 def test_concurrent_index_declarations_are_strictly_typed() -> None:
@@ -340,12 +386,53 @@ def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
         for item in inspect(target_engine).get_unique_constraints("outbox_events")
     }
     assert "uq_outbox_event_audit_event" in outbox_unique_constraints
+    assert {
+        "chat_contexts",
+        "chat_context_aliases",
+        "chat_context_events",
+    } <= table_names
+    context_columns = {
+        item["name"] for item in inspect(target_engine).get_columns("chat_contexts")
+    }
+    assert {
+        "client_nonce",
+        "conversation_ref_hmac",
+        "conversation_key_version",
+        "generation",
+    } <= context_columns
+    for table_name in ("agent_tool_calls", "command_sessions", "file_change_sets"):
+        columns = {
+            item["name"]: item
+            for item in inspect(target_engine).get_columns(table_name)
+        }
+        assert columns["chat_context_id"]["nullable"] is True
+
+
+def test_chat_context_sqlite_downgrade_restores_0014_schema(tmp_path: Path) -> None:
+    target_engine = sqlite_engine(tmp_path / "chat-context-downgrade.sqlite")
+    config = alembic_config(str(target_engine.url))
+    run_schema_migrations(target_engine)
+
+    command.downgrade(config, "20260818_0014")
+
+    inspector = inspect(target_engine)
+    tables = set(inspector.get_table_names())
+    assert "chat_contexts" not in tables
+    assert "chat_context_aliases" not in tables
+    assert "chat_context_events" not in tables
+    for table_name in ("agent_tool_calls", "command_sessions", "file_change_sets"):
+        columns = {item["name"] for item in inspector.get_columns(table_name)}
+        assert "chat_context_id" not in columns
+    with target_engine.connect() as connection:
+        revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+    assert revision == "20260818_0014"
 
 
 def test_legacy_database_is_adopted_and_upgraded(tmp_path: Path) -> None:
     target_engine = sqlite_engine(tmp_path / "legacy.sqlite")
-    Base.metadata.create_all(target_engine)
+    command.upgrade(alembic_config(str(target_engine.url)), "20260818_0014")
     with target_engine.begin() as connection:
+        connection.execute(text("DROP TABLE alembic_version"))
         connection.execute(text("DROP TABLE oauth_clients"))
         connection.execute(
             text(

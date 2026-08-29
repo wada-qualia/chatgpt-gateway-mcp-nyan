@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from .auth import decode_jwt
 from .events import emit_event
+from .mcp_chat_context import validate_chat_context_mode
 from .models import (
     McpProjectionGeneration,
     McpProjectionTool,
@@ -97,6 +98,7 @@ class PresentationContext:
     selected_mode: str = "catalog_broker"
     capabilities: frozenset[str] = frozenset()
     workspace_plan: str = "none"
+    chat_context_mode: str = "off"
     selection_reason: str = "broker_fallback"
 
     @property
@@ -241,6 +243,7 @@ def resolve_presentation_context(
             selected_mode="catalog_broker",
             capabilities=frozenset(),
             workspace_plan="none",
+            chat_context_mode="off",
             selection_reason="unauthenticated_client_broker_fallback",
         )
     client = db.get(OAuthClient, client_id)
@@ -272,6 +275,18 @@ def resolve_presentation_context(
     workspace_plan = str(claims.get("workspace_plan") or client.workspace_plan)
     if workspace_plan not in WORKSPACE_PLANS:
         raise HTTPException(status_code=403, detail="Invalid workspace plan")
+    try:
+        chat_context_mode = validate_chat_context_mode(
+            str(claims.get("chat_context_mode") or client.chat_context_mode)
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "MCP_CHAT_CONTEXT_MODE_INVALID",
+                "message": str(exc),
+            },
+        ) from exc
     selected_mode, selection_reason = negotiate_presentation_mode(
         profile_id=profile_id,
         configured_mode=configured_mode,
@@ -296,6 +311,7 @@ def resolve_presentation_context(
         selected_mode=selected_mode,
         capabilities=capabilities,
         workspace_plan=workspace_plan,
+        chat_context_mode=chat_context_mode,
         selection_reason=selection_reason,
     )
 
@@ -309,6 +325,7 @@ def update_oauth_client_profile(
     presentation_mode: str | None = None,
     presentation_capabilities: Iterable[str] | None = None,
     workspace_plan: str | None = None,
+    chat_context_mode: str | None = None,
 ) -> OAuthClient:
     if profile_id not in PRESENTATION_PROFILES:
         raise HTTPException(status_code=422, detail="Unknown presentation profile")
@@ -341,6 +358,18 @@ def update_oauth_client_profile(
     resolved_workspace_plan = workspace_plan or client.workspace_plan or "none"
     if resolved_workspace_plan not in WORKSPACE_PLANS:
         raise HTTPException(status_code=422, detail="Unknown workspace plan")
+    try:
+        resolved_chat_context_mode = validate_chat_context_mode(
+            chat_context_mode if chat_context_mode is not None else client.chat_context_mode
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "MCP_CHAT_CONTEXT_MODE_INVALID",
+                "message": str(exc),
+            },
+        ) from exc
     normalized_allowed = sorted(
         {str(name).strip() for name in allowed_tool_names if str(name).strip()}
     )
@@ -351,12 +380,14 @@ def update_oauth_client_profile(
         or client.presentation_mode != resolved_mode
         or list(client.presentation_capabilities or []) != normalized_capabilities
         or client.workspace_plan != resolved_workspace_plan
+        or client.chat_context_mode != resolved_chat_context_mode
         or list(client.allowed_tool_names or []) != normalized_allowed
     ):
         client.presentation_profile = profile_id
         client.presentation_mode = resolved_mode
         client.presentation_capabilities = normalized_capabilities
         client.workspace_plan = resolved_workspace_plan
+        client.chat_context_mode = resolved_chat_context_mode
         client.allowed_tool_names = normalized_allowed
         client.presentation_policy_generation += 1
         client.updated_at = utcnow()
@@ -1053,6 +1084,7 @@ def oauth_client_presentation_payload(client: OAuthClient) -> dict[str, Any]:
         "presentation_profile": client.presentation_profile,
         "presentation_policy_generation": client.presentation_policy_generation,
         "presentation_mode": client.presentation_mode,
+        "chat_context_mode": client.chat_context_mode,
         "selected_mode": selected_mode,
         "selection_reason": selection_reason,
         "presentation_capabilities": list(client.presentation_capabilities or []),

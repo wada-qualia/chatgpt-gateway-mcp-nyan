@@ -5875,7 +5875,8 @@ def test_readiness_accepts_forward_compatible_schema(
     import gateway_api.readiness_cache as readiness_module
     from gateway_api.schema_migrations import HEAD_REVISION, MigrationStatus
 
-    future_revision = "20260819_0001"
+    head_date, _head_sequence = HEAD_REVISION.split("_", maxsplit=1)
+    future_revision = f"{int(head_date) + 1:08d}_0001"
     monkeypatch.setattr(
         readiness_module,
         "get_migration_status",
@@ -7614,3 +7615,555 @@ def test_cold_history_unavailability_fails_enabled_read_surface_closed(client: T
     finally:
         client.app.state.cold_history_client = None
         asyncio.run(history_client.close())
+
+
+def test_mcp_chat_context_default_off_preserves_public_tool_schema(
+    client: TestClient,
+) -> None:
+    initialized = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": "chat-context-off-init",
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25"},
+        },
+    )
+    assert initialized.status_code == 200
+    assert initialized.json()["result"]["_meta"]["gateway"]["chat_context"] == {
+        "contract_version": 1,
+        "mode": "off",
+        "pattern": "^[A-Za-z0-9]{4}$",
+        "bootstrap_tool": "chat_context_start",
+        "refresh_tool": "chat_context_refresh",
+    }
+
+    listed = client.post(
+        "/mcp",
+        headers={"MCP-Protocol-Version": "2025-11-25"},
+        json={
+            "jsonrpc": "2.0",
+            "id": "chat-context-off-list",
+            "method": "tools/list",
+        },
+    )
+    assert listed.status_code == 200
+    tools = {tool["name"]: tool for tool in listed.json()["result"]["tools"]}
+    assert "chat_context_start" not in tools
+    assert "chat_context_refresh" not in tools
+    assert "chat_context" not in tools["workspace_info"]["inputSchema"]["properties"]
+
+
+def test_mcp_chat_context_required_bootstrap_retry_and_refresh(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gateway_api import config
+    from gateway_api.auth import create_jwt
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import OAuthClient
+
+    monkeypatch.setenv("GATEWAY_CHAT_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv(
+        "GATEWAY_CHAT_CONTEXT_HMAC_KEY",
+        "test-hmac-key-000000000000000000",
+    )
+    config.get_settings.cache_clear()
+    try:
+        with SessionLocal() as db:
+            oauth_client = OAuthClient(
+                client_id="chat-context-required-client",
+                client_name="Chat context required client",
+                redirect_uris=["https://example.test/callback"],
+                scope="mcp:read",
+                presentation_profile="developer-dynamic",
+                presentation_policy_generation=1,
+                presentation_mode="catalog_broker",
+                presentation_capabilities=[],
+                chat_context_mode="required",
+            )
+            db.add(oauth_client)
+            db.commit()
+
+        token = create_jwt(
+            subject="chat-context-required-user",
+            username="chat-context-required-user",
+            roles=["gateway-user"],
+            scopes=["mcp:read"],
+            token_type="access",
+            ttl_seconds=300,
+            extra={
+                "client_id": oauth_client.client_id,
+                "presentation_profile": oauth_client.presentation_profile,
+                "presentation_policy_generation": 1,
+                "presentation_mode": oauth_client.presentation_mode,
+                "presentation_capabilities": [],
+                "workspace_plan": "none",
+                "chat_context_mode": "required",
+                "allowed_tool_names": [],
+            },
+        )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "MCP-Protocol-Version": "2025-11-25",
+        }
+
+        initialized = client.post(
+            "/mcp",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-init",
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-11-25"},
+            },
+        )
+        assert initialized.status_code == 200
+        assert (
+            initialized.json()["result"]["_meta"]["gateway"]["chat_context"]["mode"]
+            == "required"
+        )
+
+        listed = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-list",
+                "method": "tools/list",
+            },
+        )
+        assert listed.status_code == 200
+        tools = {tool["name"]: tool for tool in listed.json()["result"]["tools"]}
+        assert {"chat_context_start", "chat_context_refresh"}.issubset(tools)
+        assert tools["workspace_info"]["inputSchema"]["required"][0] == "chat_context"
+        assert next(iter(tools["workspace_info"]["inputSchema"]["properties"])) == "chat_context"
+
+        missing = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-missing",
+                "method": "tools/call",
+                "params": {"name": "workspace_info", "arguments": {}},
+            },
+        )
+        missing_result = missing.json()["result"]
+        assert missing_result["isError"] is True
+        assert missing_result["structuredContent"]["error_code"] == "CHAT_CONTEXT_REQUIRED"
+        assert missing_result["structuredContent"]["recovery_tool"] == "chat_context_start"
+        assert missing_result["structuredContent"]["retry_original_call"] is True
+
+        started = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-start",
+                "method": "tools/call",
+                "params": {"name": "chat_context_start", "arguments": {}},
+            },
+        )
+        started_result = started.json()["result"]
+        assert started_result["isError"] is False
+        code = started_result["structuredContent"]["chat_context"]
+        assert len(code) == 4
+
+        retried = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-retry",
+                "method": "tools/call",
+                "params": {
+                    "name": "workspace_info",
+                    "arguments": {"chat_context": code},
+                },
+            },
+        )
+        retried_result = retried.json()["result"]
+        assert retried_result["isError"] is False
+        assert retried_result["structuredContent"]["user"] == (
+            "chat-context-required-user"
+        )
+
+        refreshed = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": "chat-context-required-refresh",
+                "method": "tools/call",
+                "params": {
+                    "name": "chat_context_refresh",
+                    "arguments": {"previous_chat_context": code},
+                },
+            },
+        )
+        refreshed_result = refreshed.json()["result"]
+        assert refreshed_result["isError"] is False
+        assert refreshed_result["structuredContent"]["chat_context"] == code
+        assert refreshed_result["structuredContent"]["rotated"] is False
+    finally:
+        config.get_settings.cache_clear()
+
+
+def test_mcp_chat_context_global_flag_forces_required_client_off(
+    client: TestClient,
+) -> None:
+    from gateway_api.auth import create_jwt
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import OAuthClient
+
+    with SessionLocal() as db:
+        oauth_client = OAuthClient(
+            client_id="chat-context-globally-disabled-client",
+            client_name="Chat context globally disabled client",
+            redirect_uris=["https://example.test/callback"],
+            scope="mcp:read",
+            presentation_profile="developer-dynamic",
+            presentation_policy_generation=1,
+            presentation_mode="catalog_broker",
+            presentation_capabilities=[],
+            chat_context_mode="required",
+        )
+        db.add(oauth_client)
+        db.commit()
+
+    token = create_jwt(
+        subject="chat-context-globally-disabled-user",
+        username="chat-context-globally-disabled-user",
+        roles=["gateway-user"],
+        scopes=["mcp:read"],
+        token_type="access",
+        ttl_seconds=300,
+        extra={
+            "client_id": oauth_client.client_id,
+            "presentation_profile": oauth_client.presentation_profile,
+            "presentation_policy_generation": 1,
+            "presentation_mode": oauth_client.presentation_mode,
+            "presentation_capabilities": [],
+            "workspace_plan": "none",
+            "chat_context_mode": "required",
+            "allowed_tool_names": [],
+        },
+    )
+    auth_headers = {"Authorization": f"Bearer {token}"}
+    headers = {
+        **auth_headers,
+        "MCP-Protocol-Version": "2025-11-25",
+    }
+
+    initialized = client.post(
+        "/mcp",
+        headers=auth_headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": "chat-context-global-off-init",
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25"},
+        },
+    )
+    assert initialized.status_code == 200
+    assert (
+        initialized.json()["result"]["_meta"]["gateway"]["chat_context"]["mode"]
+        == "off"
+    )
+
+    listed = client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": "chat-context-global-off-list",
+            "method": "tools/list",
+        },
+    )
+    assert listed.status_code == 200
+    tools = {tool["name"]: tool for tool in listed.json()["result"]["tools"]}
+    assert "chat_context_start" not in tools
+    assert "chat_context_refresh" not in tools
+    assert "chat_context" not in tools["workspace_info"]["inputSchema"]["properties"]
+
+    called = client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": "chat-context-global-off-call",
+            "method": "tools/call",
+            "params": {"name": "workspace_info", "arguments": {}},
+        },
+    )
+    assert called.status_code == 200
+    assert called.json()["result"]["structuredContent"]["ok"] is True
+
+
+def test_mcp_chat_context_execution_state_isolation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gateway_api import config
+    from gateway_api.auth import create_jwt
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import (
+        AgentToolCall,
+        ChatContextAlias,
+        CommandSession,
+        FileChangeSet,
+        OAuthClient,
+    )
+    from gateway_api.monitoring import monitoring_service
+
+    owner_subject = "chat-context-isolation-user"
+    monkeypatch.setenv("GATEWAY_CHAT_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv(
+        "GATEWAY_CHAT_CONTEXT_HMAC_KEY",
+        "test-hmac-key-000000000000000000",
+    )
+    config.get_settings.cache_clear()
+    try:
+        with SessionLocal() as db:
+            oauth_client = OAuthClient(
+                client_id="chat-context-isolation-client",
+                client_name="Chat context isolation client",
+                redirect_uris=["https://example.test/callback"],
+                scope="mcp:read",
+                presentation_profile="developer-dynamic",
+                presentation_policy_generation=1,
+                presentation_mode="catalog_broker",
+                presentation_capabilities=[],
+                chat_context_mode="required",
+            )
+            db.add(oauth_client)
+            db.commit()
+
+        token = create_jwt(
+            subject=owner_subject,
+            username=owner_subject,
+            roles=["gateway-user"],
+            scopes=["mcp:read"],
+            token_type="access",
+            ttl_seconds=300,
+            extra={
+                "client_id": oauth_client.client_id,
+                "presentation_profile": oauth_client.presentation_profile,
+                "presentation_policy_generation": 1,
+                "presentation_mode": oauth_client.presentation_mode,
+                "presentation_capabilities": [],
+                "workspace_plan": "none",
+                "chat_context_mode": "required",
+                "allowed_tool_names": [],
+            },
+        )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "MCP-Protocol-Version": "2025-11-25",
+        }
+
+        def call_tool(name: str, arguments: dict[str, object], request_id: str) -> dict:
+            response = client.post(
+                "/mcp",
+                headers=headers,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "tools/call",
+                    "params": {"name": name, "arguments": arguments},
+                },
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["id"] == request_id
+            return payload
+
+        start_a = call_tool("chat_context_start", {}, "ctx-isolation-start-a")
+        start_b = call_tool("chat_context_start", {}, "ctx-isolation-start-b")
+        code_a = start_a["result"]["structuredContent"]["chat_context"]
+        code_b = start_b["result"]["structuredContent"]["chat_context"]
+        assert code_a != code_b
+
+        with SessionLocal() as db:
+            aliases = (
+                db.query(ChatContextAlias)
+                .filter(
+                    ChatContextAlias.owner_subject == owner_subject,
+                    ChatContextAlias.code.in_([code_a, code_b]),
+                )
+                .all()
+            )
+            context_by_code = {alias.code: alias.context_id for alias in aliases}
+        context_a = context_by_code[code_a]
+        context_b = context_by_code[code_b]
+        assert context_a != context_b
+
+        info_a = call_tool(
+            "workspace_info",
+            {"chat_context": code_a},
+            "ctx-isolation-info-a",
+        )
+        info_b = call_tool(
+            "workspace_info",
+            {"chat_context": code_b},
+            "ctx-isolation-info-b",
+        )
+        assert info_a["result"]["isError"] is False
+        assert info_b["result"]["isError"] is False
+
+        run_a = call_tool(
+            "run_cli_command",
+            {"chat_context": code_a, "command": "printf context-a", "cwd": "."},
+            "ctx-isolation-run-a",
+        )
+        run_b = call_tool(
+            "run_cli_command",
+            {"chat_context": code_b, "command": "printf context-b", "cwd": "."},
+            "ctx-isolation-run-b",
+        )
+        session_a = run_a["result"]["structuredContent"]["session_id"]
+        session_b = run_b["result"]["structuredContent"]["session_id"]
+        assert session_a != session_b
+
+        listed_a = call_tool(
+            "monitoring_list_sessions",
+            {"chat_context": code_a},
+            "ctx-isolation-list-a",
+        )
+        visible_a = {
+            item["session_id"]
+            for item in listed_a["result"]["structuredContent"]["sessions"]
+        }
+        assert session_a in visible_a
+        assert session_b not in visible_a
+
+        denied_get = call_tool(
+            "monitoring_get_session",
+            {"chat_context": code_a, "session_id": session_b},
+            "ctx-isolation-get-b-from-a",
+        )
+        denied_read = call_tool(
+            "monitoring_read_output",
+            {"chat_context": code_a, "session_id": session_b, "tail": 5},
+            "ctx-isolation-read-b-from-a",
+        )
+        denied_terminate = call_tool(
+            "monitoring_terminate_session",
+            {"chat_context": code_a, "session_id": session_b, "force": False},
+            "ctx-isolation-terminate-b-from-a",
+        )
+        for denied in (denied_get, denied_read, denied_terminate):
+            assert denied["error"] == {
+                "code": 404,
+                "message": "Command session not found",
+            }
+
+        write_a = call_tool(
+            "write_file",
+            {"chat_context": code_a, "path": "ctx-a.txt", "content": "context-a"},
+            "ctx-isolation-write-a",
+        )
+        write_b = call_tool(
+            "write_file",
+            {"chat_context": code_b, "path": "ctx-b.txt", "content": "context-b"},
+            "ctx-isolation-write-b",
+        )
+        change_a = write_a["result"]["structuredContent"]["file_change_id"]
+        change_b = write_b["result"]["structuredContent"]["file_change_id"]
+
+        changes_a = call_tool(
+            "file_changes_list",
+            {"chat_context": code_a, "limit": 100},
+            "ctx-isolation-changes-a",
+        )
+        visible_changes_a = {
+            item["id"]
+            for item in changes_a["result"]["structuredContent"]["changes"]
+        }
+        assert change_a in visible_changes_a
+        assert change_b not in visible_changes_a
+
+        with SessionLocal() as db:
+            assert db.get(CommandSession, session_a).chat_context_id == context_a
+            assert db.get(CommandSession, session_b).chat_context_id == context_b
+            assert db.get(FileChangeSet, change_a).chat_context_id == context_a
+            assert db.get(FileChangeSet, change_b).chat_context_id == context_b
+            attributed_contexts = {
+                item.chat_context_id
+                for item in db.query(AgentToolCall)
+                .filter(AgentToolCall.owner_subject == owner_subject)
+                .all()
+                if item.chat_context_id is not None
+            }
+            assert {context_a, context_b} <= attributed_contexts
+
+            settings = config.get_settings()
+            tail_a = monitoring_service.create_session(
+                db,
+                owner_subject=owner_subject,
+                origin="server",
+                resource_id=None,
+                command="tail-a",
+                cwd=".",
+                name="tail-a",
+                settings=settings,
+                chat_context_id=context_a,
+            )
+            tail_b = monitoring_service.create_session(
+                db,
+                owner_subject=owner_subject,
+                origin="server",
+                resource_id=None,
+                command="tail-b",
+                cwd=".",
+                name="tail-b",
+                settings=settings,
+                chat_context_id=context_b,
+            )
+            tail_a_id = tail_a.id
+            tail_b_id = tail_b.id
+
+        assert monitoring_service.append_output(
+            tail_a_id,
+            stream="stdout",
+            text="tail-a\n",
+            owner_subject=owner_subject,
+        )
+        assert monitoring_service.append_output(
+            tail_b_id,
+            stream="stdout",
+            text="tail-b\n",
+            owner_subject=owner_subject,
+        )
+
+        tails_a = call_tool(
+            "workspace_info",
+            {"chat_context": code_a},
+            "ctx-isolation-tails-a",
+        )["result"]["structuredContent"]["background_session_tails"]
+        tail_ids_a = {item["session_id"] for item in tails_a}
+        assert tail_a_id in tail_ids_a
+        assert tail_b_id not in tail_ids_a
+
+        shared_a = call_tool(
+            "list_resources",
+            {"chat_context": code_a},
+            "ctx-isolation-shared-a",
+        )["result"]["structuredContent"]
+        shared_b = call_tool(
+            "list_resources",
+            {"chat_context": code_b},
+            "ctx-isolation-shared-b",
+        )["result"]["structuredContent"]
+        for key in (
+            "devices",
+            "docker_workspaces",
+            "thin_clients",
+            "ssh_devices",
+            "docker_workspace_items",
+            "thin_client_items",
+        ):
+            assert shared_a[key] == shared_b[key]
+    finally:
+        config.get_settings.cache_clear()

@@ -1,0 +1,138 @@
+openapi: 3.1.0
+info:
+  title: ATLAS ChatGPT Browser Extension OAuth Boundary
+  version: 2.0.0
+  description: |
+    Public-client OAuth boundary between the first-party Chrome MV3 extension and
+    ChatGPT Gateway. The extension uses authorization-code flow with PKCE S256.
+    No client secret is issued to or stored by the extension. Version 2 adds the
+    least-privilege chat-context:write scope required for conversation-context
+    creation and binding while retaining workspace:read for Prompt Registry use.
+paths:
+  /oauth/register:
+    post:
+      operationId: registerBrowserExtensionOAuthClientV2
+      description: |
+        Registers the pinned browser extension identity. For the extension,
+        client_id and redirect_uris are exact constants and scope is restricted
+        to workspace:read chat-context:write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtensionRegistration'
+      responses:
+        '201':
+          description: Public client registration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationResponse'
+        '400':
+          description: Identity, redirect, or scope policy rejected.
+  /oauth/authorize:
+    get:
+      operationId: authorizeBrowserExtensionV2
+      description: |
+        Begins or resumes authorization. An unauthenticated browser is redirected
+        through /auth/login and then returned to the exact original authorize
+        request. Successful authorization redirects only to the pinned Chromium
+        callback with code and optional state.
+      parameters:
+        - {name: response_type, in: query, required: true, schema: {type: string, const: code}}
+        - {name: client_id, in: query, required: true, schema: {$ref: '#/components/schemas/ExtensionClientId'}}
+        - {name: redirect_uri, in: query, required: true, schema: {$ref: '#/components/schemas/ExtensionRedirect'}}
+        - {name: code_challenge, in: query, required: true, schema: {type: string, minLength: 1, maxLength: 255}}
+        - {name: code_challenge_method, in: query, required: true, schema: {type: string, const: S256}}
+        - {name: scope, in: query, required: false, schema: {$ref: '#/components/schemas/ExtensionScope'}}
+        - {name: state, in: query, required: false, schema: {type: string}}
+      responses:
+        '307':
+          description: Redirect to Gateway login or exact extension callback.
+        '400':
+          description: Unsupported response type, PKCE method, identity, redirect, or scope.
+  /oauth/token:
+    post:
+      operationId: exchangeBrowserExtensionAuthorizationCodeV2
+      description: |
+        Exchanges a single-use authorization code for a short-lived Gateway
+        bearer after exact client/redirect, scope, expiry, and PKCE validation.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [grant_type, code, redirect_uri, client_id, code_verifier]
+              properties:
+                grant_type: {type: string, const: authorization_code}
+                code: {type: string}
+                redirect_uri: {$ref: '#/components/schemas/ExtensionRedirect'}
+                client_id: {$ref: '#/components/schemas/ExtensionClientId'}
+                code_verifier: {type: string}
+      responses:
+        '200':
+          description: One-hour extension access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Invalid, expired, consumed, mismatched, or policy-invalid authorization.
+components:
+  schemas:
+    ExtensionClientId:
+      type: string
+      const: atlas-chatgpt-browser-extension
+    ExtensionRedirect:
+      type: string
+      format: uri
+      const: https://cgaalfflopmcbaodnlphklclnnhmdhcn.chromiumapp.org/oauth2
+    ExtensionScope:
+      type: string
+      const: 'workspace:read chat-context:write'
+    ExtensionRegistration:
+      type: object
+      additionalProperties: true
+      required: [client_id, redirect_uris]
+      properties:
+        client_id: {$ref: '#/components/schemas/ExtensionClientId'}
+        client_name: {type: string}
+        redirect_uris:
+          type: array
+          minItems: 1
+          maxItems: 1
+          prefixItems:
+            - {$ref: '#/components/schemas/ExtensionRedirect'}
+          items: false
+        scope: {$ref: '#/components/schemas/ExtensionScope'}
+    RegistrationResponse:
+      type: object
+      required: [client_id, redirect_uris, grant_types, response_types, token_endpoint_auth_method, scope]
+      properties:
+        client_id: {$ref: '#/components/schemas/ExtensionClientId'}
+        client_id_issued_at: {type: integer}
+        redirect_uris:
+          type: array
+          items: {$ref: '#/components/schemas/ExtensionRedirect'}
+        grant_types:
+          type: array
+          items: {type: string}
+          contains: {const: authorization_code}
+        response_types:
+          type: array
+          items: {type: string}
+          contains: {const: code}
+        token_endpoint_auth_method: {type: string, const: none}
+        scope: {$ref: '#/components/schemas/ExtensionScope'}
+    TokenResponse:
+      type: object
+      additionalProperties: false
+      required: [access_token, token_type, expires_in, scope]
+      properties:
+        access_token: {type: string, minLength: 1}
+        token_type: {type: string, const: Bearer}
+        expires_in: {type: integer, const: 3600}
+        scope: {$ref: '#/components/schemas/ExtensionScope'}

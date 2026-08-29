@@ -688,6 +688,12 @@ class LupCorrelationMetadataOut(BaseModel):
     gatewaycommandsessionref: str | None = Field(
         default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
     )
+    gatewaychatcontextid: str | None = Field(
+        default=None,
+        min_length=36,
+        max_length=36,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    )
 
 
 class LupCorrelationOut(BaseModel):
@@ -1340,6 +1346,7 @@ class McpOAuthPresentationUpdate(McpStrictModel):
     presentation_capabilities: (
         list[Literal["deferred_loading", "tool_search", "native_tools"]] | None
     ) = Field(default=None, max_length=20)
+    chat_context_mode: Literal["off", "optional", "required"] | None = None
     workspace_plan: Literal["none", "business", "enterprise", "edu"] | None = None
     allowed_tool_names: list[str] = Field(default_factory=list, max_length=1000)
 

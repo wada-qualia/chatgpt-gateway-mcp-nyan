@@ -6262,6 +6262,7 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
         "Automated candidate resilience gate",
         "CD: promote candidate",
         "CD: verify promoted release",
+        "CD: NATS authentication cutover",
         "CD: finalize release",
     ):
         assert stage in jenkinsfile
@@ -6270,7 +6271,7 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert "writeFile file: '.release-skipped'" in jenkinsfile
     assert "writeFile file: '.release-required'" in jenkinsfile
     assert "expression { fileExists('.release-skipped') }" in jenkinsfile
-    assert jenkinsfile.count("expression { fileExists('.release-required') }") == 10
+    assert jenkinsfile.count("expression { fileExists('.release-required') }") == 11
     assert "SKIP_RELEASE" not in jenkinsfile
     assert "RELEASE_DECISION" not in jenkinsfile
     assert "docker build --platform linux/amd64 --target production" in jenkinsfile

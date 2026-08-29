@@ -553,7 +553,7 @@ async def list_oauth_client_presentations(
     return [oauth_client_presentation_payload(client) for client in clients]
 
 
-@router.patch("/oauth-clients/{client_id}/presentation")
+@router.patch("/oauth-clients/{client_id:path}/presentation")
 async def patch_oauth_client_presentation(
     client_id: str,
     payload: McpOAuthPresentationUpdate,

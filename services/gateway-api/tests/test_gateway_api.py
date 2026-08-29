@@ -68,6 +68,57 @@ def test_auth_me_dev_user(client: TestClient) -> None:
     assert response.json()["username"] == "darius"
 
 
+@pytest.mark.parametrize(
+    "oauth_client_id",
+    [
+        "chatgpt-client",
+        "https://chatgpt.com/oauth/NGZjo_yePO24/client.json",
+    ],
+)
+def test_oauth_presentation_patch_accepts_url_client_ids(
+    client: TestClient,
+    oauth_client_id: str,
+) -> None:
+    from urllib.parse import quote
+
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import OAuthClient
+
+    with SessionLocal() as db:
+        db.add(
+            OAuthClient(
+                client_id=oauth_client_id,
+                client_name="ChatGPT",
+                redirect_uris=["https://chatgpt.com/connector/oauth/test"],
+                scope="mcp:read",
+                presentation_profile="chatgpt-stable",
+                presentation_mode="native_projected",
+                presentation_capabilities=["native_tools"],
+                workspace_plan="none",
+                chat_context_mode="off",
+                allowed_tool_names=[],
+            )
+        )
+        db.commit()
+
+    response = client.patch(
+        f"/api/mcp/oauth-clients/{quote(oauth_client_id, safe='')}/presentation",
+        json={
+            "profile_id": "chatgpt-stable",
+            "presentation_mode": "native_projected",
+            "presentation_capabilities": ["native_tools"],
+            "workspace_plan": "none",
+            "chat_context_mode": "optional",
+            "allowed_tool_names": [],
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["client_id"] == oauth_client_id
+    assert payload["chat_context_mode"] == "optional"
+    assert payload["presentation_policy_generation"] == 2
+
+
 def test_account_ssh_command_profile_defaults_and_override(client: TestClient) -> None:
     current = client.get("/api/account/settings")
     assert current.status_code == 200

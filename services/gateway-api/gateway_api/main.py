@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from .chat_context_telemetry import ChatContextTelemetry
 from .cold_history import ColdHistoryClient
 from .config import get_settings
 from .database import MetricsSessionLocal, SessionLocal
@@ -68,6 +69,7 @@ def _normalized_request_path(request: Request) -> str:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    chat_context_telemetry = ChatContextTelemetry()
     cold_history_client = ColdHistoryClient.from_settings(settings)
     runtime = GatewayRuntime(settings=settings, session_factory=SessionLocal)
     upstream_mcp_manager = UpstreamMcpManager(
@@ -113,6 +115,7 @@ def create_app() -> FastAPI:
         session_factory=MetricsSessionLocal,
         outbox=runtime.outbox,
         upstream_mcp_manager=upstream_mcp_manager,
+        chat_context_telemetry=chat_context_telemetry,
     )
     research_write_approval_worker = ResearchWriteApprovalWorker(
         settings=settings,
@@ -192,6 +195,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.state.gateway_runtime = runtime
+    app.state.chat_context_telemetry = chat_context_telemetry
     app.state.cold_history_client = cold_history_client
     app.state.upstream_mcp_manager = upstream_mcp_manager
     app.state.prompt_registry_facade = prompt_registry_facade

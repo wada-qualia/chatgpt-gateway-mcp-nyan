@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .chat_context_telemetry import ChatContextTelemetry
 from .config import Settings
 from .models import ChatContext, ChatContextAlias, ChatContextEvent
 
@@ -77,10 +78,12 @@ class ChatContextService:
         *,
         now: Callable[[], datetime] | None = None,
         code_factory: Callable[[], str] | None = None,
+        telemetry: ChatContextTelemetry | None = None,
     ) -> None:
         self._settings = settings
         self._now = now or (lambda: datetime.now(UTC))
         self._code_factory = code_factory or self._generate_code
+        self._telemetry = telemetry
         self._hmac_master_key = (
             settings.gateway_chat_context_hmac_key.get_secret_value().encode("utf-8")
         )
@@ -129,7 +132,11 @@ class ChatContextService:
     ) -> ChatContextLease:
         self._require_enabled()
         owner = self._owner(owner_subject)
-        alias_code = self._code(code)
+        try:
+            alias_code = self._code(code)
+        except ChatContextValidationError:
+            self._record_resolution("invalid")
+            raise
         actor = self._actor(actor_kind)
         initial = db.scalar(
             select(ChatContextAlias).where(
@@ -138,6 +145,7 @@ class ChatContextService:
             )
         )
         if initial is None:
+            self._record_resolution("not_found")
             raise ChatContextNotFound("chat context alias was not found")
         context = self._lock_context(db, owner, initial.context_id)
         alias = db.scalar(
@@ -146,15 +154,19 @@ class ChatContextService:
             .with_for_update()
         )
         if alias is None:
+            self._record_resolution("not_found")
             raise ChatContextNotFound("chat context alias was not found")
         now = self._current_time()
         self._reconcile_alias(db, context, alias, now=now, actor_kind="gateway")
         if context.state == "closed":
+            self._record_resolution("closed")
             raise ChatContextClosed("chat context is closed")
         if alias.status != "active":
+            self._record_resolution("expired")
             raise ChatContextExpired("chat context alias is expired")
         self._renew_alias(db, context, alias, now=now, actor_kind=actor, force=False)
         db.flush()
+        self._record_resolution("success")
         return self._lease(alias)
 
     def refresh_alias(
@@ -269,6 +281,8 @@ class ChatContextService:
             },
             now=now,
         )
+        if self._telemetry is not None:
+            self._telemetry.record_rotation()
         db.flush()
         return self._lease(replacement, rotated=True)
 
@@ -538,6 +552,7 @@ class ChatContextService:
         now: datetime,
     ) -> ChatContextAlias:
         context = self._lock_context(db, context.owner_subject, context.id)
+        retries = 0
         for _ in range(self._settings.gateway_chat_context_allocation_attempts):
             candidate = self._code(self._code_factory())
             self._reconcile_code_reservations(db, candidate, now=now)
@@ -548,6 +563,7 @@ class ChatContextService:
                 )
             )
             if owner_history is not None:
+                retries += 1
                 continue
             live_reservation = db.scalar(
                 select(ChatContextAlias.id).where(
@@ -556,6 +572,7 @@ class ChatContextService:
                 )
             )
             if live_reservation is not None:
+                retries += 1
                 continue
             generation = context.generation + 1
             alias = ChatContextAlias(
@@ -577,6 +594,7 @@ class ChatContextService:
                     db.add(alias)
                     db.flush()
             except IntegrityError:
+                retries += 1
                 continue
             context.generation = generation
             context.state = "active"
@@ -588,10 +606,14 @@ class ChatContextService:
                 action="issued",
                 alias_generation=generation,
                 actor_kind=actor_kind,
-                metadata={"alias_id": alias.id},
+                metadata={"alias_id": alias.id, "allocation_retries": retries},
                 now=now,
             )
+            if self._telemetry is not None:
+                self._telemetry.record_allocation("success", retries=retries)
             return alias
+        if self._telemetry is not None:
+            self._telemetry.record_allocation("exhausted", retries=retries)
         raise ChatContextAllocationExhausted(
             "chat context alias allocation attempt budget was exhausted"
         )
@@ -738,6 +760,10 @@ class ChatContextService:
                 created_at=now,
             )
         )
+
+    def _record_resolution(self, result: str) -> None:
+        if self._telemetry is not None:
+            self._telemetry.record_resolution(result)
 
     def _lock_context(
         self,

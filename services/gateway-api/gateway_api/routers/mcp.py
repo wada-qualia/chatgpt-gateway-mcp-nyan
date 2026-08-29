@@ -40,6 +40,7 @@ from ..agent_coordination_tools import (
     call_agent_coordination_tool,
 )
 from ..auth import get_bearer_or_dev_user
+from ..chat_context_telemetry import ChatContextTelemetry
 from ..config import Settings, get_settings
 from ..database import get_db
 from ..events import emit_event
@@ -1846,6 +1847,7 @@ async def mcp(
                     tool_name=name,
                     arguments=raw_arguments,
                     mode=chat_context_mode,
+                    telemetry=request.app.state.chat_context_telemetry,
                 )
             except McpChatContextAdmissionError as exc:
                 result = _result(exc.payload(), is_error=True)
@@ -1873,6 +1875,7 @@ async def mcp(
                         dispatch_target=registry.target(name),
                         presentation=presentation,
                         chat_context_id=admission.context_id,
+                        chat_context_telemetry=request.app.state.chat_context_telemetry,
                     )
                 finally:
                     request.state.upstream_duration_seconds = max(
@@ -2043,6 +2046,7 @@ async def _call_tool(
     dispatch_target: ToolDispatchTarget | None = None,
     presentation: PresentationContext | None = None,
     chat_context_id: str | None = None,
+    chat_context_telemetry: ChatContextTelemetry | None = None,
 ) -> dict[str, Any]:
     if name == "chat_context_start":
         try:
@@ -2051,6 +2055,7 @@ async def _call_tool(
                     db,
                     settings,
                     owner_subject=user.subject,
+                    telemetry=chat_context_telemetry,
                 )
             )
         except McpChatContextAdmissionError as exc:
@@ -2058,6 +2063,8 @@ async def _call_tool(
     if name == "chat_context_refresh":
         previous_chat_context = args.get("previous_chat_context")
         if not isinstance(previous_chat_context, str):
+            if chat_context_telemetry is not None:
+                chat_context_telemetry.record_rejection("invalid")
             return _result(
                 McpChatContextAdmissionError(
                     error_code="CHAT_CONTEXT_INVALID",
@@ -2077,6 +2084,7 @@ async def _call_tool(
                     settings,
                     owner_subject=user.subject,
                     previous_chat_context=previous_chat_context,
+                    telemetry=chat_context_telemetry,
                 )
             )
         except McpChatContextAdmissionError as exc:

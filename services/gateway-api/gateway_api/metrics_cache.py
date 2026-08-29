@@ -11,9 +11,16 @@ from typing import Any
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from .chat_context_telemetry import ChatContextTelemetry
 from .config import Settings
 from .mcp_upstream import UpstreamMcpManager
-from .models import ApprovalRequest, AutonomyPolicy, ExecutionPermit, RecoveryLoop
+from .models import (
+    ApprovalRequest,
+    AutonomyPolicy,
+    ChatContext,
+    ExecutionPermit,
+    RecoveryLoop,
+)
 from .outbox import OutboxService
 
 logger = logging.getLogger(__name__)
@@ -42,11 +49,13 @@ class GatewayMetricsCache:
         session_factory: sessionmaker,
         outbox: OutboxService,
         upstream_mcp_manager: UpstreamMcpManager,
+        chat_context_telemetry: ChatContextTelemetry | None = None,
     ) -> None:
         self.settings = settings
         self.session_factory = session_factory
         self.outbox = outbox
         self.upstream_mcp_manager = upstream_mcp_manager
+        self.chat_context_telemetry = chat_context_telemetry or ChatContextTelemetry()
         self._state_lock = threading.Lock()
         self._refresh_lock = threading.Lock()
         self._snapshot = self._empty_snapshot()
@@ -93,9 +102,18 @@ class GatewayMetricsCache:
                 snapshot["autonomy_recoveries"] = self._status_counts(
                     db, RecoveryLoop, RECOVERY_STATUSES
                 )
+                snapshot["chat_context_active_count"] = int(
+                    db.scalar(
+                        select(func.count())
+                        .select_from(ChatContext)
+                        .where(ChatContext.state == "active")
+                    )
+                    or 0
+                )
                 snapshot["federation"] = (
                     self.upstream_mcp_manager.readiness_snapshot(db)
                 )
+            snapshot["chat_context_telemetry"] = self.chat_context_telemetry.snapshot()
             snapshot["storage"] = self._storage_snapshot()
             now = datetime.now(UTC)
             with self._state_lock:
@@ -143,6 +161,10 @@ class GatewayMetricsCache:
         metrics = self.snapshot()
         counts = dict(metrics.get("outbox") or {})
         storage = dict(metrics.get("storage") or {})
+        chat_context = dict(metrics.get("chat_context_telemetry") or {})
+        chat_context_allocations = dict(chat_context.get("allocations") or {})
+        chat_context_resolutions = dict(chat_context.get("resolutions") or {})
+        chat_context_rejections = dict(chat_context.get("rejections") or {})
         lines = [
             "# HELP gateway_outbox_events Number of outbox events by status.",
             "# TYPE gateway_outbox_events gauge",
@@ -155,6 +177,50 @@ class GatewayMetricsCache:
                 "# TYPE gateway_outbox_counts_estimated gauge",
                 "gateway_outbox_counts_estimated "
                 + ("1" if metrics.get("outbox_counts_estimated") else "0"),
+            ]
+        )
+        lines.extend(
+            [
+                "# HELP gateway_chat_context_allocations_total Chat-context allocation attempts by bounded result.",
+                "# TYPE gateway_chat_context_allocations_total counter",
+            ]
+        )
+        for result, value in sorted(chat_context_allocations.items()):
+            lines.append(
+                f'gateway_chat_context_allocations_total{{result="{result}"}} {int(value)}'
+            )
+        lines.extend(
+            [
+                "# HELP gateway_chat_context_allocation_retries_total Alias allocation retries caused by bounded collision checks.",
+                "# TYPE gateway_chat_context_allocation_retries_total counter",
+                "gateway_chat_context_allocation_retries_total "
+                + str(int(chat_context.get("allocation_retries") or 0)),
+                "# HELP gateway_chat_context_resolution_total Alias resolution attempts by bounded result.",
+                "# TYPE gateway_chat_context_resolution_total counter",
+            ]
+        )
+        for result, value in sorted(chat_context_resolutions.items()):
+            lines.append(
+                f'gateway_chat_context_resolution_total{{result="{result}"}} {int(value)}'
+            )
+        lines.extend(
+            [
+                "# HELP gateway_chat_context_rejections_total MCP chat-context admission rejections by bounded reason.",
+                "# TYPE gateway_chat_context_rejections_total counter",
+            ]
+        )
+        for reason, value in sorted(chat_context_rejections.items()):
+            lines.append(
+                f'gateway_chat_context_rejections_total{{reason="{reason}"}} {int(value)}'
+            )
+        lines.extend(
+            [
+                "# HELP gateway_chat_context_rotations_total Alias rotations completed by this Gateway process.",
+                "# TYPE gateway_chat_context_rotations_total counter",
+                f'gateway_chat_context_rotations_total {int(chat_context.get("rotations") or 0)}',
+                "# HELP gateway_chat_context_active_count Current active durable chat contexts.",
+                "# TYPE gateway_chat_context_active_count gauge",
+                f'gateway_chat_context_active_count {int(metrics.get("chat_context_active_count") or 0)}',
             ]
         )
         for metric_name, help_text, statuses in (
@@ -331,6 +397,8 @@ class GatewayMetricsCache:
             "oldest_pending_age_seconds": 0.0,
             "online_replicas": 0,
             "online_realtime_routes": 0,
+            "chat_context_active_count": 0,
+            "chat_context_telemetry": self.chat_context_telemetry.snapshot(),
             "storage": {
                 "available": False,
                 "path": self.settings.gateway_storage_monitor_path,
@@ -359,8 +427,12 @@ class GatewayMetricsCache:
             "autonomy_recoveries",
             "federation",
             "storage",
+            "chat_context_telemetry",
         ):
             copied[key] = dict(copied.get(key) or {})
+        chat_context = copied["chat_context_telemetry"]
+        for key in ("allocations", "resolutions", "rejections"):
+            chat_context[key] = dict(chat_context.get(key) or {})
         return copied
 
     async def _run(self) -> None:

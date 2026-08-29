@@ -17,6 +17,7 @@ from ..dto import (
     LupToolPhaseSealCreate,
     LupToolPhaseSealOut,
 )
+from ..models import AgentToolCall
 from ..usage_accounting import LUP_SDK_VERSION
 from ..usage_correlation import LangfuseCorrelationAdapter
 
@@ -126,11 +127,21 @@ async def record_host_tool_call(
     if not result.created:
         response.status_code = status.HTTP_200_OK
     call = result.call
+    gateway_tool_call = (
+        db.get(AgentToolCall, call.tool_call_id) if call.tool_call_id else None
+    )
+    chat_context_id = (
+        gateway_tool_call.chat_context_id
+        if gateway_tool_call is not None
+        and gateway_tool_call.owner_subject == principal.user.subject
+        else None
+    )
     correlation = _correlation_binding(
         result.task,
         request_id=call.request_id or call.callback_id,
         tool_call_id=call.tool_call_id,
         command_session_id=call.command_session_id,
+        chat_context_id=chat_context_id,
     )
     return {
         "callback_event_id": call.callback_event_id,
@@ -282,6 +293,7 @@ def _correlation_binding(
     request_id: str,
     tool_call_id: str | None = None,
     command_session_id: str | None = None,
+    chat_context_id: str | None = None,
 ) -> dict:
     if task.trace_id is None:
         raise ValueError("LUP task is missing the required W3C trace binding")
@@ -293,6 +305,7 @@ def _correlation_binding(
         request_id=request_id,
         tool_call_id=tool_call_id,
         command_session_id=command_session_id,
+        chat_context_id=chat_context_id,
     ).as_dict()
 
 

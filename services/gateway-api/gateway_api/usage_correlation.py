@@ -62,6 +62,7 @@ class LangfuseCorrelationAdapter:
             "gatewayrequestref",
             "gatewaytoolcallref",
             "gatewaycommandsessionref",
+            "gatewaychatcontextid",
         }
     )
 
@@ -176,10 +177,16 @@ class LangfuseCorrelationAdapter:
         request_id: str,
         tool_call_id: str | None = None,
         command_session_id: str | None = None,
+        chat_context_id: str | None = None,
     ) -> LangfuseCorrelationBinding:
         trace_id = self.validate_trace_id(trace_id)
         task_usage_id = self._uuid(task_usage_id, field="task_usage_id")
         correlation_id = self._uuid(correlation_id, field="correlation_id")
+        normalized_chat_context_id = (
+            self._uuid(chat_context_id, field="chat_context_id")
+            if chat_context_id is not None
+            else None
+        )
         session_ref = self._reference("session", session_id)
         request_ref = self._reference("request", request_id)
         tool_call_ref = (
@@ -202,6 +209,8 @@ class LangfuseCorrelationAdapter:
             metadata["gatewaytoolcallref"] = tool_call_ref
         if command_session_ref is not None:
             metadata["gatewaycommandsessionref"] = command_session_ref
+        if normalized_chat_context_id is not None:
+            metadata["gatewaychatcontextid"] = normalized_chat_context_id
         return LangfuseCorrelationBinding(
             trace_id=trace_id,
             session_id=f"gateway-{session_ref}",

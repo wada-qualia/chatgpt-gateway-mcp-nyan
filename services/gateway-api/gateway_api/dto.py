@@ -688,6 +688,12 @@ class LupCorrelationMetadataOut(BaseModel):
     gatewaycommandsessionref: str | None = Field(
         default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
     )
+    gatewaychatcontextid: str | None = Field(
+        default=None,
+        min_length=36,
+        max_length=36,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    )
 
 
 class LupCorrelationOut(BaseModel):

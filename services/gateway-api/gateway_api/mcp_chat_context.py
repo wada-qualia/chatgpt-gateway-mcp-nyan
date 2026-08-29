@@ -16,6 +16,7 @@ from .chat_context import (
     ChatContextService,
     ChatContextValidationError,
 )
+from .chat_context_telemetry import ChatContextTelemetry
 from .config import Settings
 
 CHAT_CONTEXT_ARGUMENT = "chat_context"
@@ -70,6 +71,14 @@ def validate_chat_context_mode(mode: str) -> str:
             "chat_context_mode must be off, optional, or required"
         )
     return normalized
+
+
+def _record_rejection(
+    telemetry: ChatContextTelemetry | None,
+    reason: str,
+) -> None:
+    if telemetry is not None:
+        telemetry.record_rejection(reason)
 
 
 def chat_context_initialize_metadata(mode: str) -> dict[str, Any]:
@@ -238,6 +247,7 @@ def admit_chat_context(
     tool_name: str,
     arguments: dict[str, Any],
     mode: str,
+    telemetry: ChatContextTelemetry | None = None,
 ) -> McpChatContextAdmission:
     resolved_mode = validate_chat_context_mode(mode)
     copied = dict(arguments)
@@ -247,6 +257,7 @@ def admit_chat_context(
     if raw_code is None:
         if resolved_mode == "optional":
             return McpChatContextAdmission(mode=resolved_mode, arguments=copied)
+        _record_rejection(telemetry, "required")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_REQUIRED",
             message="ATLAS chat context is required.",
@@ -256,6 +267,7 @@ def admit_chat_context(
         not isinstance(raw_code, str)
         or CHAT_CONTEXT_CODE_PATTERN.fullmatch(raw_code) is None
     ):
+        _record_rejection(telemetry, "invalid")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_INVALID",
             message=(
@@ -263,7 +275,7 @@ def admit_chat_context(
             ),
             recovery_tool="chat_context_start",
         )
-    service = ChatContextService(settings)
+    service = ChatContextService(settings, telemetry=telemetry)
     try:
         lease = service.resolve_alias(
             db,
@@ -274,6 +286,7 @@ def admit_chat_context(
         db.commit()
     except ChatContextNotFound as exc:
         db.rollback()
+        _record_rejection(telemetry, "unknown")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_UNKNOWN",
             message="ATLAS chat context was not found.",
@@ -281,6 +294,7 @@ def admit_chat_context(
         ) from exc
     except ChatContextExpired as exc:
         db.commit()
+        _record_rejection(telemetry, "expired")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_EXPIRED",
             message="ATLAS chat context has expired.",
@@ -288,6 +302,7 @@ def admit_chat_context(
         ) from exc
     except ChatContextClosed as exc:
         db.rollback()
+        _record_rejection(telemetry, "revoked")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_REVOKED",
             message="ATLAS chat context is no longer active.",
@@ -295,6 +310,7 @@ def admit_chat_context(
         ) from exc
     except (ChatContextValidationError, ChatContextDisabled) as exc:
         db.rollback()
+        _record_rejection(telemetry, "invalid")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_INVALID",
             message="ATLAS chat context cannot be used.",
@@ -313,8 +329,9 @@ def start_chat_context(
     settings: Settings,
     *,
     owner_subject: str,
+    telemetry: ChatContextTelemetry | None = None,
 ) -> dict[str, Any]:
-    service = ChatContextService(settings)
+    service = ChatContextService(settings, telemetry=telemetry)
     try:
         lease = service.start_context(
             db,
@@ -324,6 +341,7 @@ def start_chat_context(
         db.commit()
     except ChatContextAllocationExhausted as exc:
         db.rollback()
+        _record_rejection(telemetry, "allocation_exhausted")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_ALLOCATION_EXHAUSTED",
             message=(
@@ -334,6 +352,7 @@ def start_chat_context(
         ) from exc
     except (ChatContextValidationError, ChatContextDisabled) as exc:
         db.rollback()
+        _record_rejection(telemetry, "invalid")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_INVALID",
             message="ATLAS chat context cannot be created.",
@@ -356,8 +375,9 @@ def refresh_chat_context(
     *,
     owner_subject: str,
     previous_chat_context: str,
+    telemetry: ChatContextTelemetry | None = None,
 ) -> dict[str, Any]:
-    service = ChatContextService(settings)
+    service = ChatContextService(settings, telemetry=telemetry)
     try:
         lease = service.refresh_alias(
             db,
@@ -368,6 +388,7 @@ def refresh_chat_context(
         db.commit()
     except ChatContextNotFound as exc:
         db.rollback()
+        _record_rejection(telemetry, "unknown")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_UNKNOWN",
             message="Historical ATLAS chat context was not found.",
@@ -376,6 +397,7 @@ def refresh_chat_context(
         ) from exc
     except ChatContextClosed as exc:
         db.rollback()
+        _record_rejection(telemetry, "revoked")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_REVOKED",
             message="ATLAS chat context is no longer active.",
@@ -384,6 +406,7 @@ def refresh_chat_context(
         ) from exc
     except ChatContextAllocationExhausted as exc:
         db.rollback()
+        _record_rejection(telemetry, "allocation_exhausted")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_ALLOCATION_EXHAUSTED",
             message=(
@@ -394,6 +417,7 @@ def refresh_chat_context(
         ) from exc
     except (ChatContextValidationError, ChatContextDisabled) as exc:
         db.rollback()
+        _record_rejection(telemetry, "invalid")
         raise McpChatContextAdmissionError(
             error_code="CHAT_CONTEXT_INVALID",
             message="ATLAS chat context cannot be refreshed.",

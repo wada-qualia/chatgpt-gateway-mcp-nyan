@@ -1305,7 +1305,7 @@ paths:
     post:
       operationId: recordHostUsageToolCall
       summary: Record one authenticated host-confirmed tool callback inside an existing task
-      description: Returns the task trace and deterministic one-way request, tool-call and command-session references for content-free Langfuse joining.
+      description: Returns the task trace, deterministic one-way request, tool-call and command-session references, and an optional owner-scoped durable chat-context UUID for content-free Langfuse joining.
       security:
         - bearerAuth: []
       requestBody:

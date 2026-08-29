@@ -144,12 +144,13 @@ def _lease_response(lease: ChatContextLease) -> ChatContextLeaseResponse:
 @router.post("/contexts", response_model=ChatContextLeaseResponse)
 async def create_context(
     payload: CreateChatContextRequest,
+    request: Request,
     db: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     user: Annotated[User, Depends(require_browser_extension_chat_context_principal)],
 ) -> ChatContextLeaseResponse:
     try:
-        lease = ChatContextService(settings).create_provisional(
+        lease = ChatContextService(settings, telemetry=request.app.state.chat_context_telemetry).create_provisional(
             db,
             owner_subject=user.subject,
             client_nonce=payload.client_nonce,
@@ -171,12 +172,13 @@ async def create_context(
 async def bind_context(
     context_id: str,
     payload: BindChatContextRequest,
+    request: Request,
     db: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     user: Annotated[User, Depends(require_browser_extension_chat_context_principal)],
 ) -> ChatContextBindingResponse:
     try:
-        binding = ChatContextService(settings).bind_conversation(
+        binding = ChatContextService(settings, telemetry=request.app.state.chat_context_telemetry).bind_conversation(
             db,
             owner_subject=user.subject,
             context_id=context_id,
@@ -198,12 +200,13 @@ async def bind_context(
 @router.post("/resolve", response_model=ChatContextLeaseResponse)
 async def resolve_context(
     payload: ResolveChatContextRequest,
+    request: Request,
     db: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     user: Annotated[User, Depends(require_browser_extension_chat_context_principal)],
 ) -> ChatContextLeaseResponse:
     try:
-        lease = ChatContextService(settings).resolve_conversation_lease(
+        lease = ChatContextService(settings, telemetry=request.app.state.chat_context_telemetry).resolve_conversation_lease(
             db,
             owner_subject=user.subject,
             conversation_reference=payload.conversation_ref,

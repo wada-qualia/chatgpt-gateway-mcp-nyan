@@ -367,6 +367,8 @@ export type McpProjectionGeneration = {
   tools?: McpProjectionTool[];
 };
 
+export type McpChatContextMode = 'off' | 'optional' | 'required';
+
 export type McpOAuthPresentation = {
   client_id: string;
   client_name: string;
@@ -376,6 +378,7 @@ export type McpOAuthPresentation = {
   selected_mode: McpPresentationMode;
   selection_reason: string;
   presentation_capabilities: McpPresentationCapability[];
+  chat_context_mode: McpChatContextMode;
   workspace_plan: McpWorkspacePlan;
   allowed_tool_names: string[];
   updated_at: string;
@@ -546,9 +549,10 @@ export const api = {
     profile_id: McpPresentationProfileId;
     presentation_mode?: McpPresentationMode;
     presentation_capabilities?: McpPresentationCapability[];
+    chat_context_mode?: McpChatContextMode;
     workspace_plan?: McpWorkspacePlan;
     allowed_tool_names?: string[];
-  }) => request<McpOAuthPresentation>(`/api/mcp/oauth-clients/${clientId}/presentation`, {
+  }) => request<McpOAuthPresentation>(`/api/mcp/oauth-clients/${encodeURIComponent(clientId)}/presentation`, {
     method: 'PATCH',
     body: JSON.stringify(payload)
   }),

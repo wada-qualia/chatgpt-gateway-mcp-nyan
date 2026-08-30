@@ -411,6 +411,32 @@ def test_advisory_lock_contention_fails_closed(
     assert _revision(pg_engine) == PROD_REVISION
 
 
+def test_transactional_ddl_lock_timeout_preserves_revision(
+    pg_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous_revision = "20260828_0015"
+    command.upgrade(alembic_config(str(pg_engine.url)), previous_revision)
+    settings = Settings(
+        gateway_db_migration_lock_timeout_seconds=1,
+        gateway_db_migration_statement_timeout_seconds=10,
+    )
+    monkeypatch.setattr(schema_migrations, "get_settings", lambda: settings)
+    blocker = pg_engine.connect()
+    transaction = blocker.begin()
+    blocker.exec_driver_sql("SELECT COUNT(*) FROM command_sessions").scalar_one()
+
+    started = time.monotonic()
+    with pytest.raises(Exception, match="lock timeout"):
+        run_schema_migrations(pg_engine)
+    elapsed = time.monotonic() - started
+
+    transaction.rollback()
+    blocker.close()
+    assert elapsed < 5
+    assert _revision(pg_engine) == previous_revision
+
+
 def test_transactional_failure_after_online_indexes_is_retryable(
     pg_engine: Engine,
     monkeypatch: pytest.MonkeyPatch,

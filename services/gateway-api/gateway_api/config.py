@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     gateway_metrics_db_pool_timeout_seconds: float = Field(
         default=1.0, ge=0.1, le=30.0
     )
+    gateway_db_idle_in_transaction_timeout_seconds: int = Field(
+        default=300, ge=30, le=3600
+    )
     gateway_storage_monitor_path: str = "./data"
     gateway_storage_warning_usage_ratio: float = Field(default=0.85, ge=0.0, le=1.0)
     gateway_storage_critical_usage_ratio: float = Field(default=0.95, ge=0.0, le=1.0)
@@ -53,8 +56,10 @@ class Settings(BaseSettings):
     gateway_prompt_registry_max_stale_seconds: int = Field(
         default=3600, ge=0, le=86400
     )
-    gateway_db_migration_lock_timeout_seconds: int = 15
-    gateway_db_migration_statement_timeout_seconds: int = 300
+    gateway_db_migration_lock_timeout_seconds: int = Field(default=15, ge=1, le=300)
+    gateway_db_migration_statement_timeout_seconds: int = Field(
+        default=300, ge=1, le=7200
+    )
     gateway_db_online_index_timeout_seconds: int = 5400
     gateway_db_migration_advisory_lock_key: int = 1129138007
     gateway_readiness_refresh_interval_seconds: float = Field(

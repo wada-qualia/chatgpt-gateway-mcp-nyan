@@ -116,6 +116,94 @@ def _is_allowed_redirect(uri: str, settings: Settings) -> bool:
     )
 
 
+def _inherit_chatgpt_connector_policy(
+    db: Session,
+    *,
+    oauth_client: OAuthClient,
+    subject: str,
+    redirect_uri: str,
+) -> OAuthClient:
+    if not redirect_uri.startswith("https://chatgpt.com/connector/oauth/"):
+        return oauth_client
+    if oauth_client.redirect_uris != [redirect_uri]:
+        return oauth_client
+
+    current = (
+        db.query(OAuthClient)
+        .filter(OAuthClient.client_id == oauth_client.client_id)
+        .with_for_update()
+        .one()
+    )
+    if (
+        current.chat_context_mode != "off"
+        or current.presentation_policy_generation != 1
+    ):
+        return current
+
+    predecessor_ids = [
+        client_id
+        for (client_id,) in (
+            db.query(OAuthCode.client_id)
+            .filter(
+                OAuthCode.subject == subject,
+                OAuthCode.consumed.is_(True),
+                OAuthCode.client_id != current.client_id,
+            )
+            .distinct()
+            .all()
+        )
+    ]
+    if not predecessor_ids:
+        return current
+
+    candidates = (
+        db.query(OAuthClient)
+        .filter(
+            OAuthClient.client_id.in_(predecessor_ids),
+            OAuthClient.chat_context_mode.in_(("optional", "required")),
+        )
+        .order_by(OAuthClient.client_id.asc())
+        .with_for_update()
+        .all()
+    )
+    matches = [
+        candidate
+        for candidate in candidates
+        if candidate.redirect_uris == [redirect_uri]
+    ]
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "MCP_PRESENTATION_POLICY_LINEAGE_AMBIGUOUS",
+                "message": (
+                    "Multiple active ChatGPT OAuth predecessors match this connector"
+                ),
+            },
+        )
+    if not matches:
+        return current
+
+    predecessor = matches[0]
+    inherited_chat_context_mode = predecessor.chat_context_mode
+    current.presentation_profile = predecessor.presentation_profile
+    current.presentation_mode = predecessor.presentation_mode
+    current.presentation_capabilities = list(
+        predecessor.presentation_capabilities or []
+    )
+    current.workspace_plan = predecessor.workspace_plan
+    current.allowed_tool_names = list(predecessor.allowed_tool_names or [])
+    current.chat_context_mode = inherited_chat_context_mode
+    current.presentation_policy_generation += 1
+
+    predecessor.chat_context_mode = "off"
+    predecessor.presentation_policy_generation += 1
+    updated_at = utcnow()
+    current.updated_at = updated_at
+    predecessor.updated_at = updated_at
+    return current
+
+
 def _pkce_s256(verifier: str) -> str:
     try:
         encoded = verifier.encode("ascii")
@@ -377,6 +465,13 @@ async def token(
     if not secrets.compare_digest(expected_challenge, auth_code.code_challenge):
         raise HTTPException(status_code=400, detail="Invalid PKCE verifier")
     user = db.query(User).filter(User.subject == auth_code.subject).one()
+    if not is_extension:
+        oauth_client = _inherit_chatgpt_connector_policy(
+            db,
+            oauth_client=oauth_client,
+            subject=auth_code.subject,
+            redirect_uri=redirect_uri,
+        )
     auth_code.consumed = True
     db.commit()
     token_ttl_seconds = (

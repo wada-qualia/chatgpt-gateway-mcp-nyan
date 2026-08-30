@@ -679,7 +679,12 @@ class OutboxWorker:
             if not self.service.broker.healthy:
                 await asyncio.sleep(interval)
                 continue
-            await self.service.run_once()
+            try:
+                await self.service.run_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("outbox_worker_cycle_failed")
             # Always yield a bounded idle window between batches. A sustained
             # backlog must not monopolize the API process with publisher and
             # subscriber callbacks.

@@ -583,21 +583,28 @@ def _run_online_index_operations(
     return tuple(receipts)
 
 
-def _configure_postgresql_session(connection: Connection) -> int | None:
+def _configure_postgresql_migration_session(connection: Connection) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+    settings = get_settings()
+    lock_timeout = max(1, settings.gateway_db_migration_lock_timeout_seconds)
+    statement_timeout = max(1, settings.gateway_db_migration_statement_timeout_seconds)
+    connection.exec_driver_sql(f"SET lock_timeout TO '{lock_timeout}s'")
+    connection.exec_driver_sql(f"SET statement_timeout TO '{statement_timeout}s'")
+    connection.commit()
+
+
+def _configure_postgresql_lock_session(connection: Connection) -> int | None:
     if connection.dialect.name != "postgresql":
         return None
     settings = get_settings()
     lock_timeout = max(1, settings.gateway_db_migration_lock_timeout_seconds)
-    statement_timeout = max(1, settings.gateway_db_migration_statement_timeout_seconds)
     lock_key = settings.gateway_db_migration_advisory_lock_key
-    connection.exec_driver_sql(f"SET lock_timeout TO '{lock_timeout}s'")
     connection.exec_driver_sql(f"SET statement_timeout TO '{lock_timeout}s'")
     connection.execute(
         text("SELECT pg_advisory_lock(:lock_key)"),
         {"lock_key": lock_key},
     )
-    connection.commit()
-    connection.exec_driver_sql(f"SET statement_timeout TO '{statement_timeout}s'")
     connection.commit()
     return lock_key
 
@@ -707,7 +714,7 @@ def run_schema_migrations(
 
     if active_engine.dialect.name == "postgresql":
         with active_engine.connect() as lock_connection:
-            lock_key = _configure_postgresql_session(lock_connection)
+            lock_key = _configure_postgresql_lock_session(lock_connection)
             try:
                 if not bootstrap_empty:
                     online_receipts = _run_online_index_operations(
@@ -715,6 +722,7 @@ def run_schema_migrations(
                         online_operations,
                     )
                 with active_engine.connect() as migration_connection:
+                    _configure_postgresql_migration_session(migration_connection)
                     upgrade_transactionally(migration_connection)
             finally:
                 _release_postgresql_lock(lock_connection, lock_key)

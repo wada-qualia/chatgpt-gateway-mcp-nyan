@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
@@ -17,20 +17,26 @@ def _engine_args(
     pool_size: int | None = None,
     max_overflow: int | None = None,
     pool_timeout: float | None = None,
-) -> dict:
+    idle_in_transaction_timeout_seconds: int | None = None,
+) -> dict[str, object]:
     if database_url.startswith("sqlite"):
         if database_url.startswith("sqlite:///"):
             db_path = database_url.replace("sqlite:///", "", 1)
             if db_path and db_path != ":memory:":
                 Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         return {"connect_args": {"check_same_thread": False}}
-    args: dict[str, int | float] = {}
+    args: dict[str, object] = {}
     if pool_size is not None:
         args["pool_size"] = pool_size
     if max_overflow is not None:
         args["max_overflow"] = max_overflow
     if pool_timeout is not None:
         args["pool_timeout"] = pool_timeout
+    if database_url.startswith("postgresql") and idle_in_transaction_timeout_seconds:
+        timeout_ms = idle_in_transaction_timeout_seconds * 1000
+        args["connect_args"] = {
+            "options": f"-c idle_in_transaction_session_timeout={timeout_ms}"
+        }
     return args
 
 
@@ -43,6 +49,9 @@ engine = create_engine(
         pool_size=settings.gateway_db_pool_size,
         max_overflow=settings.gateway_db_max_overflow,
         pool_timeout=settings.gateway_db_pool_timeout_seconds,
+        idle_in_transaction_timeout_seconds=(
+            settings.gateway_db_idle_in_transaction_timeout_seconds
+        ),
     ),
 )
 SessionLocal = sessionmaker(
@@ -66,6 +75,9 @@ else:
             pool_size=settings.gateway_metrics_db_pool_size,
             max_overflow=settings.gateway_metrics_db_max_overflow,
             pool_timeout=settings.gateway_metrics_db_pool_timeout_seconds,
+            idle_in_transaction_timeout_seconds=(
+                settings.gateway_db_idle_in_transaction_timeout_seconds
+            ),
         ),
     )
     MetricsSessionLocal = sessionmaker(

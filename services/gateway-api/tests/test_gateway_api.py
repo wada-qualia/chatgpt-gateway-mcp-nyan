@@ -6338,7 +6338,7 @@ def test_release_metadata_and_blue_green_deployment_artifacts(
     assert "verify-candidate" in jenkinsfile
     assert "restart-candidate" not in jenkinsfile
     assert "verify-compatibility" not in jenkinsfile
-    assert "cleanup-candidate" in jenkinsfile
+    assert "settle-candidate" in jenkinsfile
     assert "recover-candidate" in jenkinsfile
     assert "verify-production" in jenkinsfile
     assert "finalize" in jenkinsfile

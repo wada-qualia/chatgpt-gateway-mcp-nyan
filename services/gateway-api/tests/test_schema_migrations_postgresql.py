@@ -415,7 +415,7 @@ def test_transactional_ddl_lock_timeout_preserves_revision(
     pg_engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    previous_revision = "20260828_0015"
+    previous_revision = "20260818_0014"
     config = alembic_config(str(pg_engine.url))
     config.attributes["gateway_online_index_bootstrap"] = True
     command.upgrade(config, previous_revision)

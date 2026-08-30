@@ -3975,6 +3975,48 @@ def test_outbox_worker_throttles_between_nonempty_batches() -> None:
     assert 1 <= service.calls <= 6
 
 
+def test_outbox_worker_survives_transient_cycle_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gateway_api import outbox as outbox_module
+    from gateway_api.outbox import OutboxWorker
+
+    logged_errors: list[str] = []
+    monkeypatch.setattr(
+        outbox_module.logger,
+        "exception",
+        lambda message: logged_errors.append(message),
+    )
+
+    class Service:
+        settings = type("Settings", (), {"gateway_outbox_poll_interval_seconds": 0.01})()
+        broker = type("Broker", (), {"healthy": True})()
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run_once(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("transient outbox cycle failure")
+
+    service = Service()
+    worker = OutboxWorker(service)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(worker._run())
+        deadline = asyncio.get_running_loop().time() + 0.5
+        while service.calls < 2 and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.005)
+        worker._stopping.set()
+        await task
+
+    asyncio.run(scenario())
+
+    assert service.calls >= 2
+    assert logged_errors == ["outbox_worker_cycle_failed"]
+
+
 def test_realtime_broker_database_work_does_not_run_on_event_loop_thread() -> None:
     import threading
 

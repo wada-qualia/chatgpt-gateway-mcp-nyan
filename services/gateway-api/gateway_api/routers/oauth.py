@@ -16,6 +16,7 @@ from ..auth import create_jwt, get_current_user
 from ..config import Settings, get_settings
 from ..database import get_db
 from ..models import OAuthClient, OAuthCode, User, utcnow
+from ..oauth_lineage import chatgpt_connector_policy_predecessors
 
 router = APIRouter(tags=["oauth"])
 
@@ -140,37 +141,13 @@ def _inherit_chatgpt_connector_policy(
     ):
         return current
 
-    predecessor_ids = [
-        client_id
-        for (client_id,) in (
-            db.query(OAuthCode.client_id)
-            .filter(
-                OAuthCode.subject == subject,
-                OAuthCode.consumed.is_(True),
-                OAuthCode.client_id != current.client_id,
-            )
-            .distinct()
-            .all()
-        )
-    ]
-    if not predecessor_ids:
-        return current
-
-    candidates = (
-        db.query(OAuthClient)
-        .filter(
-            OAuthClient.client_id.in_(predecessor_ids),
-            OAuthClient.chat_context_mode.in_(("optional", "required")),
-        )
-        .order_by(OAuthClient.client_id.asc())
-        .with_for_update()
-        .all()
+    matches = chatgpt_connector_policy_predecessors(
+        db,
+        oauth_client=current,
+        subject=subject,
+        redirect_uri=redirect_uri,
+        lock=True,
     )
-    matches = [
-        candidate
-        for candidate in candidates
-        if candidate.redirect_uris == [redirect_uri]
-    ]
     if len(matches) > 1:
         raise HTTPException(
             status_code=409,

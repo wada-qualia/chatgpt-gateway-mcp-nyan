@@ -401,3 +401,166 @@ def test_chatgpt_replacement_with_multiple_redirects_does_not_inherit(
         assert predecessor.presentation_policy_generation == 5
         assert replacement.chat_context_mode == "off"
         assert replacement.presentation_policy_generation == 1
+
+
+def resolve_registered_presentation(client: TestClient, client_id: str):
+    from gateway_api.auth import create_jwt
+    from gateway_api.database import SessionLocal
+    from gateway_api.mcp_presentation import resolve_presentation_context
+    from gateway_api.models import OAuthClient, User
+    from starlette.requests import Request
+
+    subject = client.get("/auth/me").json()["subject"]
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.subject == subject).one()
+        oauth_client = db.get(OAuthClient, client_id)
+        assert oauth_client is not None
+        token = create_jwt(
+            subject=user.subject,
+            username=user.username,
+            roles=user.roles,
+            scopes=["workspace:read"],
+            token_type="access",
+            ttl_seconds=300,
+            extra={
+                "client_id": oauth_client.client_id,
+                "presentation_profile": oauth_client.presentation_profile,
+                "presentation_policy_generation": oauth_client.presentation_policy_generation,
+                "presentation_mode": oauth_client.presentation_mode,
+                "chat_context_mode": oauth_client.chat_context_mode,
+                "presentation_capabilities": list(
+                    oauth_client.presentation_capabilities or []
+                ),
+                "workspace_plan": oauth_client.workspace_plan,
+                "allowed_tool_names": list(oauth_client.allowed_tool_names or []),
+            },
+        )
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/mcp",
+                "headers": [(b"authorization", f"Bearer {token}".encode())],
+            }
+        )
+        return resolve_presentation_context(request, db, user)
+
+
+def test_default_chatgpt_replacement_bearer_requires_reauthorization(
+    client: TestClient,
+) -> None:
+    from fastapi import HTTPException
+
+    redirect_uri = "https://chatgpt.com/connector/oauth/reauth-challenge-test"
+    subject = client.get("/auth/me").json()["subject"]
+    seed_predecessor(
+        client_id="chatgpt-reauth-predecessor",
+        redirect_uri=redirect_uri,
+        subject=subject,
+    )
+    registered = client.post(
+        "/oauth/register",
+        json={
+            "client_id": "chatgpt-reauth-replacement",
+            "client_name": "ChatGPT",
+            "redirect_uris": [redirect_uri],
+            "scope": "workspace:read chat-context:write",
+        },
+    )
+    assert registered.status_code == 201
+
+    with pytest.raises(HTTPException) as denied:
+        resolve_registered_presentation(client, "chatgpt-reauth-replacement")
+    assert denied.value.status_code == 401
+    assert denied.value.detail["code"] == "MCP_PRESENTATION_REAUTH_REQUIRED"
+
+
+def test_default_chatgpt_replacement_bearer_ignores_foreign_subject_lineage(
+    client: TestClient,
+) -> None:
+    redirect_uri = "https://chatgpt.com/connector/oauth/reauth-foreign-test"
+    seed_predecessor(
+        client_id="chatgpt-reauth-foreign-predecessor",
+        redirect_uri=redirect_uri,
+        subject="another-user-subject",
+    )
+    registered = client.post(
+        "/oauth/register",
+        json={
+            "client_id": "chatgpt-reauth-foreign-replacement",
+            "client_name": "ChatGPT",
+            "redirect_uris": [redirect_uri],
+            "scope": "workspace:read",
+        },
+    )
+    assert registered.status_code == 201
+
+    context = resolve_registered_presentation(
+        client, "chatgpt-reauth-foreign-replacement"
+    )
+    assert context.chat_context_mode == "off"
+    assert context.policy_generation == 1
+
+
+def test_default_chatgpt_replacement_bearer_fails_closed_for_ambiguous_lineage(
+    client: TestClient,
+) -> None:
+    from fastapi import HTTPException
+
+    redirect_uri = "https://chatgpt.com/connector/oauth/reauth-ambiguous-test"
+    subject = client.get("/auth/me").json()["subject"]
+    seed_predecessor(
+        client_id="chatgpt-reauth-ambiguous-a",
+        redirect_uri=redirect_uri,
+        subject=subject,
+        mode="required",
+    )
+    seed_predecessor(
+        client_id="chatgpt-reauth-ambiguous-b",
+        redirect_uri=redirect_uri,
+        subject=subject,
+        mode="optional",
+    )
+    registered = client.post(
+        "/oauth/register",
+        json={
+            "client_id": "chatgpt-reauth-ambiguous-replacement",
+            "client_name": "ChatGPT",
+            "redirect_uris": [redirect_uri],
+            "scope": "workspace:read",
+        },
+    )
+    assert registered.status_code == 201
+
+    with pytest.raises(HTTPException) as denied:
+        resolve_registered_presentation(client, "chatgpt-reauth-ambiguous-replacement")
+    assert denied.value.status_code == 409
+    assert denied.value.detail["code"] == "MCP_PRESENTATION_POLICY_LINEAGE_AMBIGUOUS"
+
+
+def test_default_chatgpt_replacement_bearer_does_not_challenge_multi_redirect(
+    client: TestClient,
+) -> None:
+    redirect_uri = "https://chatgpt.com/connector/oauth/reauth-multi-test"
+    subject = client.get("/auth/me").json()["subject"]
+    seed_predecessor(
+        client_id="chatgpt-reauth-multi-predecessor",
+        redirect_uri=redirect_uri,
+        subject=subject,
+    )
+    registered = client.post(
+        "/oauth/register",
+        json={
+            "client_id": "chatgpt-reauth-multi-replacement",
+            "client_name": "ChatGPT",
+            "redirect_uris": [redirect_uri, "http://localhost:3000/callback"],
+            "scope": "workspace:read",
+        },
+    )
+    assert registered.status_code == 201
+
+    context = resolve_registered_presentation(
+        client, "chatgpt-reauth-multi-replacement"
+    )
+    assert context.chat_context_mode == "off"
+    assert context.policy_generation == 1

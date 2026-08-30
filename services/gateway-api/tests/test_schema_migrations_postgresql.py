@@ -416,7 +416,9 @@ def test_transactional_ddl_lock_timeout_preserves_revision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     previous_revision = "20260828_0015"
-    command.upgrade(alembic_config(str(pg_engine.url)), previous_revision)
+    config = alembic_config(str(pg_engine.url))
+    config.attributes["gateway_online_index_bootstrap"] = True
+    command.upgrade(config, previous_revision)
     settings = Settings(
         gateway_db_migration_lock_timeout_seconds=1,
         gateway_db_migration_statement_timeout_seconds=10,

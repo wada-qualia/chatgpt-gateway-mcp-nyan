@@ -887,6 +887,75 @@ test('MCP connections page creates a service-account backed remote server', asyn
   });
 });
 
+test('MCP connections page updates chat context mode for a URL-based OAuth client', async () => {
+  const clientId = 'https://chatgpt.com/oauth/NGZjo_yePO24/client.json';
+  let presentation = {
+    client_id: clientId,
+    client_name: 'Auto-registered MCP client',
+    presentation_profile: 'chatgpt-stable',
+    presentation_policy_generation: 1,
+    presentation_mode: 'native_projected',
+    selected_mode: 'native_projected',
+    selection_reason: 'policy',
+    presentation_capabilities: ['native_tools'],
+    chat_context_mode: 'off',
+    workspace_plan: 'none',
+    allowed_tool_names: [],
+    updated_at: '2026-08-30T00:00:00Z'
+  };
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === '/auth/me') return jsonResponse({ subject: 'dev:local', username: 'darius', email: 'dev@k-lab.local', roles: ['gateway-admin'], provider: 'keycloak' });
+    if (url === '/api/docker/images') return jsonResponse({ images: ['ubuntu:24.04'] });
+    if (url === '/api/mcp/servers') return jsonResponse([]);
+    if (url === '/api/mcp/presentation-profiles') return jsonResponse([{ id: 'chatgpt-stable', label: 'ChatGPT stable', description: 'Stable ChatGPT profile.' }]);
+    if (url.startsWith('/api/mcp/projection-generations')) return jsonResponse([]);
+    if (url === '/api/mcp/oauth-clients/presentation') return jsonResponse([presentation]);
+    if (url === `/api/mcp/oauth-clients/${encodeURIComponent(clientId)}/presentation` && init?.method === 'PATCH') {
+      const payload = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+      presentation = {
+        ...presentation,
+        ...payload,
+        presentation_policy_generation: 2,
+        updated_at: '2026-08-30T00:01:00Z'
+      };
+      return jsonResponse(presentation);
+    }
+    if (
+      url === '/api/devices' || url === '/api/docker/workspaces' || url === '/api/thin-clients' ||
+      url === '/api/command-sessions' || url === '/api/access/grants' || url === '/api/audit/events' ||
+      url.startsWith('/api/file-changes')
+    ) return jsonResponse([]);
+    return jsonResponse({});
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  renderWithQuery(<App />, '/mcp-connections');
+  const chatContextMode = await screen.findByRole('combobox', { name: 'Chat context mode for Auto-registered MCP client' });
+  expect(chatContextMode).toHaveValue('off');
+  fireEvent.change(chatContextMode, { target: { value: 'optional' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/mcp/oauth-clients/${encodeURIComponent(clientId)}/presentation`,
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          profile_id: 'chatgpt-stable',
+          presentation_mode: 'native_projected',
+          presentation_capabilities: ['native_tools'],
+          chat_context_mode: 'optional',
+          workspace_plan: 'none',
+          allowed_tool_names: []
+        })
+      })
+    );
+  });
+  expect(await screen.findByText(new RegExp(`${clientId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} · policy generation 2`))).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Chat context mode for Auto-registered MCP client' })).toHaveValue('optional');
+});
+
 test('MCP connections page inspects revisions and soft-removes with optimistic headers', async () => {
   const server = {
     id: 'server-1', owner_subject: 'dev:local', normalized_slug: 'remote-mcp',

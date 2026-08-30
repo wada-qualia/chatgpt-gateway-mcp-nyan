@@ -21,6 +21,7 @@ import {
   api,
   type McpServer,
   type McpOAuthPresentation,
+  type McpChatContextMode,
   type McpPresentationCapability,
   type McpPresentationMode,
   type McpPresentationProfileId,
@@ -243,17 +244,20 @@ function OAuthPresentationRow({
     mode: McpPresentationMode,
     capabilities: McpPresentationCapability[],
     workspacePlan: McpWorkspacePlan,
+    chatContextMode: McpChatContextMode,
     allowedNames: string[],
   ) => void;
 }) {
   const [profile, setProfile] = useState<McpPresentationProfileId>(client.presentation_profile);
   const [mode, setMode] = useState<McpPresentationMode>(client.presentation_mode);
   const [workspacePlan, setWorkspacePlan] = useState<McpWorkspacePlan>(client.workspace_plan);
+  const [chatContextMode, setChatContextMode] = useState<McpChatContextMode>(client.chat_context_mode);
   const [allowed, setAllowed] = useState(client.allowed_tool_names.join(", "));
   useEffect(() => {
     setProfile(client.presentation_profile);
     setMode(client.presentation_mode);
     setWorkspacePlan(client.workspace_plan);
+    setChatContextMode(client.chat_context_mode);
     setAllowed(client.allowed_tool_names.join(", "));
   }, [client]);
   const capabilities: McpPresentationCapability[] = mode === "deferred_native"
@@ -290,8 +294,13 @@ function OAuthPresentationRow({
         <option value="enterprise">ChatGPT Enterprise</option>
         <option value="edu">ChatGPT Edu</option>
       </select>
+      <select aria-label={`Chat context mode for ${client.client_name}`} value={chatContextMode} onChange={(event) => setChatContextMode(event.target.value as McpChatContextMode)}>
+        <option value="off">Chat context off</option>
+        <option value="optional">Chat context optional</option>
+        <option value="required">Chat context required</option>
+      </select>
       {profile === "agent-restricted" ? <input aria-label="Allowed tool names" placeholder="workspace_info, phase5_sum_values" value={allowed} onChange={(event) => setAllowed(event.target.value)} /> : null}
-      <Button disabled={busy} onClick={() => onSave(profile, mode, capabilities, workspacePlan, allowed.split(",").map((name) => name.trim()).filter(Boolean))}>Save profile</Button>
+      <Button disabled={busy} onClick={() => onSave(profile, mode, capabilities, workspacePlan, chatContextMode, allowed.split(",").map((name) => name.trim()).filter(Boolean))}>Save profile</Button>
     </div>
   );
 }
@@ -358,7 +367,7 @@ function McpProjectionManager({ onError }: { onError: (message: string) => void 
     onError: (error) => onError(readableError(error)),
   });
   const updateClient = useMutation({
-    mutationFn: ({ clientId, profileId, mode, capabilities, workspacePlan, allowedNames }: { clientId: string; profileId: McpPresentationProfileId; mode: McpPresentationMode; capabilities: McpPresentationCapability[]; workspacePlan: McpWorkspacePlan; allowedNames: string[] }) => api.updateMcpOAuthPresentation(clientId, { profile_id: profileId, presentation_mode: mode, presentation_capabilities: capabilities, workspace_plan: workspacePlan, allowed_tool_names: allowedNames }),
+    mutationFn: ({ clientId, profileId, mode, capabilities, workspacePlan, chatContextMode, allowedNames }: { clientId: string; profileId: McpPresentationProfileId; mode: McpPresentationMode; capabilities: McpPresentationCapability[]; workspacePlan: McpWorkspacePlan; chatContextMode: McpChatContextMode; allowedNames: string[] }) => api.updateMcpOAuthPresentation(clientId, { profile_id: profileId, presentation_mode: mode, presentation_capabilities: capabilities, chat_context_mode: chatContextMode, workspace_plan: workspacePlan, allowed_tool_names: allowedNames }),
     onSuccess: refresh,
     onError: (error) => onError(readableError(error)),
   });
@@ -384,7 +393,7 @@ function McpProjectionManager({ onError }: { onError: (message: string) => void 
       <div className="mcp-oauth-presentation-list">
         <h3>OAuth client presentation binding</h3>
         <p>Changing a profile increments policy generation. Existing access tokens must authorize again before using the new action surface.</p>
-        {oauthClientItems.map((client) => <OAuthPresentationRow key={client.client_id} client={client} busy={busy} onSave={(profileId, mode, capabilities, workspacePlan, allowedNames) => updateClient.mutate({ clientId: client.client_id, profileId, mode, capabilities, workspacePlan, allowedNames })} />)}
+        {oauthClientItems.map((client) => <OAuthPresentationRow key={client.client_id} client={client} busy={busy} onSave={(profileId, mode, capabilities, workspacePlan, chatContextMode, allowedNames) => updateClient.mutate({ clientId: client.client_id, profileId, mode, capabilities, workspacePlan, chatContextMode, allowedNames })} />)}
       </div>
     </section>
   );

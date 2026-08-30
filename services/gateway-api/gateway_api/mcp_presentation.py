@@ -28,6 +28,7 @@ from .models import (
     User,
     utcnow,
 )
+from .oauth_lineage import chatgpt_connector_policy_predecessors
 
 PRESENTATION_MODES: dict[str, dict[str, Any]] = {
     "catalog_broker": {
@@ -264,6 +265,36 @@ def resolve_presentation_context(
                 "message": "Presentation policy changed; authorize the OAuth client again",
             },
         )
+    if client.chat_context_mode == "off" and client.presentation_policy_generation == 1:
+        redirect_uris = list(client.redirect_uris or [])
+        redirect_uri = redirect_uris[0] if len(redirect_uris) == 1 else ""
+        predecessors = chatgpt_connector_policy_predecessors(
+            db,
+            oauth_client=client,
+            subject=user.subject,
+            redirect_uri=redirect_uri,
+        )
+        if len(predecessors) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "MCP_PRESENTATION_POLICY_LINEAGE_AMBIGUOUS",
+                    "message": (
+                        "Multiple active ChatGPT OAuth predecessors match this connector"
+                    ),
+                },
+            )
+        if predecessors:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "MCP_PRESENTATION_REAUTH_REQUIRED",
+                    "message": (
+                        "ChatGPT OAuth client registration changed; authorize the OAuth "
+                        "client again"
+                    ),
+                },
+            )
     if profile_id not in PRESENTATION_PROFILES:
         raise HTTPException(status_code=403, detail="Invalid presentation profile")
     configured_mode = str(claims.get("presentation_mode") or client.presentation_mode)

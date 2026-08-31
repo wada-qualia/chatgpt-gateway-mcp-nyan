@@ -90,6 +90,8 @@ COPY --chown=appuser:appuser deploy /app/deploy
 COPY --chown=appuser:appuser .gitlab-ci.yml /app/.gitlab-ci.yml
 COPY --chown=appuser:appuser Dockerfile /app/Dockerfile
 COPY --chown=appuser:appuser Jenkinsfile /app/Jenkinsfile
+COPY --chown=appuser:appuser CHANGELOG.md /app/CHANGELOG.md
+COPY --chown=appuser:appuser docs/releases /app/docs/releases
 RUN /opt/venv/bin/pip install --no-cache-dir -r /app/requirements-dev.txt
 USER appuser
 RUN PYTHONPATH=/app/services/gateway-api /opt/venv/bin/python \

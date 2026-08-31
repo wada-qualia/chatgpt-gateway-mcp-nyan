@@ -52,11 +52,6 @@ No unreleased changes are recorded at this time.
 - The production drift guard accepts a protected-source/runtime gap only when all
   intervening paths are documentation-only; release-impact and non-linear drift
   remain fail-closed.
-- The initial `0.13.8` Jenkins deployment `#270` failed closed on a Docker test-fixture
-  mismatch before candidate publication; MR `!114` corrected only the test target.
-- Jenkins `#271` then released protected source `1ab1c9e9fea08bca6a41f847eafdc575ffc8a138`
-  with candidate `12/12`, production `30/30`, public smoke PASS, active slot `green`,
-  and immutable image id `sha256:a6543765cae546d47eddf9daa69cf4ab16bb4a2abe3c2541aea4b780c92e49a9`.
 
 ### Known limitations
 

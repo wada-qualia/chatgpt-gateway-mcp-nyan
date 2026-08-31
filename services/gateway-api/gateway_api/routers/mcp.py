@@ -66,11 +66,14 @@ from ..mcp_federation_broker import (
     mcp_federation_broker_tools,
 )
 from ..mcp_federation_compat import (
-    SUPPORTED_MCP_PROTOCOL_VERSIONS,
+    LEGACY_MCP_PROTOCOL_VERSIONS,
     McpProtocolAdmissionError,
+    ModernRequestAdmission,
+    gateway_public_discover_result,
     gateway_public_server_capabilities,
+    modern_server_info_meta,
     negotiate_gateway_protocol_version,
-    validate_http_protocol_version,
+    public_request_protocol_admission,
 )
 from ..mcp_presentation import (
     PresentationContext,
@@ -1750,20 +1753,23 @@ async def mcp(
     method = body.get("method")
     request.state.mcp_method = (
         method
-        if method in {"initialize", "tools/list", "tools/call"}
+        if method in {"initialize", "server/discover", "tools/list", "tools/call"}
         else "other"
     )
     request_id = body.get("id")
+    modern_admission: ModernRequestAdmission | None = None
     if method != "initialize":
         try:
-            validate_http_protocol_version(request.headers.get("MCP-Protocol-Version"))
+            admission = public_request_protocol_admission(body, request.headers)
+            if isinstance(admission, ModernRequestAdmission):
+                modern_admission = admission
         except McpProtocolAdmissionError as exc:
             return _mcp_jsonrpc_error(
                 request_id,
-                code=-32602,
+                code=exc.jsonrpc_code,
                 message=str(exc),
-                status_code=400,
-                data={"supported": list(SUPPORTED_MCP_PROTOCOL_VERSIONS)},
+                status_code=exc.http_status,
+                data=exc.data,
             )
     ssh_profile = effective_ssh_command_profile(user, settings)
     presentation = resolve_presentation_context(request, db, user)
@@ -1791,7 +1797,7 @@ async def mcp(
                     code=-32602,
                     message=str(exc),
                     status_code=400,
-                    data={"supported": list(SUPPORTED_MCP_PROTOCOL_VERSIONS)},
+                    data=exc.data or {"supported": list(LEGACY_MCP_PROTOCOL_VERSIONS)},
                 )
             result = {
                 "protocolVersion": protocol_version,
@@ -1818,6 +1824,12 @@ async def mcp(
                     }
                 },
             }
+        elif method == "server/discover":
+            result = gateway_public_discover_result(
+                server_name=settings.app_name,
+                server_version=settings.gateway_release_version,
+                tools_list_changed=presentation.supports_list_changed,
+            )
         elif method == "tools/list":
             result = {
                 "tools": decorate_public_tools(
@@ -1908,6 +1920,21 @@ async def mcp(
                 code=-32601,
                 message=f"Method not found: {method}",
             )
+        if modern_admission is not None and method != "server/discover":
+            result_meta = result.get("_meta")
+            if not isinstance(result_meta, dict):
+                result_meta = {}
+            result["_meta"] = {
+                **result_meta,
+                **modern_server_info_meta(
+                    server_name=settings.app_name,
+                    server_version=settings.gateway_release_version,
+                ),
+            }
+            result.setdefault("resultType", "complete")
+            if method == "tools/list":
+                result.setdefault("ttlMs", 0)
+                result.setdefault("cacheScope", "private")
         payload = {"jsonrpc": "2.0", "id": request_id, "result": result}
     except HTTPException as exc:
         if tool_call is not None:

@@ -6,16 +6,18 @@ import json
 import re
 import time
 import uuid
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncIterator, Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from urllib.parse import urlencode, urlparse
 
 import httpx
 from jsonschema import Draft202012Validator, ValidationError
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared.exceptions import McpError
+from mcp.shared.exceptions import MCPError
+from mcp_types import REQUEST_TIMEOUT
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -31,16 +33,10 @@ from .mcp_federation import (
 )
 from .mcp_federation_compat import (
     McpProtocolAdmissionError,
+    admit_upstream_discover,
     admit_upstream_initialize,
 )
 from .mcp_federation_policy import sha256_json
-from .mcp_rich_fidelity import (
-    RichFidelityError,
-    project_call_result,
-    sanitize_server_instructions,
-    sdk_tool_descriptor,
-    tool_descriptor_hash,
-)
 from .mcp_federation_runtime import (
     EndpointResolution,
     FederationBoundaryError,
@@ -52,6 +48,13 @@ from .mcp_federation_runtime import (
     normalize_instance_id,
     resolve_endpoint,
     sanitize_untrusted,
+)
+from .mcp_rich_fidelity import (
+    RichFidelityError,
+    project_call_result,
+    sanitize_server_instructions,
+    sdk_tool_descriptor,
+    tool_descriptor_hash,
 )
 from .models import (
     McpCredentialBinding,
@@ -78,11 +81,11 @@ _FORBIDDEN_FORWARD_HEADERS = {
 }
 _HEADER_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,119}$")
 _SECRET_KEY_PATTERN = re.compile(
-    r"(?:token|secret|password|credential|authorization|cookie|private[_-]?key)", re.I
+    r"(?:token|secret|password|credential|authorization|cookie|private[_-]?key)", re.IGNORECASE
 )
 _BEARER_SCOPE_PARAMETER = re.compile(
     r'(?:^|,)\s*scope=(?:"([^"\\]{0,2000})"|([^,\s]{1,2000}))',
-    re.I,
+    re.IGNORECASE,
 )
 _SCOPE_TOKEN = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,160}$")
 
@@ -167,6 +170,14 @@ class UpstreamCallResult:
     replayed: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class UpstreamProtocolHandshake:
+    protocolVersion: str
+    capabilities: types.ServerCapabilities
+    instructions: str | None
+    source: str
+
+
 class UpstreamMcpError(RuntimeError):
     def __init__(
         self,
@@ -199,7 +210,7 @@ class UpstreamMcpError(RuntimeError):
 
 
 class UpstreamCredentialResolver:
-    def __init__(self, manager: "UpstreamMcpManager") -> None:
+    def __init__(self, manager: UpstreamMcpManager) -> None:
         self.manager = manager
 
     async def headers_for_server(
@@ -285,7 +296,7 @@ class UpstreamCredentialResolver:
         expires_at = _parse_datetime(material.get("expires_at"))
         refresh_needed = not access_token or (
             expires_at is not None
-            and expires_at <= datetime.now(timezone.utc) + timedelta(seconds=30)
+            and expires_at <= datetime.now(UTC) + timedelta(seconds=30)
         )
         if refresh_needed:
             material = await self._refresh_oauth_token(db, server, binding, material)
@@ -373,7 +384,7 @@ class UpstreamCredentialResolver:
         expires_in = payload.get("expires_in")
         if isinstance(expires_in, (int, float)):
             updated["expires_at"] = (
-                datetime.now(timezone.utc) + timedelta(seconds=float(expires_in))
+                datetime.now(UTC) + timedelta(seconds=float(expires_in))
             ).isoformat()
         new_secret = SecretBlob(
             id=str(uuid.uuid4()),
@@ -707,14 +718,13 @@ class UpstreamMcpManager:
                 "normalized_error_code": None,
             }
         try:
-            async with self._bounded(server):
-                async with self._session(db, server) as (
-                    session,
-                    initialized,
-                    session_id,
-                ):
-                    listed = await session.list_tools()
-                    tool_count = len(listed.tools)
+            async with self._bounded(server), self._session(db, server) as (
+                session,
+                initialized,
+                session_id,
+            ):
+                listed = await session.list_tools()
+                tool_count = len(listed.tools)
             self._record_success(server.id)
             self._mark_online(db, server, initialized)
             return {
@@ -795,7 +805,7 @@ class UpstreamMcpManager:
                 tools_changed.set()
 
         try:
-            async with self._bounded(server):
+            async with self._bounded(server):  # noqa: SIM117
                 async with self._session(db, server, message_handler=handler) as (
                     session,
                     initialized,
@@ -804,9 +814,9 @@ class UpstreamMcpManager:
                     discovered: list[Any] = []
                     cursor: str | None = None
                     while True:
-                        page = await session.list_tools(cursor=cursor)
+                        page = await session.list_tools(params=types.PaginatedRequestParams(cursor=cursor) if cursor else None)
                         discovered.extend(page.tools)
-                        cursor = page.nextCursor
+                        cursor = page.next_cursor
                         if not cursor:
                             break
             snapshot = []
@@ -1137,21 +1147,21 @@ class UpstreamMcpManager:
                             },
                         )
             limited = self._limit_result(raw)
-            if revision.output_schema and raw.structuredContent is not None:
+            if revision.output_schema and raw.structured_content is not None:
                 try:
                     Draft202012Validator(revision.output_schema).validate(
-                        raw.structuredContent
+                        raw.structured_content
                     )
                 except ValidationError as exc:
                     raise UpstreamMcpError(
                         "MCP_PROTOCOL_MISMATCH",
                         "Upstream structured output does not match its recorded schema",
                     ) from exc
-            invocation.outcome = "failed" if raw.isError else "succeeded"
+            invocation.outcome = "failed" if raw.is_error else "succeeded"
             invocation.response_metadata = {
                 "truncated": limited.truncated,
                 "serialized_bytes": limited.serialized_bytes,
-                "upstream_is_error": bool(raw.isError),
+                "upstream_is_error": bool(raw.is_error),
                 "media_bytes": limited.media_bytes,
                 "client_meta_present": bool(limited.client_meta),
                 "client_meta_sha256": sha256_json(limited.client_meta)
@@ -1164,7 +1174,7 @@ class UpstreamMcpManager:
             duration_seconds = max(0.0, time.monotonic() - operation_started)
             event_type = (
                 "gateway.mcp.invocation.failed.v1"
-                if raw.isError
+                if raw.is_error
                 else "gateway.mcp.invocation.completed.v1"
             )
             emit_event(
@@ -1189,7 +1199,7 @@ class UpstreamMcpManager:
                     "traceparent": traceparent,
                     "correlation_id": correlation_id,
                 },
-                status="error" if raw.isError else "success",
+                status="error" if raw.is_error else "success",
                 commit=False,
             )
             db.commit()
@@ -1201,7 +1211,7 @@ class UpstreamMcpManager:
             )
             self._record_success(server.id)
             limited.invocation_id = invocation.id
-            limited.is_error = bool(raw.isError)
+            limited.is_error = bool(raw.is_error)
             return limited
         except UpstreamMcpError as exc:
             invocation.outcome = "unknown" if exc.unknown_outcome else "failed"
@@ -1367,11 +1377,11 @@ class UpstreamMcpManager:
     async def _find_upstream_tool(self, session: ClientSession, name: str) -> Any:
         cursor: str | None = None
         while True:
-            page = await session.list_tools(cursor=cursor)
+            page = await session.list_tools(params=types.PaginatedRequestParams(cursor=cursor) if cursor else None)
             for tool in page.tools:
                 if tool.name == name:
                     return tool
-            cursor = page.nextCursor
+            cursor = page.next_cursor
             if not cursor:
                 raise UpstreamMcpError(
                     "MCP_TOOL_NOT_FOUND",
@@ -1388,68 +1398,50 @@ class UpstreamMcpManager:
         *,
         meta: dict[str, Any] | None = None,
     ) -> types.CallToolResult:
-        request_id = session._request_id
-        task = asyncio.create_task(session.call_tool(name, arguments, meta=meta))
+        task = asyncio.create_task(
+            session.call_tool(
+                name,
+                arguments,
+                read_timeout_seconds=timeout_seconds,
+                meta=meta,
+            )
+        )
         self._active_calls.add(task)
         task.add_done_callback(self._active_calls.discard)
         try:
-            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
-        except TimeoutError as exc:
-            await session.send_notification(
-                types.ClientNotification(
-                    types.CancelledNotification(
-                        params=types.CancelledNotificationParams(
-                            requestId=request_id,
-                            reason="Gateway upstream deadline exceeded",
-                        )
-                    )
-                )
-            )
-            try:
-                await asyncio.wait_for(task, timeout=self.cancellation_grace_seconds)
-            except McpError:
-                pass
-            except TimeoutError:
-                task.cancel()
+            result = await task
+        except asyncio.CancelledError as exc:
+            raise UpstreamMcpError(
+                "MCP_CALL_CANCELLED",
+                "Upstream call was cancelled",
+                http_status=499,
+            ) from exc
+        except MCPError as exc:
+            if exc.code == REQUEST_TIMEOUT:
                 raise UpstreamMcpError(
                     "MCP_CALL_TIMEOUT",
-                    "Upstream call timed out and cancellation was not acknowledged",
+                    "Upstream call exceeded the Gateway deadline; the SDK sent protocol cancellation",
                     retryable=False,
                     unknown_outcome=True,
                     http_status=504,
                 ) from exc
-            except asyncio.CancelledError:
-                pass
-            raise UpstreamMcpError(
-                "MCP_CALL_TIMEOUT",
-                "Upstream call exceeded the Gateway deadline",
-                retryable=False,
-                http_status=504,
-            ) from exc
-        except asyncio.CancelledError as exc:
-            if not task.done():
-                await session.send_notification(
-                    types.ClientNotification(
-                        types.CancelledNotification(
-                            params=types.CancelledNotificationParams(
-                                requestId=request_id,
-                                reason="Gateway caller cancelled",
-                            )
-                        )
-                    )
-                )
-            raise UpstreamMcpError(
-                "MCP_CALL_CANCELLED", "Upstream call was cancelled", http_status=499
-            ) from exc
-        except McpError as exc:
-            message = str(exc.error.message)[:500]
+            message = str(exc.message)[:500]
             if "cancel" in message.lower():
                 raise UpstreamMcpError(
-                    "MCP_CALL_CANCELLED", "Upstream call was cancelled", http_status=499
+                    "MCP_CALL_CANCELLED",
+                    "Upstream call was cancelled",
+                    http_status=499,
                 ) from exc
             raise UpstreamMcpError(
-                "MCP_PROTOCOL_MISMATCH", "Upstream MCP call failed"
+                "MCP_PROTOCOL_MISMATCH",
+                "Upstream MCP call failed",
             ) from exc
+        if not isinstance(result, types.CallToolResult):
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Upstream MCP call returned a non-terminal tool result",
+            )
+        return result
 
     @contextlib.asynccontextmanager
     async def _session(
@@ -1458,7 +1450,7 @@ class UpstreamMcpManager:
         server: McpServer,
         *,
         message_handler: Callable[[Any], Any] | None = None,
-    ) -> AsyncIterator[tuple[ClientSession, types.InitializeResult, str | None]]:
+    ) -> AsyncIterator[tuple[ClientSession, UpstreamProtocolHandshake, str | None]]:
         if server.origin != "gateway" or server.transport != "streamable_http":
             raise UpstreamMcpError(
                 "MCP_PROTOCOL_MISMATCH",
@@ -1514,7 +1506,7 @@ class UpstreamMcpManager:
         db.add(runtime)
         db.commit()
         try:
-            async with httpx.AsyncClient(
+            async with httpx.AsyncClient(  # noqa: SIM117
                 headers=headers,
                 timeout=timeout,
                 limits=limits,
@@ -1525,7 +1517,7 @@ class UpstreamMcpManager:
                     server.endpoint_url,
                     http_client=http_client,
                     terminate_on_close=True,
-                ) as (read_stream, write_stream, get_session_id):
+                ) as (read_stream, write_stream):
                     async with ClientSession(
                         read_stream,
                         write_stream,
@@ -1534,17 +1526,55 @@ class UpstreamMcpManager:
                             name="chatgpt-mcp-federation-gateway", version="1"
                         ),
                     ) as session:
-                        initialized = await session.initialize()
                         try:
-                            capability_admission = admit_upstream_initialize(
-                                initialized
+                            discovered = await session.discover()
+                        except MCPError as exc:
+                            if exc.code != -32601:
+                                raise UpstreamMcpError(
+                                    "MCP_PROTOCOL_MISMATCH",
+                                    "Upstream MCP discovery failed without a legacy fallback signal",
+                                    http_status=422,
+                                ) from exc
+                            initialized = await session.initialize()
+                            try:
+                                capability_admission = admit_upstream_initialize(initialized)
+                            except McpProtocolAdmissionError as admission_exc:
+                                raise UpstreamMcpError(
+                                    "MCP_PROTOCOL_MISMATCH",
+                                    str(admission_exc),
+                                    http_status=422,
+                                ) from admission_exc
+                            handshake = UpstreamProtocolHandshake(
+                                protocolVersion=capability_admission.protocol_version,
+                                capabilities=initialized.capabilities,
+                                instructions=initialized.instructions,
+                                source="remote_initialize",
                             )
-                        except McpProtocolAdmissionError as exc:
-                            raise UpstreamMcpError(
-                                "MCP_PROTOCOL_MISMATCH",
-                                str(exc),
-                                http_status=422,
-                            ) from exc
+                        else:
+                            protocol_version = session.protocol_version
+                            if not isinstance(protocol_version, str) or not protocol_version:
+                                raise UpstreamMcpError(
+                                    "MCP_PROTOCOL_MISMATCH",
+                                    "Upstream MCP discovery did not establish a protocol version",
+                                    http_status=422,
+                                )
+                            try:
+                                capability_admission = admit_upstream_discover(
+                                    discovered,
+                                    protocol_version=protocol_version,
+                                )
+                            except McpProtocolAdmissionError as admission_exc:
+                                raise UpstreamMcpError(
+                                    "MCP_PROTOCOL_MISMATCH",
+                                    str(admission_exc),
+                                    http_status=422,
+                                ) from admission_exc
+                            handshake = UpstreamProtocolHandshake(
+                                protocolVersion=capability_admission.protocol_version,
+                                capabilities=discovered.capabilities,
+                                instructions=discovered.instructions,
+                                source="remote_discover",
+                            )
                         runtime.state = "online"
                         runtime.supported_protocol_versions = [
                             capability_admission.protocol_version
@@ -1559,10 +1589,10 @@ class UpstreamMcpManager:
                             owner_subject=server.owner_subject,
                             server_id=server.id,
                             runtime_connection_id=runtime.id,
-                            source="remote_initialize",
+                            source=handshake.source,
                             protocol_version=capability_admission.protocol_version,
                             catalog_generation=server.catalog_generation,
-                            server_capabilities=initialized.capabilities.model_dump(
+                            server_capabilities=handshake.capabilities.model_dump(
                                 mode="json",
                                 by_alias=True,
                                 exclude_none=True,
@@ -1582,7 +1612,7 @@ class UpstreamMcpManager:
                                 "runtime_connection_id": runtime.id,
                                 "server_id": server.id,
                                 "state": "online",
-                                "protocol_version": initialized.protocolVersion,
+                                "protocol_version": handshake.protocolVersion,
                                 "traceparent": traceparent,
                             },
                             commit=False,
@@ -1591,7 +1621,7 @@ class UpstreamMcpManager:
                         self.telemetry.active_connections += 1
                         self.telemetry.increment("runtime_connected", outcome="online")
                         try:
-                            yield session, initialized, get_session_id()
+                            yield session, handshake, None
                         finally:
                             self.telemetry.active_connections = max(
                                 0, self.telemetry.active_connections - 1
@@ -1644,7 +1674,7 @@ class UpstreamMcpManager:
                 "Upstream MCP session closed with grouped transport errors",
                 retryable=True,
             ) from exc
-        except McpError as exc:
+        except MCPError as exc:
             runtime.state = "failed"
             runtime.disconnected_at = utcnow()
             runtime.last_seen_at = utcnow()
@@ -1846,7 +1876,7 @@ class UpstreamMcpManager:
         self,
         db: Session,
         server: McpServer,
-        initialized: types.InitializeResult,
+        initialized: UpstreamProtocolHandshake,
         *,
         commit: bool = True,
     ) -> None:
@@ -1994,12 +2024,12 @@ def _parse_datetime(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _secret_value(value: Any) -> str | None:

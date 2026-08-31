@@ -39,7 +39,7 @@ install_client() {
     'playwright>=1.55,<2' \
     'rich>=13,<15' \
     'httpx>=0.27,<1' \
-    'mcp>=1.28.1,<2'
+    'mcp>=2.1.1,<3'
 
   PLAYWRIGHT_BROWSERS_PATH="$BROWSERS_DIR" \
   PYTHONPATH="$VENDOR_DIR:$INSTALL_ROOT" \

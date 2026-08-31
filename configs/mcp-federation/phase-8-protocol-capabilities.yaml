@@ -1,18 +1,31 @@
-version: 1
+version: 2
 task: CMG-FED-810
+current_qualification_task: CMG-FED-815
 specification:
+  current_protocol_version: "2026-07-28"
   stable_protocol_version: "2025-11-25"
   accepted_protocol_versions:
     - "2024-11-05"
     - "2025-03-26"
     - "2025-06-18"
     - "2025-11-25"
+    - "2026-07-28"
   legacy_http_header_fallback: "2025-03-26"
+  modern_request_metadata_required: true
+  modern_discovery_method: server/discover
+  modern_routing_headers:
+    - MCP-Protocol-Version
+    - Mcp-Method
+    - Mcp-Name
+  extension_admission: qualified_handlers_only
+  qualified_server_extensions: []
+  apps_extension: io.modelcontextprotocol/ui
+  tasks_extension: io.modelcontextprotocol/tasks
   draft_policy: reject_without_accepted_adr_and_pinned_sdk
 sdk:
   distribution: mcp
-  requirement: "mcp>=1.28.1,<2"
-  minimum_version: "1.28.1"
+  requirement: "mcp>=2.1.1,<3"
+  minimum_version: "2.1.1"
 transports:
   streamable_http_stateful: supported
   streamable_http_stateless: supported
@@ -28,6 +41,7 @@ client_capabilities_advertised_to_upstreams:
   roots: false
   sampling: false
   elicitation: false
+  extensions: false
   tasks: false
   experimental: false
 server_capabilities:
@@ -63,15 +77,25 @@ server_capabilities:
     observed: true
     federated_end_to_end: false
     advertised_by_gateway: false
-    experimental: true
+    legacy_core_experimental: true
+    current_extension: io.modelcontextprotocol/tasks
     target_task: CMG-FED-950
+  extensions:
+    observed: true
+    federated_end_to_end: false
+    advertised_by_gateway: false
+    qualified: []
+    target_tasks: [CMG-PRG-120, CMG-FED-950]
   experimental:
     observed: true
     federated_end_to_end: false
     advertised_by_gateway: false
 utilities:
-  initialization: supported
-  protocol_version_header: supported
+  initialization: legacy_only
+  discovery: modern_server_discover
+  protocol_version_header: version_fenced
+  modern_request_metadata: required
+  routing_headers: required_for_modern
   unsupported_method: jsonrpc_method_not_found
   progress: supported
   cancellation: supported
@@ -117,3 +141,14 @@ qualification:
       nodeids:
         - services/gateway-api/tests/test_mcp_sdk_qualification.py::test_stateful_streamable_http_features
         - services/gateway-api/tests/test_mcp_sdk_qualification.py::test_stateless_streamable_http_features
+    - id: modern_discovery_and_request_fencing
+      levels: [unit, contract, compatibility]
+      nodeids:
+        - services/gateway-api/tests/test_mcp_2026_07_28_qualification.py::test_modern_request_requires_exact_protocol_and_method_headers
+        - services/gateway-api/tests/test_mcp_2026_07_28_qualification.py::test_modern_named_routing_supports_base64_sentinel_and_fails_closed
+        - services/gateway-api/tests/test_mcp_2026_07_28_qualification.py::test_public_discover_advertises_tools_only_and_current_version
+    - id: modern_extension_fail_closed
+      levels: [contract, compatibility, failure_injection]
+      nodeids:
+        - services/gateway-api/tests/test_mcp_2026_07_28_qualification.py::test_apps_and_tasks_are_observed_but_not_qualified
+        - services/gateway-api/tests/test_mcp_2026_07_28_qualification.py::test_modern_unsupported_protocol_uses_dedicated_error_code

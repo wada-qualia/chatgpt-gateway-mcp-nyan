@@ -13,10 +13,11 @@ from pathlib import Path, PurePosixPath
 from typing import Literal
 from urllib.parse import quote
 
+from mcp.server import MCPServer
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.context import Context
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl, BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -524,7 +525,7 @@ WRITE = ToolAnnotations(title="Research knowledge write", readOnlyHint=False, de
 
 def _gateway_idempotency_key(ctx: Context) -> str:
     meta = ctx.request_context.meta
-    data = meta.model_dump(mode="python") if meta is not None else {}
+    data = dict(meta) if isinstance(meta, dict) else (meta.model_dump(mode="python") if meta is not None else {})
     gateway = data.get("gateway") if isinstance(data, dict) else None
     value = gateway.get("idempotency_key") if isinstance(gateway, dict) else None
     if not isinstance(value, str) or not value or len(value) > 240:
@@ -532,19 +533,14 @@ def _gateway_idempotency_key(ctx: Context) -> str:
     return value
 
 
-def build_mcp(settings: ObsidianProviderSettings | None = None, *, store: ObsidianVaultStore | None = None) -> FastMCP:
+def build_mcp(settings: ObsidianProviderSettings | None = None, *, store: ObsidianVaultStore | None = None) -> MCPServer:
     resolved = settings or ObsidianProviderSettings()
     resolved.validate_runtime()
     active = store or ObsidianVaultStore(resolved)
     bearer = resolved.resolved_internal_bearer_token()
-    mcp = FastMCP(
+    mcp = MCPServer(
         name="obsidian-research-knowledge-provider",
         instructions="Provider-neutral research note facade backed by a confined Obsidian vault.",
-        host=resolved.host,
-        port=resolved.port,
-        streamable_http_path="/mcp",
-        stateless_http=True,
-        json_response=True,
         auth=AuthSettings(
             issuer_url=resolved.auth_issuer_url,
             resource_server_url=resolved.auth_resource_url,
@@ -817,7 +813,14 @@ def build_mcp(settings: ObsidianProviderSettings | None = None, *, store: Obsidi
 def main() -> None:
     settings = ObsidianProviderSettings()
     mcp = build_mcp(settings)
-    mcp.run(transport="streamable-http")
+    mcp.run(
+        transport="streamable-http",
+        host=settings.host,
+        port=settings.port,
+        streamable_http_path="/mcp",
+        stateless_http=True,
+        json_response=True,
+    )
 
 
 if __name__ == "__main__":

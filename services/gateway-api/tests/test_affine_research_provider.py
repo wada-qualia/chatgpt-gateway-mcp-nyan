@@ -424,8 +424,8 @@ async def _provider_session(url: str) -> AsyncIterator[ClientSession]:
             headers={"Authorization": "Bearer gateway-provider-secret"}
         ) as http_client,
         streamable_http_client(
-            url, http_client=http_client, terminate_on_close=False
-        ) as (read_stream, write_stream, _),
+            url, http_client=http_client, terminate_on_close=True
+        ) as (read_stream, write_stream),
         ClientSession(read_stream, write_stream) as session,
     ):
         await session.initialize()
@@ -480,20 +480,20 @@ async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contra
                 "research_v1_note_add_source",
                 "research_v1_note_update_title",
             }
-            assert tools["research_v1_note_read"].annotations.readOnlyHint is True
-            assert tools["research_v1_document_read"].annotations.readOnlyHint is True
+            assert tools["research_v1_note_read"].annotations.read_only_hint is True
+            assert tools["research_v1_document_read"].annotations.read_only_hint is True
             assert (
-                tools["research_v1_note_update_content"].annotations.readOnlyHint
+                tools["research_v1_note_update_content"].annotations.read_only_hint
                 is False
             )
-            update_schema = tools["research_v1_note_update_content"].inputSchema
+            update_schema = tools["research_v1_note_update_content"].input_schema
             assert set(update_schema["required"]) == {
                 "note_id",
                 "content",
                 "expected_content_hash",
             }
             assert "idempotency_key" not in update_schema.get("properties", {})
-            document_create_schema = tools["research_v1_document_create"].inputSchema
+            document_create_schema = tools["research_v1_document_create"].input_schema
             assert set(document_create_schema["required"]) == {
                 "workspace_id",
                 "title",
@@ -501,7 +501,7 @@ async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contra
             }
             document_update_schema = tools[
                 "research_v1_document_update_content"
-            ].inputSchema
+            ].input_schema
             assert set(document_update_schema["required"]) == {
                 "workspace_id",
                 "document_id",
@@ -510,51 +510,51 @@ async def _test_provider_requires_internal_bearer_and_exposes_stable_tool_contra
             }
             document_title_schema = tools[
                 "research_v1_document_update_title"
-            ].inputSchema
+            ].input_schema
             assert set(document_title_schema["required"]) == {
                 "workspace_id",
                 "document_id",
                 "title",
                 "expected_title",
             }
-            lifecycle_schema = tools["research_v1_document_trash"].inputSchema
+            lifecycle_schema = tools["research_v1_document_trash"].input_schema
             assert set(lifecycle_schema["required"]) == {
                 "workspace_id",
                 "document_id",
                 "expected_trash",
             }
-            purge_schema = tools["research_v1_document_purge"].inputSchema
+            purge_schema = tools["research_v1_document_purge"].input_schema
             assert set(purge_schema["required"]) == {
                 "workspace_id",
                 "document_id",
                 "expected_trash",
             }
             assert (
-                tools["research_v1_document_trash"].annotations.destructiveHint is False
+                tools["research_v1_document_trash"].annotations.destructive_hint is False
             )
             assert (
-                tools["research_v1_document_restore"].annotations.destructiveHint
+                tools["research_v1_document_restore"].annotations.destructive_hint
                 is False
             )
             assert (
-                tools["research_v1_document_purge"].annotations.destructiveHint is True
+                tools["research_v1_document_purge"].annotations.destructive_hint is True
             )
             capabilities = await session.call_tool(
                 "research_v1_provider_capabilities", {}
             )
-            assert capabilities.isError is False
+            assert capabilities.is_error is False
             assert (
-                capabilities.structuredContent["contract_version"]
+                capabilities.structured_content["contract_version"]
                 == "research-knowledge/v1"
             )
-            assert capabilities.structuredContent["access_mode"] == "read_only"
+            assert capabilities.structured_content["access_mode"] == "read_only"
             assert {
                 "space_list",
                 "document_list",
                 "document_read",
                 "document_metadata",
                 "document_search",
-            } <= set(capabilities.structuredContent["operations"])
+            } <= set(capabilities.structured_content["operations"])
 
 
 async def _test_provider_read_tools_use_affine_sdk_boundary() -> None:
@@ -563,14 +563,14 @@ async def _test_provider_read_tools_use_affine_sdk_boundary() -> None:
             read = await session.call_tool(
                 "research_v1_note_read", {"note_id": "note-1"}
             )
-            assert read.isError is False
-            assert read.structuredContent["note_id"] == "note-1"
-            assert read.structuredContent["content_hash"] == "a" * 64
+            assert read.is_error is False
+            assert read.structured_content["note_id"] == "note-1"
+            assert read.structured_content["content_hash"] == "a" * 64
             search = await session.call_tool(
                 "research_v1_note_search", {"query": "graph", "mode": "semantic"}
             )
-            assert search.isError is False
-            assert search.structuredContent["matches"][0]["note_id"] == "note-1"
+            assert search.is_error is False
+            assert search.structured_content["matches"][0]["note_id"] == "note-1"
         assert fake.calls == [
             ("read", {"note_id": "note-1", "workspace_id": "workspace-1"}),
             (
@@ -588,9 +588,9 @@ async def _test_provider_global_document_tools_use_affine_sdk_boundary() -> None
     async with _running_provider(access_mode="read_only") as (url, fake):
         async with _provider_session(url) as session:
             spaces = await session.call_tool("research_v1_space_list", {"limit": 10})
-            assert spaces.isError is False
-            assert spaces.structuredContent["visibility_mode"] == "all_documents"
-            assert spaces.structuredContent["spaces"][1]["space_ref"] == (
+            assert spaces.is_error is False
+            assert spaces.structured_content["visibility_mode"] == "all_documents"
+            assert spaces.structured_content["spaces"][1]["space_ref"] == (
                 "rk://affine/workspace-2"
             )
 
@@ -598,8 +598,8 @@ async def _test_provider_global_document_tools_use_affine_sdk_boundary() -> None
                 "research_v1_document_list",
                 {"workspace_id": "workspace-2", "limit": 25},
             )
-            assert documents.isError is False
-            assert documents.structuredContent["documents"][0]["document_ref"] == (
+            assert documents.is_error is False
+            assert documents.structured_content["documents"][0]["document_ref"] == (
                 "rk://affine/workspace-2/ordinary-1"
             )
 
@@ -607,33 +607,33 @@ async def _test_provider_global_document_tools_use_affine_sdk_boundary() -> None
                 "research_v1_document_read",
                 {"workspace_id": "workspace-2", "document_id": "ordinary-1"},
             )
-            assert read.isError is False
-            assert read.structuredContent["workspace_id"] == "workspace-2"
+            assert read.is_error is False
+            assert read.structured_content["workspace_id"] == "workspace-2"
             assert (
-                read.structuredContent["content"] == "ordinary cross-workspace content"
+                read.structured_content["content"] == "ordinary cross-workspace content"
             )
-            assert read.structuredContent["content_hash"] == "9" * 64
+            assert read.structured_content["content_hash"] == "9" * 64
 
             metadata = await session.call_tool(
                 "research_v1_document_metadata",
                 {"workspace_id": "workspace-2", "document_id": "ordinary-1"},
             )
-            assert metadata.isError is False
-            assert metadata.structuredContent["tags"] == []
-            assert metadata.structuredContent["tags_hash"] == "8" * 64
-            assert metadata.structuredContent["trash"] is False
-            assert metadata.structuredContent["trash_date"] is None
+            assert metadata.is_error is False
+            assert metadata.structured_content["tags"] == []
+            assert metadata.structured_content["tags_hash"] == "8" * 64
+            assert metadata.structured_content["trash"] is False
+            assert metadata.structured_content["trash_date"] is None
 
             search = await session.call_tool(
                 "research_v1_document_search",
                 {"query": "ordinary", "mode": "keyword"},
             )
-            assert search.isError is False
-            assert search.structuredContent["visibility_mode"] == "all_documents"
-            assert search.structuredContent["matches"][0]["workspace_id"] == (
+            assert search.is_error is False
+            assert search.structured_content["visibility_mode"] == "all_documents"
+            assert search.structured_content["matches"][0]["workspace_id"] == (
                 "workspace-2"
             )
-            assert search.structuredContent["matches"][0]["document_id"] == (
+            assert search.structured_content["matches"][0]["document_id"] == (
                 "ordinary-1"
             )
 
@@ -683,7 +683,7 @@ async def _test_provider_write_is_fail_closed_in_read_only_mode() -> None:
                 meta={"gateway": {"idempotency_key": "mcp-action:blocked-document"}},
             )
         for result in (legacy, document):
-            assert result.isError is True
+            assert result.is_error is True
             assert "AFFINE_PROVIDER_READ_ONLY" in result.content[0].text
         assert fake.calls == []
 
@@ -696,7 +696,7 @@ async def _test_provider_write_requires_and_forwards_gateway_bound_idempotency()
             missing = await session.call_tool(
                 "research_v1_note_create", {"title": "Missing", "content": "metadata"}
             )
-            assert missing.isError is True
+            assert missing.is_error is True
             assert "GATEWAY_IDEMPOTENCY_REQUIRED" in missing.content[0].text
             created = await session.call_tool(
                 "research_v1_note_create",
@@ -708,8 +708,8 @@ async def _test_provider_write_requires_and_forwards_gateway_bound_idempotency()
                     }
                 },
             )
-            assert created.isError is False
-            assert created.structuredContent["note_id"] == "note-created"
+            assert created.is_error is False
+            assert created.structured_content["note_id"] == "note-created"
         create_calls = [payload for name, payload in fake.calls if name == "create"]
         assert len(create_calls) == 1
         assert create_calls[0]["idempotency_key"] == "mcp-action:preparation-123"
@@ -733,7 +733,7 @@ async def _test_provider_preserves_authoritative_content_conflict_as_tool_error(
                 },
                 meta={"gateway": {"idempotency_key": "mcp-action:stale"}},
             )
-        assert result.isError is True
+        assert result.is_error is True
         error_text = result.content[0].text
         assert "DOCUMENT_CONTENT_CONFLICT" in error_text
         assert expected in error_text
@@ -761,7 +761,7 @@ async def _test_provider_preserves_authoritative_title_conflict_as_tool_error() 
                 },
                 meta={"gateway": {"idempotency_key": "mcp-action:stale-title"}},
             )
-        assert result.isError is True
+        assert result.is_error is True
         error_text = result.content[0].text
         assert "DOCUMENT_TITLE_CONFLICT" in error_text
         assert expected in error_text
@@ -819,14 +819,14 @@ async def _test_provider_expanded_write_tools_use_affine_sdk_boundary() -> None:
                 meta={"gateway": {"idempotency_key": "mcp-action:source"}},
             )
 
-        assert metadata.isError is False
-        assert metadata.structuredContent["tags"] == ["research", "graph"]
-        assert appended.isError is False
-        assert appended.structuredContent["content_hash"] == "e" * 64
-        assert tagged.isError is False
-        assert tagged.structuredContent["tags_hash"] == "f" * 64
-        assert linked.isError is False
-        assert sourced.isError is False
+        assert metadata.is_error is False
+        assert metadata.structured_content["tags"] == ["research", "graph"]
+        assert appended.is_error is False
+        assert appended.structured_content["content_hash"] == "e" * 64
+        assert tagged.is_error is False
+        assert tagged.structured_content["tags_hash"] == "f" * 64
+        assert linked.is_error is False
+        assert sourced.is_error is False
 
         calls = fake.calls
         assert any(
@@ -975,17 +975,17 @@ async def _test_provider_global_write_tools_use_explicit_workspace_boundary() ->
             restored,
             purged,
         ):
-            assert result.isError is False
-            assert result.structuredContent["workspace_id"] == "workspace-2"
-        assert created.structuredContent["document_id"] == "note-created"
-        assert trashed.structuredContent["trash"] is True
-        assert trashed.structuredContent["trash_date"] == 123
-        assert restored.structuredContent["trash"] is False
-        assert purged.structuredContent["purged"] is True
+            assert result.is_error is False
+            assert result.structured_content["workspace_id"] == "workspace-2"
+        assert created.structured_content["document_id"] == "note-created"
+        assert trashed.structured_content["trash"] is True
+        assert trashed.structured_content["trash_date"] == 123
+        assert restored.structured_content["trash"] is False
+        assert purged.structured_content["purged"] is True
         assert {"trash", "restore", "purge"} <= set(
-            capabilities.structuredContent["operations"]
+            capabilities.structured_content["operations"]
         )
-        assert blank.isError is True
+        assert blank.is_error is True
         assert "workspace_id must not be empty" in blank.content[0].text
 
         write_calls = [
@@ -1031,16 +1031,22 @@ async def _test_upstream_protocol_call_forwards_non_secret_gateway_meta() -> Non
     captured: dict[str, Any] = {}
 
     class FakeSession:
-        _request_id = 7
-
         async def call_tool(
             self,
             name: str,
             arguments: dict[str, Any],
+            read_timeout_seconds: float | None = None,
             *,
             meta: dict[str, Any] | None = None,
         ) -> types.CallToolResult:
-            captured.update({"name": name, "arguments": arguments, "meta": meta})
+            captured.update(
+                {
+                    "name": name,
+                    "arguments": arguments,
+                    "read_timeout_seconds": read_timeout_seconds,
+                    "meta": meta,
+                }
+            )
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text="ok")], isError=False
             )
@@ -1064,10 +1070,11 @@ async def _test_upstream_protocol_call_forwards_non_secret_gateway_meta() -> Non
         1.0,
         meta=meta,
     )
-    assert result.isError is False
+    assert result.is_error is False
     assert captured == {
         "name": "research_v1_note_create",
         "arguments": {"title": "A", "content": "B"},
+        "read_timeout_seconds": 1.0,
         "meta": meta,
     }
 

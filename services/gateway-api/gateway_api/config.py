@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     gateway_session_cookie: str = "gateway_session"
     gateway_dev_auth: bool = True
     gateway_dev_subject: str = "dev:local"
-    gateway_dev_username: str = "darius"
+    gateway_dev_username: str = "local"
     gateway_dev_email: str | None = "local@example.invalid"
     gateway_dev_roles: str = "gateway-admin,gateway-user,gateway-auditor"
     gateway_access_token_ttl_seconds: int = 864000
@@ -191,7 +191,7 @@ class Settings(BaseSettings):
     )
     gateway_ssh_command_profile_default: (
         Literal["restricted", "filtered", "unrestricted"] | None
-    ) = None
+    ) = "restricted"
     gateway_ssh_allow_raw_command: bool | None = None
     gateway_ssh_raw_command_max_chars: int = 8000
     gateway_agent_allow_unverified_git_context: bool = False

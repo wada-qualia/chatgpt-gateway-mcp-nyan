@@ -3,9 +3,11 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "chatgpt-mcp-ssh-gateway"
+name = "chatgpt-gateway-mcp-nyan"
 version = "0.13.9"
-description = "Perpetus Galaxy FastAPI gateway for ChatGPT MCP SSH and Docker workspaces."
+description = "Agent infrastructure control plane for MCP, remote execution, chat isolation, approvals and auditability."
+readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.12,<3.15"
 dependencies = [
   "fastapi>=0.115,<1",
@@ -35,26 +37,10 @@ dev = [
   "ruff>=0.6,<1"
 ]
 
-[project.scripts]
-gateway-cli = "gateway_cli.__main__:main"
+[project.urls]
+Homepage = "https://github.com/wada-qualia/chatgpt-gateway-mcp-nyan"
+Repository = "https://github.com/wada-qualia/chatgpt-gateway-mcp-nyan"
+Issues = "https://github.com/wada-qualia/chatgpt-gateway-mcp-nyan/issues"
 
 [tool.setuptools.packages.find]
-where = ["services/gateway-api", "cli"]
-
-[tool.klab.lup-sdk]
-package = "klab-llm-usage"
-version = "0.1.0b2"
-artifact = "vendor/llm-usage-sdk/klab_llm_usage-0.1.0b2-py3-none-any.whl"
-sha256 = "eb5323f26fb5a2f0dcb5d1a0999c5bb7ef0acf83dd51cb9a7fcae77b42874e85"
-source-commit = "52ab367a68b09db2730c14b626ce019f8a203a4d"
-publication-channel = "jenkins-internal-artifact"
-public-index-allowed = false
-
-[tool.klab.affine-sdk]
-package = "affine-py-sdk"
-version = "0.6.0"
-artifact = "vendor/affine-sdk/affine_py_sdk-0.6.0-py3-none-any.whl"
-sha256 = "2ff8951f9abe0dfb159ae8e428d127dd6de4e12413dec445548d3e5a054b4f3f"
-source-commit = "ca5090fa5a6583f0386b3ddd2fa15f4be5784043"
-publication-channel = "gateway-qualified-vendor"
-public-index-allowed = false
+where = ["services/gateway-api"]

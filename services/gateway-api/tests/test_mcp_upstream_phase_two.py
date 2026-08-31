@@ -3,20 +3,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import socket
+from collections.abc import AsyncIterator
 from urllib.parse import parse_qs, urlparse
-from typing import AsyncIterator
 
 import httpx
 import pytest
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from httpx import ASGITransport
-from mcp.server.fastmcp import FastMCP
-from pydantic import SecretStr
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
-
 from gateway_api.auth import get_current_user
 from gateway_api.config import get_settings
 from gateway_api.database import get_db
@@ -45,6 +38,12 @@ from gateway_api.models import (
 )
 from gateway_api.routers.mcp_federation import router as federation_router
 from gateway_api.routers.mcp_upstream import router as upstream_router
+from httpx import ASGITransport
+from mcp.server import MCPServer
+from pydantic import SecretStr
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 
 def _free_port() -> int:
@@ -55,12 +54,8 @@ def _free_port() -> int:
 
 @contextlib.asynccontextmanager
 async def _running_server() -> AsyncIterator[str]:
-    server = FastMCP(
+    server = MCPServer(
         name="phase-two-upstream",
-        host="127.0.0.1",
-        stateless_http=True,
-        json_response=True,
-        streamable_http_path="/mcp",
         log_level="WARNING",
     )
 
@@ -80,7 +75,12 @@ async def _running_server() -> AsyncIterator[str]:
     port = _free_port()
     runner = uvicorn.Server(
         uvicorn.Config(
-            server.streamable_http_app(),
+            server.streamable_http_app(
+                streamable_http_path="/mcp",
+                stateless_http=True,
+                json_response=True,
+                host="127.0.0.1",
+            ),
             host="127.0.0.1",
             port=port,
             lifespan="on",

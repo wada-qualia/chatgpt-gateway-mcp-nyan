@@ -8,10 +8,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, Protocol, Self
 
+from mcp.server import MCPServer
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.context import Context
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl, BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -385,7 +386,7 @@ class AffineResearchService:
     @staticmethod
     def gateway_idempotency_key(ctx: Context) -> str:
         meta = ctx.request_context.meta
-        data = meta.model_dump(mode="python") if meta is not None else {}
+        data = dict(meta) if isinstance(meta, dict) else (meta.model_dump(mode="python") if meta is not None else {})
         gateway = data.get("gateway") if isinstance(data, dict) else None
         value = gateway.get("idempotency_key") if isinstance(gateway, dict) else None
         if not isinstance(value, str) or not value or len(value) > 240:
@@ -460,22 +461,17 @@ def build_mcp(
     settings: AffineProviderSettings | None = None,
     *,
     service: AffineResearchService | None = None,
-) -> FastMCP:
+) -> MCPServer:
     resolved = settings or AffineProviderSettings()
     resolved.validate_runtime()
     active_service = service or AffineResearchService(resolved)
     internal_bearer_token = resolved.resolved_internal_bearer_token()
-    mcp = FastMCP(
+    mcp = MCPServer(
         name="affine-research-knowledge-provider",
         instructions=(
             "Provider-neutral research document facade backed by AFFiNE. "
             "Writes use explicit workspace targets, authoritative AFFiNE CAS and Gateway-bound idempotency."
         ),
-        host=resolved.host,
-        port=resolved.port,
-        streamable_http_path="/mcp",
-        stateless_http=True,
-        json_response=True,
         auth=AuthSettings(
             issuer_url=resolved.auth_issuer_url,
             resource_server_url=resolved.auth_resource_url,
@@ -1310,7 +1306,14 @@ def build_mcp(
 def main() -> None:
     settings = AffineProviderSettings()
     mcp = build_mcp(settings)
-    mcp.run(transport="streamable-http")
+    mcp.run(
+        transport="streamable-http",
+        host=settings.host,
+        port=settings.port,
+        streamable_http_path="/mcp",
+        stateless_http=True,
+        json_response=True,
+    )
 
 
 if __name__ == "__main__":

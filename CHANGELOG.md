@@ -7,6 +7,44 @@ qualification, deployment and rollback evidence remains under `docs/releases/`.
 
 No unreleased changes are recorded at this time.
 
+## [0.13.9] - 2026-08-31
+
+### Added
+
+- Qualified the current stable MCP `2026-07-28` protocol alongside the accepted
+  `2025-11-25` compatibility profile, including `server/discover`, request
+  metadata and `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` routing
+  semantics.
+- Added explicit modern-protocol admission errors and discovery cache semantics,
+  while observing Apps and Tasks extensions fail-closed until end-to-end handlers
+  are separately qualified.
+
+### Changed
+
+- Upgraded the supported Python MCP SDK line to `mcp>=2.1.1,<3` and migrated the
+  Gateway, AFFiNE/Obsidian providers, public thin client and readonly pilot servers
+  to SDK-v2 APIs.
+- Upstream and local MCP clients now negotiate with `discover()` first and fall
+  back to legacy `initialize()` only when discovery returns method-not-found
+  (`-32601`).
+- Bounded tool-call timeout/cancellation uses the public SDK-v2 deadline path;
+  stateful Streamable HTTP qualification closes sessions explicitly to avoid
+  order-dependent SSE teardown races.
+
+### Compatibility
+
+- `2025-11-25` remains an explicitly supported and preferred compatibility
+  profile; 0.13.9 does not globally flip all clients to the modern protocol.
+- Apps and Tasks are not advertised by the Gateway in this release.
+- No database migration is introduced.
+
+### Operations
+
+- The release integrates accepted CMG-FED-815 evidence onto the current 0.13.8
+  protected lineage before normal exact-SHA GitLab and Jenkins blue-green gates.
+
+Detailed release notes: `docs/releases/0.13.9/README.md`.
+
 ## [0.13.8] - 2026-08-31
 
 ### Added

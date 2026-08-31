@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
-mcp = FastMCP(
+mcp = MCPServer(
     "gateway-phase7-local-pilot",
     instructions="Read-only deterministic MCP fixture for controlled federation qualification.",
 )

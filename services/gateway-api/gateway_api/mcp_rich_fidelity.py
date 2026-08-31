@@ -14,15 +14,15 @@ from .mcp_federation_policy import canonical_json, sha256_json
 
 _SECRET_KEY = re.compile(
     r"(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|password|credential|authorization|cookie|private[_-]?key|api[_-]?key)",
-    re.I,
+    re.IGNORECASE,
 )
 _ROLE_TAG = re.compile(
     r"</?(?:system|developer|assistant|user|tool)(?:\s[^<>]{0,500})?>",
-    re.I,
+    re.IGNORECASE,
 )
 _INJECTION_PHRASE = re.compile(
     r"\b(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer)\s+instructions?\b",
-    re.I,
+    re.IGNORECASE,
 )
 _SIZE = re.compile(r"^(?:any|[1-9][0-9]{0,4}x[1-9][0-9]{0,4})$")
 _ALLOWED_MEDIA = {
@@ -317,8 +317,8 @@ def sdk_tool_descriptor(tool: Any) -> dict[str, Any]:
         else {}
     )
     return {
-        "input": dict(tool.inputSchema or {}),
-        "output": dict(tool.outputSchema) if tool.outputSchema else None,
+        "input": dict(tool.input_schema or {}),
+        "output": dict(tool.output_schema) if tool.output_schema else None,
         "title": getattr(tool, "title", None),
         "description": tool.description or "",
         "annotations": annotations,

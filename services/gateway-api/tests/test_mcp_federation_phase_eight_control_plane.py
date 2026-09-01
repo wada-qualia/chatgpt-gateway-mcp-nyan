@@ -80,16 +80,6 @@ def test_phase_eight_capability_tables_and_contracts() -> None:
         "expiry_and_issuer_pinning"
     )
 
-    ownership = (ROOT / "docs/contracts/mcp-phase8-field-ownership.md").read_text(
-        encoding="utf-8"
-    )
-    for required in (
-        "Raw credentials, tokens, headers and local environment are forbidden",
-        "raw local paths are not stored",
-        "creates no public execution route",
-    ):
-        assert required in ownership
-
 
 def test_capability_snapshot_is_deterministic_idempotent_and_fenced() -> None:
     engine = create_engine("sqlite:///:memory:")

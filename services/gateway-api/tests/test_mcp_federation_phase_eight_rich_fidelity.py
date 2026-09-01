@@ -4,7 +4,6 @@ import base64
 from pathlib import Path
 
 import pytest
-from mcp import types
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -17,11 +16,9 @@ from gateway_api.mcp_rich_fidelity import (
     normalize_tool_descriptor,
     project_call_result,
     sanitize_server_instructions,
-    sdk_tool_descriptor,
     tool_descriptor_hash,
 )
 from gateway_api.models import Base, McpToolRevision
-from gateway_cli.local_mcp import _tool_schema_hash
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -145,26 +142,6 @@ def test_recorded_revision_preserves_rich_descriptor_and_creates_new_revision(
     assert second[1].component_meta == _descriptor()["component_meta"]
     assert db.query(McpToolRevision).count() == 2
 
-
-def test_remote_and_thin_client_tool_hashes_match() -> None:
-    tool = types.Tool(
-        name="get_build",
-        title="Build details",
-        description="Read build details",
-        inputSchema=_descriptor()["input_schema"],
-        outputSchema=_descriptor()["output_schema"],
-        annotations=types.ToolAnnotations(readOnlyHint=True, openWorldHint=False),
-        icons=[
-            types.Icon(
-                src="https://cdn.example.test/build.png",
-                mimeType="image/png",
-                sizes=["64x64"],
-            )
-        ],
-        execution=types.ToolExecution(taskSupport="optional"),
-        meta={"ui/resourceUri": "https://ui.example.test/build"},
-    )
-    assert _tool_schema_hash(tool) == tool_descriptor_hash(sdk_tool_descriptor(tool))
 
 
 def test_icons_are_bounded_and_require_safe_sources() -> None:

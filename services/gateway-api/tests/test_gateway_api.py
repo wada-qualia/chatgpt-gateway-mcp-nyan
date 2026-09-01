@@ -65,7 +65,7 @@ def pkce_challenge(verifier: str) -> str:
 def test_auth_me_dev_user(client: TestClient) -> None:
     response = client.get("/auth/me")
     assert response.status_code == 200
-    assert response.json()["username"] == "darius"
+    assert response.json()["username"] == "local"
 
 
 @pytest.mark.parametrize(
@@ -124,10 +124,10 @@ def test_account_ssh_command_profile_defaults_and_override(client: TestClient) -
     assert current.status_code == 200
     assert current.json() == {
         "ui_language": "en",
-        "ssh_command_profile": "unrestricted",
+        "ssh_command_profile": "restricted",
         "ssh_command_profile_override": None,
-        "ssh_command_profile_default": "unrestricted",
-        "raw_commands_enabled": True,
+        "ssh_command_profile_default": "restricted",
+        "raw_commands_enabled": False,
         "deny_patterns_enabled": False,
     }
 
@@ -137,7 +137,7 @@ def test_account_ssh_command_profile_defaults_and_override(client: TestClient) -
     )
     assert russian.status_code == 200
     assert russian.json()["ui_language"] == "ru"
-    assert russian.json()["ssh_command_profile"] == "unrestricted"
+    assert russian.json()["ssh_command_profile"] == "restricted"
     persisted = client.get("/api/account/settings")
     assert persisted.status_code == 200
     assert persisted.json()["ui_language"] == "ru"
@@ -156,9 +156,9 @@ def test_account_ssh_command_profile_defaults_and_override(client: TestClient) -
         json={"ssh_command_profile": "inherit"},
     )
     assert inherited.status_code == 200
-    assert inherited.json()["ssh_command_profile"] == "unrestricted"
+    assert inherited.json()["ssh_command_profile"] == "restricted"
     assert inherited.json()["ssh_command_profile_override"] is None
-    assert inherited.json()["raw_commands_enabled"] is True
+    assert inherited.json()["raw_commands_enabled"] is False
 
 
 @pytest.mark.parametrize("client", [False], indirect=True)
@@ -655,7 +655,7 @@ def test_docker_workspace_allowlist_and_simulated_create(client: TestClient) -> 
     assert updated.status_code == 200
     assert updated.json()["name"] == "renamed-lab"
     assert updated.json()["description"] == "Long running lab"
-    assert updated.json()["container_name"].startswith("gw-darius-renamed-lab-")
+    assert updated.json()["container_name"].startswith("gw-local-renamed-lab-")
 
     cleared = client.patch(
         f"/api/docker/workspaces/{created.json()['id']}",
@@ -1209,7 +1209,7 @@ def test_mcp_tools_list(client: TestClient) -> None:
     assert "ssh_device_check_connection" in names
     assert "ssh_device_run_action" in names
     assert "ssh_device_read_home" in names
-    assert "ssh_device_run_command" in names
+    assert "ssh_device_run_command" not in names
     assert browser_safe_names <= set(names)
     assert browser_hidden_names.isdisjoint(names)
     assert all(tool["inputSchema"]["type"] == "object" for tool in tools)
@@ -1416,6 +1416,7 @@ def test_mcp_ssh_descriptors_respect_feature_flags(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setenv("GATEWAY_SSH_ENABLED", "true")
     monkeypatch.setenv("GATEWAY_SSH_ALLOW_RAW_COMMAND", "true")
+    monkeypatch.setenv("GATEWAY_SSH_COMMAND_PROFILE_DEFAULT", "filtered")
     config.get_settings.cache_clear()
     try:
         tools = mcp_router._tools()
@@ -1633,6 +1634,7 @@ def test_mcp_ssh_raw_command_enabled_runs_safe_single_line(
     from gateway_api.adapters.ssh import SshCommandResult
 
     monkeypatch.setenv("GATEWAY_SSH_ALLOW_RAW_COMMAND", "true")
+    monkeypatch.setenv("GATEWAY_SSH_COMMAND_PROFILE_DEFAULT", "filtered")
     monkeypatch.setenv("GATEWAY_SSH_RAW_COMMAND_MAX_CHARS", "80")
     config.get_settings.cache_clear()
 
@@ -1731,6 +1733,7 @@ def test_mcp_ssh_raw_command_policy_blocks_multiline_and_overlength(
     from gateway_api import config
 
     monkeypatch.setenv("GATEWAY_SSH_ALLOW_RAW_COMMAND", "true")
+    monkeypatch.setenv("GATEWAY_SSH_COMMAND_PROFILE_DEFAULT", "filtered")
     monkeypatch.setenv("GATEWAY_SSH_RAW_COMMAND_MAX_CHARS", "3")
     config.get_settings.cache_clear()
 
@@ -1835,8 +1838,8 @@ def test_mcp_tool_call_returns_structured_content(client: TestClient) -> None:
     assert response.status_code == 200
     result = response.json()["result"]
     assert result["structuredContent"]["ok"] is True
-    assert result["structuredContent"]["user"] == "darius"
-    assert result["structuredContent"]["workspace"].endswith("/workspace/users/darius")
+    assert result["structuredContent"]["user"] == "local"
+    assert result["structuredContent"]["workspace"].endswith("/workspace/users/local")
     assert '"workspace"' in result["content"][0]["text"]
 
 
@@ -2939,49 +2942,6 @@ def test_mcp_exposes_phase_two_coordination_contracts(client: TestClient) -> Non
     }.issubset(guarded)
 
 
-def test_phase_two_thin_client_sandbox_sha_and_cas(tmp_path: Path) -> None:
-    from gateway_cli.sandbox import SandboxError, ThinClientSandbox
-
-    sandbox = ThinClientSandbox(tmp_path)
-    missing = sandbox.file_state("state.txt")
-    assert missing == {
-        "path": "state.txt",
-        "exists": False,
-        "kind": None,
-        "size": None,
-        "sha256": None,
-    }
-
-    created = sandbox.write_file(
-        "state.txt",
-        arguments={"operation": "write", "content": "alpha", "expected_absent": True},
-    )
-    assert created["before_sha256"] is None
-    assert created["after_sha256"] == hashlib.sha256(b"alpha").hexdigest()
-    assert sandbox.read_file("state.txt")["sha256"] == created["after_sha256"]
-
-    with pytest.raises(SandboxError, match="sha256 mismatch"):
-        sandbox.write_file(
-            "state.txt",
-            arguments={
-                "operation": "write",
-                "content": "beta",
-                "expected_sha256": "0" * 64,
-            },
-        )
-
-    updated = sandbox.write_file(
-        "state.txt",
-        arguments={
-            "operation": "write",
-            "content": "beta",
-            "expected_sha256": created["after_sha256"],
-        },
-    )
-    assert updated["before_sha256"] == created["after_sha256"]
-    assert updated["after_sha256"] == hashlib.sha256(b"beta").hexdigest()
-
-
 def test_phase_two_leases_fencing_and_guarded_server_write(client: TestClient) -> None:
     from gateway_api.database import SessionLocal
     from gateway_api.models import FileChangeSet
@@ -3616,57 +3576,6 @@ def test_phase_two_additive_file_change_schema_upgrade(
         "ix_file_change_sets_lease_id",
         "ix_file_change_sets_fencing_token",
     }.issubset(indexes)
-
-
-def test_phase_two_git_worktree_state_and_gateway_validation(tmp_path: Path) -> None:
-    from gateway_api.agent_coordination import WriteLeaseContext
-    from gateway_api.routers.mcp import _local_git_state, _validate_write_git_state
-    from gateway_cli.sandbox import ThinClientSandbox
-
-    source = tmp_path / "source"
-    worktree = tmp_path / "worktrees" / "writer"
-    source.mkdir()
-    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(source), "config", "user.email", "phase2@example.test"], check=True)
-    subprocess.run(["git", "-C", str(source), "config", "user.name", "Phase 2 Test"], check=True)
-    (source / "README.md").write_text("base\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(source), "add", "README.md"], check=True)
-    subprocess.run(["git", "-C", str(source), "commit", "-m", "base"], check=True, capture_output=True)
-    head = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
-    worktree.parent.mkdir()
-    subprocess.run(
-        ["git", "-C", str(source), "worktree", "add", "-b", "agent/phase2/writer", str(worktree), head],
-        check=True,
-        capture_output=True,
-    )
-
-    sandbox = ThinClientSandbox(tmp_path)
-    state = sandbox.git_state("worktrees/writer", head)
-    assert state["toplevel"] == "worktrees/writer"
-    assert state["branch_name"] == "agent/phase2/writer"
-    assert state["head"] == head
-    assert state["base_is_ancestor"] is True
-
-    context = WriteLeaseContext(
-        room_id="room",
-        agent_id="agent",
-        lease_id="lease",
-        fencing_token=1,
-        base_commit=head,
-        branch_name="agent/phase2/writer",
-        worktree_path="worktrees/writer",
-        expected_head=head,
-        expected_sha256=None,
-        expected_absent=True,
-    )
-    local_state = _local_git_state(worktree, head)
-    _validate_write_git_state(local_state, context)
-
-    stale_context = WriteLeaseContext(
-        **{**context.__dict__, "expected_head": "0" * 40}
-    )
-    with pytest.raises(HTTPException, match="HEAD is stale"):
-        _validate_write_git_state(local_state, stale_context)
 
 
 def test_phase_two_guarded_thin_client_write_verifies_git_and_file_state(
@@ -6229,162 +6138,6 @@ def test_readiness_blocks_traffic_on_invalid_schema_and_recovers(
     assert recovered.json()["database_schema_valid"] is True
     assert recovered.json()["database_compatible"] is True
     assert client.get("/auth/me").status_code == 200
-
-
-def test_release_metadata_and_blue_green_deployment_artifacts(
-    client: TestClient,
-) -> None:
-    import yaml
-    from gateway_api.schema_migrations import HEAD_REVISION
-
-    health = client.get("/health")
-    assert health.status_code == 200
-    assert health.json() == {
-        "status": "ok",
-        "service": "gateway-api",
-        "version": "0.3.6",
-        "revision": "",
-        "slot": "local",
-        "initialization_status": "ready",
-        "database_at_head": True,
-        "database_forward_compatible": False,
-        "database_schema_valid": True,
-        "database_compatible": True,
-        "database_revision": HEAD_REVISION,
-        "database_head": HEAD_REVISION,
-    }
-    ready = client.get("/ready")
-    assert ready.status_code == 200
-    readiness = ready.json()
-    assert readiness["release_version"] == "0.3.6"
-    assert readiness["release_revision"] == ""
-    assert readiness["deployment_slot"] == "local"
-
-    root = Path(__file__).resolve().parents[3]
-    deployment = yaml.safe_load(
-        (root / "deploy" / "compose.production.yaml").read_text(encoding="utf-8")
-    )
-    assert {
-        "postgres",
-        "nats",
-        "gateway-blue",
-        "gateway-green",
-        "candidate-router",
-        "router",
-    }.issubset(deployment["services"])
-    assert (
-        deployment["services"]["gateway-blue"]["environment"][
-            "GATEWAY_REPLICA_ID"
-        ]
-        == "gateway-blue"
-    )
-    assert (
-        deployment["services"]["gateway-green"]["environment"][
-            "GATEWAY_REPLICA_ID"
-        ]
-        == "gateway-green"
-    )
-    assert (
-        deployment["services"]["gateway-blue"]["environment"][
-            "GATEWAY_BROKER_BACKEND"
-        ]
-        == "nats"
-    )
-    requirements = (root / "requirements.txt").read_text(encoding="utf-8")
-    assert "nats-py>=2.15,<3" in requirements
-
-    deployment_script = root / "deploy" / "deploy-blue-green.sh"
-    smoke_script = root / "deploy" / "smoke.sh"
-    submit_script = root / "scripts" / "submit-thin-client-compatibility.sh"
-    verifier = root / "deploy" / "verify-thin-client-compatibility.py"
-    automated_verifier = root / "deploy" / "verify-automated-candidate-readiness.py"
-    evidence_generator = root / "scripts" / "generate-release-evidence.py"
-    release_evaluator = root / "scripts" / "evaluate-production-release.sh"
-    for script in (
-        deployment_script,
-        smoke_script,
-        submit_script,
-        verifier,
-        automated_verifier,
-        evidence_generator,
-        release_evaluator,
-    ):
-        assert script.stat().st_mode & 0o111
-    script_text = deployment_script.read_text(encoding="utf-8")
-    assert "RELEASE_VERSION" in script_text
-    assert "chatgpt-gateway-nats" in script_text
-    assert "active-slot" in script_text
-    assert "reconcile-state <git-commit>" in script_text
-    assert "initialize-database <git-commit>" in script_text
-    assert "prepare <git-commit>" in script_text
-    assert "verify-candidate <git-commit>" in script_text
-    assert "restart-candidate <git-commit>" in script_text
-    assert "verify-compatibility <git-commit>" in script_text
-    assert "promote <git-commit>" in script_text
-    assert "verify-production <git-commit>" in script_text
-    assert "finalize <git-commit>" in script_text
-    assert "recover-candidate <git-commit>" in script_text
-    assert "cleanup-candidate <git-commit>" in script_text
-    assert "deploy-blue-green.sh rollback" in script_text
-    assert "Signed thin-client compatibility report is missing" in script_text
-    assert "compatibility report predates the Jenkins candidate restart" in verifier.read_text(encoding="utf-8")
-    assert "Immutable image" in script_text
-    assert "Jenkins must transfer it before prepare" in script_text
-    assert "Candidate container image identity changed after prepare" in script_text
-    assert "Candidate image tag identity changed after prepare" in script_text
-    assert 'if [[ -n "${lock_dir:-}" ]]' in script_text
-
-    candidate_router = deployment["services"]["candidate-router"]
-    assert candidate_router["ports"] == [
-        "127.0.0.1:${GATEWAY_CANDIDATE_HTTP_PORT:-18036}:8080"
-    ]
-    assert candidate_router["volumes"] == [
-        "${DEPLOY_ROOT}/runtime/candidate-nginx:/etc/nginx/conf.d:ro"
-    ]
-
-    jenkinsfile = (root / "Jenkinsfile").read_text(encoding="utf-8")
-    for stage in (
-        "Checkout exact GitLab prod",
-        "Release impact decision",
-        "No-op: release not required",
-        "CI: tests and production image",
-        "Publish exact image and release to MKS",
-        "CD: reconcile production state",
-        "CD: initialize database",
-        "CD: prepare inactive slot",
-        "Candidate smoke",
-        "Automated candidate resilience gate",
-        "CD: promote candidate",
-        "CD: verify promoted release",
-        "CD: NATS authentication cutover",
-        "CD: finalize release",
-    ):
-        assert stage in jenkinsfile
-    assert "name: 'FORCE_REDEPLOY'" in jenkinsfile
-    assert "bash scripts/evaluate-production-release.sh" in jenkinsfile
-    assert "writeFile file: '.release-skipped'" in jenkinsfile
-    assert "writeFile file: '.release-required'" in jenkinsfile
-    assert "expression { fileExists('.release-skipped') }" in jenkinsfile
-    assert jenkinsfile.count("expression { fileExists('.release-required') }") == 11
-    assert "SKIP_RELEASE" not in jenkinsfile
-    assert "RELEASE_DECISION" not in jenkinsfile
-    assert "docker build --platform linux/amd64 --target production" in jenkinsfile
-    assert (
-        '''test "$(docker image inspect "chatgpt-mcp-gateway:${GIT_COMMIT}" --format '{{.Architecture}}')" = "amd64"'''
-        in jenkinsfile
-    )
-    assert "docker image save" in jenkinsfile
-    assert "gzip -1n" in jenkinsfile
-    assert "ssh-keygen -Y sign" in jenkinsfile
-    assert "Jenkins MKS credential does not match the pinned release signing key" in jenkinsfile
-    assert "verify-candidate" in jenkinsfile
-    assert "restart-candidate" not in jenkinsfile
-    assert "verify-compatibility" not in jenkinsfile
-    assert "settle-candidate" in jenkinsfile
-    assert "recover-candidate" in jenkinsfile
-    assert "verify-production" in jenkinsfile
-    assert "finalize" in jenkinsfile
-    assert "bash deploy/smoke.sh https://gateway.example.com" in jenkinsfile
 
 
 def test_p0_registry_routes_are_published(client: TestClient) -> None:

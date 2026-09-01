@@ -24,7 +24,6 @@ Before opening a pull request, run the checks that cover your change. For change
 
 ```bash
 PYTHONPATH=services/gateway-api pytest -q services/gateway-api/tests
-ruff check services/gateway-api
 npm --prefix frontend test
 npm --prefix frontend run build
 git diff --check

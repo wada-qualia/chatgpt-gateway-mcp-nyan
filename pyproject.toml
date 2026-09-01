@@ -7,7 +7,7 @@ name = "chatgpt-gateway-mcp-nyan"
 version = "0.13.9"
 description = "Agent infrastructure control plane for MCP, remote execution, chat isolation, approvals and auditability."
 readme = "README.md"
-license = "Apache-2.0"
+license = "MIT"
 requires-python = ">=3.12,<3.15"
 dependencies = [
   "fastapi>=0.115,<1",

@@ -221,7 +221,7 @@ That separation is deliberate: application source belongs here; private infrastr
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+MIT License. See [LICENSE](LICENSE).
 
 ## Contributing
 

@@ -13,7 +13,7 @@ MCP makes tool integration straightforward. Operating tool access for real users
 - who is allowed to invoke a tool;
 - which chat or execution context owns the action;
 - which resource the action is bound to;
-- how long a capability remains valid;
+- how long temporary execution authority remains valid;
 - what happens when a request times out after a side effect may already have started;
 - how operators inspect sessions, approvals and audit history;
 - how multiple MCP servers can be federated without silently widening trust boundaries.
@@ -29,7 +29,7 @@ Nyan treats these as control-plane concerns rather than leaving them to individu
 - **Command sessions** — track long-running commands independently from transport timeouts and reconnects.
 - **Authorization and scopes** — OAuth-oriented client access and resource-level authorization boundaries.
 - **Auditability** — persistent tool, file-change and execution evidence.
-- **Approvals and autonomy primitives** — explicit approval, permit and receipt concepts for higher-risk actions.
+- **Approvals and autonomy primitives** — explicit approval requests, short-lived execution permits, atomic permit claims and action receipts for guarded higher-risk actions.
 - **Operator UI** — React/Vite interface for Gateway resources and operations.
 - **PostgreSQL + SQLite development mode** — production-oriented persistence with a low-friction local path.
 - **NATS event plane** — optional multi-replica/event-driven coordination.
@@ -70,7 +70,7 @@ ChatGPT / MCP client / CLI / browser extension
         |           |            |
         +-----------+------------+
                     |
-          capability/resource bind
+          policy/action/resource bind
                     |
         +-----------+------------+
         |                        |
@@ -82,8 +82,10 @@ ChatGPT / MCP client / CLI / browser extension
 The authority model is intentionally explicit:
 
 ```text
-principal -> chat context -> capability -> resource -> action
+principal -> chat context -> policy -> bounded action/resource authority -> side effect
 ```
+
+For guarded higher-risk actions, the public implementation adds approval -> short-lived permit -> atomic claim -> action receipt. This is an implementation-specific control path, not a claim that every provider uses one universal turn-scoped capability-token format.
 
 A transport connection by itself is not authority.
 

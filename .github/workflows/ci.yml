@@ -19,6 +19,8 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: PYTHONPATH=services/gateway-api pytest -q services/gateway-api/tests
+      - run: python examples/chat-context-isolation/server.py --self-test
+      - run: python -m unittest -v examples/chat-context-isolation/test_demo.py
 
   frontend:
     runs-on: ubuntu-latest

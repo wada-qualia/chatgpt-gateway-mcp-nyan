@@ -96,6 +96,17 @@ A transport connection by itself is not authority.
 - Docker with Compose support, or Python 3.12+ and Node.js 22
 - Git
 
+### Standalone synthetic isolation demo
+
+To inspect the chat-context ownership idea without deploying Gateway or connecting to any infrastructure, run the dependency-free [synthetic chat-context isolation demo](examples/chat-context-isolation/README.md):
+
+```bash
+python3 examples/chat-context-isolation/server.py --self-test
+python3 examples/chat-context-isolation/server.py --port 8765
+```
+
+It binds to loopback only and illustrates exactly `CommandSession`, `Monitoring` and `FileChange` state for two synthetic contexts on one synthetic backend. It is an educational illustration, **not production evidence** and not a claim of universal isolation across every Gateway resource family.
+
 ### Docker Compose
 
 ```bash

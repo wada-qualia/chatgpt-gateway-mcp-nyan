@@ -1,12 +1,13 @@
 openapi: 3.1.0
 info:
-  title: ATLAS Chat Context Browser Contract
-  version: 1.0.0
+  title: ATLAS Chat Context Contract
+  version: 1.1.0
   description: |
-    First-party Browser Extension contract for provisional ChatGPT conversation
-    contexts. Requests require a short-lived pinned extension access token with
-    chat-context:write. Raw ChatGPT conversation references are accepted only for
-    bind/resolve and are stored by Gateway solely as versioned HMAC digests.
+    Versioned Chat Context contract for Browser Extension lifecycle operations and
+    owner-scoped operator projection. Browser mutation requests require a short-lived
+    pinned extension access token with chat-context:write. Raw ChatGPT conversation
+    references are accepted only for bind/resolve and are stored by Gateway solely as
+    versioned HMAC digests; operator responses expose neither raw references nor digests.
 paths:
   /api/chat-contexts/v1/contexts:
     post:
@@ -82,8 +83,37 @@ paths:
         '409': {description: Binding is closed or ambiguous.}
         '422': {description: Request validation failed.}
         '503': {description: Chat-context service unavailable.}
+  /api/chat-contexts/v1/operator/contexts:
+    get:
+      operationId: listOperatorChatContexts
+      security:
+        - gatewaySession: []
+        - gatewayBearer: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 500, default: 200}
+      responses:
+        '200':
+          description: Owner-scoped identified chat contexts with aggregate activity counts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChatContextOperatorSummary'
+        '401': {description: Authenticated Gateway session required.}
+        '403': {description: Policy denied.}
 components:
   securitySchemes:
+    gatewaySession:
+      type: apiKey
+      in: cookie
+      name: gateway_session
+    gatewayBearer:
+      type: http
+      scheme: bearer
     browserExtensionOAuth:
       type: oauth2
       flows:
@@ -132,6 +162,25 @@ components:
         chat_context: {type: string, pattern: '^[A-Za-z0-9]{4}$'}
         generation: {type: integer, minimum: 1}
         expires_at: {type: string, format: date-time}
+    ChatContextOperatorSummary:
+      type: object
+      additionalProperties: false
+      required: [context_id, state, host_kind, project_ref, chat_context, generation, alias_expires_at, bound, created_at, last_seen_at, updated_at, tool_call_count, command_session_count, file_change_count]
+      properties:
+        context_id: {type: string, minLength: 1, maxLength: 64}
+        state: {type: string}
+        host_kind: {type: string}
+        project_ref: {type: [string, 'null']}
+        chat_context: {type: [string, 'null'], pattern: '^[A-Za-z0-9]{4}$'}
+        generation: {type: integer, minimum: 0}
+        alias_expires_at: {type: [string, 'null'], format: date-time}
+        bound: {type: boolean}
+        created_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        tool_call_count: {type: integer, minimum: 0}
+        command_session_count: {type: integer, minimum: 0}
+        file_change_count: {type: integer, minimum: 0}
     ChatContextBinding:
       type: object
       additionalProperties: false

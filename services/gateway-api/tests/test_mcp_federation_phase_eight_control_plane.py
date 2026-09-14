@@ -23,12 +23,14 @@ CAPABILITY_TABLES = {
     "mcp_capability_snapshots",
     "mcp_capability_entities",
     "mcp_capability_entity_revisions",
+    "mcp_capability_exposures",
     "mcp_capability_subscriptions",
     "mcp_root_grants",
     "mcp_interaction_consents",
     "mcp_federated_tasks",
     "mcp_capability_events",
 }
+PHASE_EIGHT_CAPABILITY_TABLES = CAPABILITY_TABLES - {"mcp_capability_exposures"}
 
 
 def _load_yaml(path: Path) -> dict:
@@ -47,6 +49,7 @@ def test_phase_eight_capability_tables_and_contracts() -> None:
         "capability-snapshot.schema.json",
         "capability-entity-revision.schema.json",
         "capability-event.schema.json",
+        "root-grant.schema.json",
     ):
         schema = json.loads((CONTRACT_ROOT / name).read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)
@@ -57,21 +60,39 @@ def test_phase_eight_capability_tables_and_contracts() -> None:
     assert contract["capabilities"]["tools"]["execution_status"] == (
         "production_read_only_pilot"
     )
-    for capability in (
-        "resources", "prompts", "roots", "sampling", "elicitation", "tasks", "logging"
-    ):
+    assert contract["capabilities"]["resources"]["execution_status"] == (
+        "phase_10_read_path_locally_qualified"
+    )
+    assert contract["capabilities"]["roots"]["execution_status"] == (
+        "locally_qualified_production_pending"
+    )
+    assert contract["capabilities"]["roots"]["persistent_raw_uri"] is False
+    assert contract["capabilities"]["roots"]["remote_protocols_suppressed"] == [
+        "2026-07-28"
+    ]
+    for capability in ("prompts", "sampling", "elicitation", "tasks", "logging"):
         assert contract["capabilities"][capability]["execution_status"] == "not_enabled"
 
     openapi = _load_yaml(CONTRACT_ROOT / "openapi-control-plane.yaml")
     assert openapi["openapi"] == "3.1.0"
     assert set(openapi["paths"]) == {
         "/api/mcp/servers/{server_id}/oauth/discover",
+        "/api/mcp/resources",
+        "/api/mcp/resources/{entity_id}/revisions",
+        "/api/mcp/resources/{entity_id}/exposure",
+        "/api/mcp/root-grants",
+        "/api/mcp/servers/{server_id}/roots/sync",
+        "/api/mcp/root-grants/{grant_id}/review",
         "/oauth/client-metadata.json",
     }
     assert openapi["x-implementation-status"] == (
-        "oauth-discovery-control-plane-exposed"
+        "phase-12-roots-control-plane-locally-qualified"
     )
     assert openapi["x-capability-execution-enabled"] is False
+    assert openapi["x-resource-read-execution-enabled"] is True
+    assert openapi["x-roots-management-enabled"] is True
+    assert openapi["x-root-raw-uri-client-input-enabled"] is False
+    assert openapi["x-modern-roots-wire-enabled"] is False
     asyncapi = _load_yaml(CONTRACT_ROOT / "asyncapi.yaml")
     assert asyncapi["asyncapi"] == "3.0.0"
     assert asyncapi["x-implementation-status"] == "schema-only"
@@ -79,6 +100,16 @@ def test_phase_eight_capability_tables_and_contracts() -> None:
     assert contract["authorization_control_plane"]["metadata_cache"] == (
         "expiry_and_issuer_pinning"
     )
+
+    ownership = (ROOT / "docs/contracts/mcp-phase8-field-ownership.md").read_text(
+        encoding="utf-8"
+    )
+    for required in (
+        "Raw credentials, tokens, headers and local environment are forbidden",
+        "raw local paths are not stored",
+        "creates no public execution route",
+    ):
+        assert required in ownership
 
 
 def test_capability_snapshot_is_deterministic_idempotent_and_fenced() -> None:
@@ -176,14 +207,20 @@ def test_phase_eight_migration_contract() -> None:
     baseline = (ROOT / "database/alembic/postgresql_baseline.sql").read_text(
         encoding="utf-8"
     )
+    phase_ten_migration = (
+        ROOT / "database/alembic/versions/20260904_0017_mcp_resource_exposures.py"
+    ).read_text(encoding="utf-8")
     assert 'revision = "20260726_0006"' in migration
     assert 'down_revision = "20260726_0005"' in migration
     assert "partial Phase 8 capability schema detected" in migration
     assert "generalized MCP capability control-plane downgrade is not supported" in migration
-    for table_name in sorted(CAPABILITY_TABLES):
+    for table_name in sorted(PHASE_EIGHT_CAPABILITY_TABLES):
         assert f'"{table_name}"' in migration
         assert f"CREATE TABLE {table_name}" in sql
         assert baseline.count(f"CREATE TABLE {table_name}") == 1
+    assert 'revision = "20260904_0017"' in phase_ten_migration
+    assert 'down_revision = "20260828_0016"' in phase_ten_migration
+    assert '_TABLE = "mcp_capability_exposures"' in phase_ten_migration
     for table_name in (
         "mcp_capability_snapshots",
         "mcp_capability_entity_revisions",

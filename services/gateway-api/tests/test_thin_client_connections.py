@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from fastapi import HTTPException
-
+from fastapi import HTTPException, WebSocketDisconnect
+from gateway_api.routers.thin_clients import (
+    _is_websocket_disconnect_runtime_error,
+    _websocket_bearer_token,
+)
 from gateway_api.thin_client_control import ThinClientConnectionManager
-from gateway_api.routers.thin_clients import _websocket_bearer_token
 
 
 class CompletingWebSocket:
@@ -35,6 +37,37 @@ class BlockingWebSocket:
 
     async def close(self, code: int) -> None:
         self.closed_codes.append(code)
+
+
+class DisconnectedWebSocket:
+    async def send_json(self, payload: dict) -> None:
+        raise WebSocketDisconnect(code=1006)
+
+    async def close(self, code: int) -> None:
+        return None
+
+
+def test_websocket_disconnect_runtime_error_classifier_is_narrow() -> None:
+    assert _is_websocket_disconnect_runtime_error(
+        RuntimeError('WebSocket is not connected. Need to call "accept" first.')
+    )
+    assert not _is_websocket_disconnect_runtime_error(RuntimeError("different runtime error"))
+
+
+def test_request_maps_disconnected_websocket_send_to_conflict() -> None:
+    async def scenario() -> None:
+        manager = ThinClientConnectionManager()
+        await manager.register("client-1", DisconnectedWebSocket())
+
+        with pytest.raises(HTTPException) as exc_info:
+            await manager.request(
+                "client-1", tool="list_files", arguments={}, timeout_seconds=1
+            )
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == "Thin client disconnected: client-1"
+
+    asyncio.run(scenario())
 
 
 def test_websocket_bearer_header_takes_precedence_over_legacy_query_token() -> None:

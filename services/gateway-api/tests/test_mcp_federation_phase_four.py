@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from gateway_api.config import get_settings
 from gateway_api.models import (
     Base,
+    McpCapabilityEntity,
     McpInvocation,
     McpRuntimeConnection,
     McpServer,
@@ -118,6 +119,13 @@ def _snapshot(connection_instance_id: str, *, generation: int = 1) -> dict:
                 "title": "Local sum",
                 "description": "Read two local values.",
                 "annotations": {"readOnlyHint": True},
+            }
+        ],
+        "prompts": [
+            {
+                "name": "local_review",
+                "description": "Review a local value.",
+                "arguments": [{"name": "text", "required": True}],
             }
         ],
     }
@@ -365,6 +373,16 @@ def test_runtime_registration_reconnect_and_transactional_catalog(db: Session) -
         max_tools=50,
     )
     assert result["gateway_catalog_generation"] == 1
+    assert result["prompt_count"] == 1
+    prompt = (
+        db.query(McpCapabilityEntity)
+        .filter(
+            McpCapabilityEntity.server_id == server_id,
+            McpCapabilityEntity.entity_kind == "prompt",
+        )
+        .one()
+    )
+    assert prompt.current_revision_id
     tool = db.query(McpTool).filter(McpTool.server_id == server_id).one()
     revision = db.get(McpToolRevision, tool.current_revision_id)
     assert revision.schema_hash

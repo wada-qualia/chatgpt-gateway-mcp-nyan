@@ -4,7 +4,7 @@ import json
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
@@ -46,6 +46,12 @@ from .mcp_federation_policy import (
     reject_secret_shaped_payload,
     required_approval_for,
     sha256_json,
+)
+from .mcp_model_context_policy import (
+    project_model_annotations,
+    project_model_metadata_text,
+    project_model_schema,
+    project_server_instructions,
 )
 from .mcp_upstream import UpstreamMcpError, UpstreamMcpManager
 from .models import (
@@ -111,7 +117,7 @@ class FederationExecutionContext:
 
 
 def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _object(
@@ -462,12 +468,18 @@ def _summary(item: AuthorizedRevision) -> dict[str, Any]:
         "tool_ref": _tool_ref(item.server.id, item.tool.id, revision.id),
         "schema_hash": revision.schema_hash,
         "server_id": item.server.id,
-        "server_name": item.server.display_name,
+        "server_name": project_model_metadata_text(
+            item.server.display_name, maximum_chars=160
+        )
+        or item.server.normalized_slug,
         "server_status": item.server.status,
         "tool_id": item.tool.id,
         "name": item.tool.upstream_name,
-        "title": revision.sanitized_title,
-        "description": revision.sanitized_description,
+        "title": project_model_metadata_text(
+            revision.sanitized_title, maximum_chars=240
+        )
+        or None,
+        "description": project_model_metadata_text(revision.sanitized_description),
         "action_class": revision.action_class,
         "read_only_status": revision.read_only_status,
         "exposure_mode": item.exposure.mode,
@@ -481,9 +493,9 @@ def _catalog_filter_matches(
 ) -> bool:
     if payload.exposure_mode and item.exposure.mode != payload.exposure_mode:
         return False
-    if payload.approval_class and item.approval_class.value != payload.approval_class:
-        return False
-    return True
+    return not (
+        payload.approval_class and item.approval_class.value != payload.approval_class
+    )
 
 
 def _postgresql_lexical_scores(
@@ -768,20 +780,22 @@ def describe_tool(
         require_available=False,
     )
     result = _summary(item)
+    instruction_projection = project_server_instructions(item.server.sanitized_instructions)
     result.update(
         {
-            "input_schema": item.revision.input_schema,
-            "output_schema": item.revision.output_schema,
-            "annotations": item.revision.annotations,
+            "input_schema": project_model_schema(item.revision.input_schema),
+            "output_schema": project_model_schema(item.revision.output_schema),
+            "annotations": project_model_annotations(item.revision.annotations),
             "icons": item.revision.icons,
             "execution": {
                 **dict(item.revision.execution or {}),
                 "task_execution_enabled": False,
             },
             "server_instructions": {
-                "text": item.server.sanitized_instructions,
+                **instruction_projection.payload(),
                 "sha256": item.server.instructions_sha256,
                 "trust": "untrusted_advisory",
+                "authority": "gateway_and_user_precedence",
             },
             "client_only_meta": {
                 "present": bool(item.revision.component_meta),

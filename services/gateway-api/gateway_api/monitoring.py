@@ -20,7 +20,6 @@ from .database import SessionLocal
 from .events import emit_event
 from .models import AgentToolCall, CommandSession, CommandSessionDelivery, utcnow
 
-
 ACTIVE_STATUSES = {"running", "disconnecting"}
 TERMINAL_STATUSES = {"completed", "failed", "terminated", "lost"}
 SECRET_ARGUMENT_NAMES = {
@@ -75,6 +74,36 @@ class RunningProcess:
 
 def utciso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+_JSONL_TAIL_CHUNK_BYTES = 64 * 1024
+
+
+def _read_jsonl_tail(path: Path, tail: int) -> list[dict[str, Any]]:
+    wanted = max(0, int(tail))
+    if wanted == 0:
+        return []
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        chunks: list[bytes] = []
+        newline_count = 0
+        while position > 0 and newline_count <= wanted:
+            size = min(_JSONL_TAIL_CHUNK_BYTES, position)
+            position -= size
+            handle.seek(position)
+            chunk = handle.read(size)
+            chunks.append(chunk)
+            newline_count += chunk.count(b"\n")
+    records: list[dict[str, Any]] = []
+    for raw in b"".join(reversed(chunks)).splitlines():
+        try:
+            record = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records[-wanted:]
 
 
 def _normalized_secret_name(value: str) -> str:
@@ -505,6 +534,8 @@ class MonitoringService:
             path = Path(session.output_path)
         if not path.exists():
             return []
+        if tail is not None:
+            return _read_jsonl_tail(path, tail)
         records = []
         with path.open("r", encoding="utf-8") as handle:
             for raw in handle:
@@ -512,8 +543,6 @@ class MonitoringService:
                     records.append(json.loads(raw))
                 except json.JSONDecodeError:
                     continue
-        if tail is not None:
-            return records[-max(0, int(tail)) :]
         start = max(1, int(start_line or 1))
         bounded_limit = max(1, min(int(limit or 200), 1000))
         return [record for record in records if int(record.get("line", 0)) >= start][:bounded_limit]
@@ -596,6 +625,21 @@ class MonitoringService:
             for line in range(delivery.start_line, delivery.end_line + 1):
                 markers.setdefault(line, set()).add(delivery.reason)
         return markers
+
+    def background_tails_detached(
+        self,
+        *,
+        owner_subject: str,
+        tool_call_id: str | None,
+        chat_context_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        with SessionLocal() as db:
+            return self.background_tails(
+                db,
+                owner_subject=owner_subject,
+                tool_call_id=tool_call_id,
+                chat_context_id=chat_context_id,
+            )
 
     def background_tails(
         self,

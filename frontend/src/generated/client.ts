@@ -103,6 +103,7 @@ export type CommandOutputLine = {
 
 export type CommandSession = {
   id: string;
+  chat_context_id: string | null;
   owner_subject: string;
   origin: string;
   resource_id: string | null;
@@ -131,6 +132,7 @@ export type CommandSessionOutput = {
 
 export type AgentToolCall = {
   id: string;
+  chat_context_id: string | null;
   tool_name: string;
   arguments: Record<string, unknown>;
   status: string;
@@ -165,6 +167,7 @@ export type FileChangeDiff = {
 
 export type FileChangeSet = {
   id: string;
+  chat_context_id: string | null;
   owner_subject: string;
   origin: string;
   resource_id: string | null;
@@ -180,6 +183,24 @@ export type FileChangeSet = {
   truncated: boolean;
   suppressed: boolean;
   created_at: string;
+};
+
+
+export type ChatContextSummary = {
+  context_id: string;
+  state: string;
+  host_kind: string;
+  project_ref: string | null;
+  chat_context: string | null;
+  generation: number;
+  alias_expires_at: string | null;
+  bound: boolean;
+  created_at: string;
+  last_seen_at: string;
+  updated_at: string;
+  tool_call_count: number;
+  command_session_count: number;
+  file_change_count: number;
 };
 
 
@@ -441,6 +462,7 @@ export const api = {
     request<{ ok: boolean; result?: Record<string, unknown>; error?: string }>(`/api/thin-clients/${clientId}/tools`, { method: 'POST', body: JSON.stringify(payload) }),
   deleteThinClient: (clientId: string) =>
     request<{ ok: boolean }>(`/api/thin-clients/${clientId}`, { method: 'DELETE' }),
+  chatContexts: () => request<ChatContextSummary[]>('/api/chat-contexts/v1/operator/contexts'),
   commandSessions: () => request<CommandSession[]>('/api/command-sessions'),
   fileChanges: (params: { limit?: number; origin?: string; resource_id?: string } = {}) => {
     const query = new URLSearchParams();
@@ -522,13 +544,15 @@ export const api = {
   mcpToolExposure: (toolId: string) =>
     request<McpToolExposure | null>(`/api/mcp/tools/${toolId}/exposure`),
   startMcpOAuth: (server: Pick<McpServer, 'id' | 'version'>, payload: {
-    authorization_endpoint: string;
-    token_endpoint: string;
+    discovery_snapshot_id?: string;
+    authorization_server?: string;
+    authorization_endpoint?: string;
+    token_endpoint?: string;
     client_id: string;
     client_secret?: string;
     redirect_uri: string;
     scopes: string[];
-    audience: string;
+    audience?: string;
     extra_authorization_parameters?: Record<string, string>;
   }, idempotencyKey: string) =>
     request<McpOAuthAuthorizationStarted>(`/api/mcp/servers/${server.id}/oauth/start`, {
@@ -536,10 +560,10 @@ export const api = {
       headers: { 'Idempotency-Key': idempotencyKey },
       body: JSON.stringify({ expected_version: server.version, ...payload })
     }),
-  completeMcpOAuth: (state: string, code: string) =>
+  completeMcpOAuth: (state: string, code: string, iss?: string) =>
     request<McpCredentialBinding>('/api/mcp/oauth/complete', {
       method: 'POST',
-      body: JSON.stringify({ state, code })
+      body: JSON.stringify({ state, code, ...(iss ? { iss } : {}) })
     }),
   mcpPresentationProfiles: () =>
     request<McpPresentationProfile[]>('/api/mcp/presentation-profiles'),

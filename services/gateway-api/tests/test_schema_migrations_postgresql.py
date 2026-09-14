@@ -52,6 +52,24 @@ ONLINE_INDEX_SQL = {
         "WHERE traffic_delivery_status = 'pending'"
     ),
 }
+CHAT_CONTEXT_COUNT_INDEX_SQL = {
+    "ix_agent_tool_calls_owner_chat_context": (
+        "CREATE INDEX ix_agent_tool_calls_owner_chat_context "
+        "ON agent_tool_calls (owner_subject, chat_context_id) "
+        "WHERE chat_context_id IS NOT NULL"
+    ),
+    "ix_command_sessions_owner_chat_context": (
+        "CREATE INDEX ix_command_sessions_owner_chat_context "
+        "ON command_sessions (owner_subject, chat_context_id) "
+        "WHERE chat_context_id IS NOT NULL"
+    ),
+    "ix_file_change_sets_owner_chat_context": (
+        "CREATE INDEX ix_file_change_sets_owner_chat_context "
+        "ON file_change_sets (owner_subject, chat_context_id) "
+        "WHERE chat_context_id IS NOT NULL"
+    ),
+}
+
 CAPACITY_INDEX_DROPS = (
     "ix_outbox_events_audit_event_id",
     "ix_outbox_events_published_at",
@@ -143,6 +161,33 @@ def _index_states(engine: Engine) -> dict[str, bool]:
         return {str(name): bool(valid) for name, valid in rows}
 
 
+def _chat_context_count_index_states(engine: Engine) -> dict[str, bool]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT index_class.relname, index_state.indisvalid "
+                "FROM pg_index AS index_state "
+                "JOIN pg_class AS index_class "
+                "ON index_class.oid = index_state.indexrelid "
+                "WHERE index_class.relname = ANY(:names)"
+            ),
+            {"names": list(CHAT_CONTEXT_COUNT_INDEX_SQL)},
+        )
+        return {str(name): bool(valid) for name, valid in rows}
+
+
+def _table_reloptions(engine: Engine, table: str) -> set[str]:
+    with engine.connect() as connection:
+        value = connection.execute(
+            text(
+                "SELECT reloptions FROM pg_class "
+                "WHERE oid = to_regclass(:table_name)"
+            ),
+            {"table_name": f"public.{table}"},
+        ).scalar_one()
+    return set(value or ())
+
+
 def _capacity_indexes_present(engine: Engine) -> set[str]:
     with engine.connect() as connection:
         rows = connection.execute(
@@ -211,10 +256,64 @@ def test_first_run_creates_online_indexes_and_retry_is_idempotent(
     assert {item.name: item.action for item in first.online_index_operations} == {
         **{name: "created" for name in ONLINE_INDEX_SQL},
         **{name: "dropped" for name in CAPACITY_INDEX_DROPS},
+        **{name: "created" for name in CHAT_CONTEXT_COUNT_INDEX_SQL},
     }
     assert second.online_index_operations == ()
     assert _index_states(pg_engine) == {name: True for name in ONLINE_INDEX_SQL}
+    assert _chat_context_count_index_states(pg_engine) == {
+        name: True for name in CHAT_CONTEXT_COUNT_INDEX_SQL
+    }
     assert _capacity_indexes_present(pg_engine) == set()
+
+
+def test_chat_context_autovacuum_reloptions_upgrade_retry_and_downgrade(
+    pg_engine: Engine,
+) -> None:
+    config = alembic_config(str(pg_engine.url))
+    config.attributes["gateway_online_index_bootstrap"] = True
+    try:
+        command.upgrade(config, "20260908_0018")
+    finally:
+        config.attributes.pop("gateway_online_index_bootstrap", None)
+
+    assert "autovacuum_vacuum_scale_factor=0.05" not in _table_reloptions(
+        pg_engine, "agent_tool_calls"
+    )
+    assert "autovacuum_vacuum_scale_factor=0.05" not in _table_reloptions(
+        pg_engine, "command_sessions"
+    )
+    assert "autovacuum_vacuum_insert_scale_factor=0.05" not in _table_reloptions(
+        pg_engine, "file_change_sets"
+    )
+
+    first = run_schema_migrations(pg_engine)
+    second = run_schema_migrations(pg_engine)
+
+    assert first.current_revision == HEAD_REVISION
+    assert second.current_revision == HEAD_REVISION
+    assert second.online_index_operations == ()
+    assert "autovacuum_vacuum_scale_factor=0.05" in _table_reloptions(
+        pg_engine, "agent_tool_calls"
+    )
+    assert "autovacuum_vacuum_scale_factor=0.05" in _table_reloptions(
+        pg_engine, "command_sessions"
+    )
+    assert "autovacuum_vacuum_insert_scale_factor=0.05" in _table_reloptions(
+        pg_engine, "file_change_sets"
+    )
+
+    command.downgrade(config, "20260908_0018")
+
+    assert "autovacuum_vacuum_scale_factor=0.05" not in _table_reloptions(
+        pg_engine, "agent_tool_calls"
+    )
+    assert "autovacuum_vacuum_scale_factor=0.05" not in _table_reloptions(
+        pg_engine, "command_sessions"
+    )
+    assert "autovacuum_vacuum_insert_scale_factor=0.05" not in _table_reloptions(
+        pg_engine, "file_change_sets"
+    )
+    assert _revision(pg_engine) == "20260908_0018"
 
 
 def test_existing_valid_indexes_are_reused(pg_engine: Engine) -> None:
@@ -226,6 +325,10 @@ def test_existing_valid_indexes_are_reused(pg_engine: Engine) -> None:
     assert {item.name: item.action for item in result.online_index_operations} == {
         **{name: "reused" for name in ONLINE_INDEX_SQL},
         **{name: "dropped" for name in CAPACITY_INDEX_DROPS},
+        **{name: "created" for name in CHAT_CONTEXT_COUNT_INDEX_SQL},
+    }
+    assert _chat_context_count_index_states(pg_engine) == {
+        name: True for name in CHAT_CONTEXT_COUNT_INDEX_SQL
     }
     assert _capacity_indexes_present(pg_engine) == set()
 
@@ -687,7 +790,11 @@ def test_chat_context_mcp_policy_postgresql_upgrade_old_slot_and_downgrade(
         item["name"] for item in before.get_columns("oauth_clients")
     }
 
-    command.upgrade(config, HEAD_REVISION)
+    result = run_schema_migrations(pg_engine)
+    assert result.current_revision == HEAD_REVISION
+    assert _chat_context_count_index_states(pg_engine) == {
+        name: True for name in CHAT_CONTEXT_COUNT_INDEX_SQL
+    }
 
     upgraded = inspect(pg_engine)
     columns = {

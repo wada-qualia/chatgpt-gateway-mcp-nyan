@@ -104,6 +104,7 @@ def create_app() -> FastAPI:
         max_content_items=settings.gateway_mcp_upstream_max_content_items,
         max_catalog_tools=settings.gateway_mcp_catalog_max_tools,
         thin_client_transport=thin_clients.thin_client_manager,
+        gateway_roots_by_server=settings.mcp_gateway_roots_by_server,
     )
     readiness_cache = ReadinessCache(
         settings=settings,

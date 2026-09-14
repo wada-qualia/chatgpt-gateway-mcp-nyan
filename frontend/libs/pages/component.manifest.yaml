@@ -29,6 +29,9 @@ spec:
     - name: MonitoringRemote
       type: page
       contractVersion: 0.1.0
+    - name: ChatContextsRemote
+      type: page
+      contractVersion: 0.1.0
     - name: ChatGPTAccessRemote
       type: page
       contractVersion: 0.1.0

@@ -9,6 +9,7 @@ import AuditRemote from '../src/features/audit/AuditRemote';
 import DevicesRemote from '../src/features/devices/DevicesRemote';
 import DockerWorkspacesRemote from '../src/features/docker/DockerWorkspacesRemote';
 import MonitoringRemote from '../src/features/monitoring/MonitoringRemote';
+import ChatContextsRemote from '../src/features/chat-contexts/ChatContextsRemote';
 import ThinClientsRemote from '../src/features/thin-clients/ThinClientsRemote';
 import { GatewayTopbar } from '@gateway/components';
 import i18n from '../src/shared/i18n';
@@ -48,6 +49,7 @@ function mockEmptyGatewayApi() {
       url === '/api/devices' ||
       url === '/api/docker/workspaces' ||
       url === '/api/thin-clients' ||
+      url === '/api/chat-contexts/v1/operator/contexts' ||
       url === '/api/command-sessions' ||
       url === '/api/access/grants' ||
       url === '/api/audit/events' ||
@@ -99,6 +101,7 @@ function mockGatewayApiWithDevices(initialDevices: Array<Record<string, unknown>
     if (
       url === '/api/docker/workspaces' ||
       url === '/api/thin-clients' ||
+      url === '/api/chat-contexts/v1/operator/contexts' ||
       url === '/api/command-sessions' ||
       url === '/api/access/grants' ||
       url === '/api/audit/events' ||
@@ -141,6 +144,7 @@ function mockGatewayApiWithWorkspace() {
     if (
       url === '/api/devices' ||
       url === '/api/thin-clients' ||
+      url === '/api/chat-contexts/v1/operator/contexts' ||
       url === '/api/command-sessions' ||
       url === '/api/access/grants' ||
       url === '/api/audit/events' ||
@@ -187,6 +191,7 @@ function mockGatewayApiWithThinClient() {
     if (
       url === '/api/devices' ||
       url === '/api/docker/workspaces' ||
+      url === '/api/chat-contexts/v1/operator/contexts' ||
       url === '/api/command-sessions' ||
       url === '/api/access/grants' ||
       url === '/api/audit/events' ||
@@ -226,11 +231,32 @@ function mockGatewayApiWithMonitoring() {
         }
       ]);
     }
+    if (url === '/api/chat-contexts/v1/operator/contexts') {
+      return jsonResponse([
+        {
+          context_id: '11111111-2222-4333-8444-555555555555',
+          state: 'active',
+          host_kind: 'chatgpt',
+          project_ref: 'gateway-ui',
+          chat_context: 'A1b2',
+          generation: 3,
+          alias_expires_at: '2026-09-02T00:00:00Z',
+          bound: true,
+          created_at: '2026-07-06T00:00:00Z',
+          last_seen_at: '2026-07-06T00:00:09Z',
+          updated_at: '2026-07-06T00:00:09Z',
+          tool_call_count: 1,
+          command_session_count: 1,
+          file_change_count: 1
+        }
+      ]);
+    }
     if (url === '/api/command-sessions') {
       return jsonResponse([
         {
           id: 'session-1',
           owner_subject: 'dev:local',
+          chat_context_id: '11111111-2222-4333-8444-555555555555',
           origin: 'thin_client',
           resource_id: 'thin-1',
           name: 'brew install',
@@ -304,6 +330,7 @@ function mockGatewayApiWithMonitoring() {
       return jsonResponse([
         {
           id: 'tool-call-1',
+          chat_context_id: '11111111-2222-4333-8444-555555555555',
           tool_name: 'thin_client_run_command',
           arguments: { command: 'brew install php' },
           status: 'success',
@@ -319,6 +346,7 @@ function mockGatewayApiWithMonitoring() {
         {
           id: 'change-1',
           owner_subject: 'dev:local',
+          chat_context_id: '11111111-2222-4333-8444-555555555555',
           origin: 'thin_client',
           resource_id: 'thin-1',
           tool_call_id: 'tool-call-2',
@@ -407,6 +435,19 @@ test('renders operational gateway dashboard shell', async () => {
   expect(screen.queryByText('No device selected')).not.toBeInTheDocument();
 });
 
+test('devices route does not fetch context or monitoring history', async () => {
+  mockEmptyGatewayApi();
+  renderWithQuery(<App />, '/devices');
+  expect(await screen.findByText('No devices registered yet.')).toBeInTheDocument();
+
+  const fetchMock = vi.mocked(globalThis.fetch);
+  const urls = fetchMock.mock.calls.map(([input]) => String(input));
+  expect(urls).toContain('/api/devices');
+  expect(urls).not.toContain('/api/chat-contexts/v1/operator/contexts');
+  expect(urls).not.toContain('/api/command-sessions');
+  expect(urls.some((url) => url.startsWith('/api/file-changes'))).toBe(false);
+});
+
 test('dashboard root redirects to devices route', async () => {
   mockEmptyGatewayApi();
   renderWithQuery(<App />, '/');
@@ -424,6 +465,10 @@ test('dashboard sidebar navigation updates the route', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Operations' }));
   expect(screen.getByTestId('location-probe')).toHaveTextContent('/operations');
   expect(await screen.findByRole('heading', { name: 'Operations & Reliability' })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
+  expect(screen.getByTestId('location-probe')).toHaveTextContent('/chats');
+  expect(await screen.findByRole('heading', { name: 'Chats' })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole('button', { name: 'User Administration' }));
   expect(screen.getByTestId('location-probe')).toHaveTextContent('/user-administration');
@@ -594,6 +639,23 @@ test('docker workspaces remote renders only the workspaces page surface', async 
   expect(screen.queryByText('ChatGPT MCP SSH Gateway')).not.toBeInTheDocument();
 });
 
+test('chat contexts remote renders owner-scoped identified chat statistics', async () => {
+  mockGatewayApiWithMonitoring();
+  renderWithQuery(<ChatContextsRemote />, '/chats');
+
+  expect(screen.getByRole('heading', { name: 'Chats' })).toBeInTheDocument();
+  expect(await screen.findByText('#A1b2')).toBeInTheDocument();
+  expect(screen.getByText('11111111-2222-4333-8444-555555555555')).toBeInTheDocument();
+  expect(screen.getByText('gateway-ui')).toBeInTheDocument();
+  expect(screen.getByText('Bound')).toBeInTheDocument();
+  expect(screen.getByText('1 tools')).toBeInTheDocument();
+  expect(screen.getByText('1 sessions')).toBeInTheDocument();
+  expect(screen.getByText('1 changes')).toBeInTheDocument();
+  expect(screen.queryByText(/raw-chatgpt-conversation/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/conversation_ref_hmac/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/owner_subject/i)).not.toBeInTheDocument();
+});
+
 test('monitoring remote renders paginated sessions and selected terminal output', async () => {
   mockGatewayApiWithMonitoring();
   renderWithQuery(<MonitoringRemote />);
@@ -609,6 +671,8 @@ test('monitoring remote renders paginated sessions and selected terminal output'
   expect(screen.getAllByText('Thin client').length).toBeGreaterThan(0);
   expect(screen.getAllByText('SSH host').length).toBeGreaterThan(0);
   expect(screen.getByText('robot@10.0.1.65')).toBeInTheDocument();
+  expect(screen.getByLabelText('Chat context')).toBeInTheDocument();
+  expect(screen.getAllByText('#A1b2').length).toBeGreaterThan(0);
 
   fireEvent.click(screen.getByText('brew install'));
 
@@ -623,6 +687,11 @@ test('monitoring remote renders paginated sessions and selected terminal output'
   expect(screen.getByText('updated policy')).toBeInTheDocument();
   expect(screen.getByText('+1')).toBeInTheDocument();
   expect(screen.getByText('-1')).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText('Chat context'), { target: { value: '11111111-2222-4333-8444-555555555555' } });
+  expect(await screen.findByText('1 session')).toBeInTheDocument();
+  expect(screen.queryByText('whoami on robot')).not.toBeInTheDocument();
+  expect(screen.getByText('docs/policy.md')).toBeInTheDocument();
   expect(screen.queryByText('ChatGPT MCP SSH Gateway')).not.toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: 'ssh-device-detail-leak' })).not.toBeInTheDocument();
   expect(document.querySelector('.detail-panel')).toBeNull();
@@ -778,6 +847,7 @@ test('settings language dropdown switches and persists Russian UI', async () => 
       url === '/api/devices' ||
       url === '/api/docker/workspaces' ||
       url === '/api/thin-clients' ||
+      url === '/api/chat-contexts/v1/operator/contexts' ||
       url === '/api/command-sessions' ||
       url === '/api/access/grants' ||
       url === '/api/audit/events' ||
@@ -851,6 +921,7 @@ test('MCP connections page creates a service-account backed remote server', asyn
     if (url === '/api/mcp/servers') return jsonResponse(servers);
     if (
       url === '/api/devices' || url === '/api/docker/workspaces' || url === '/api/thin-clients' ||
+      url === '/api/chat-contexts/v1/operator/contexts' ||
       url === '/api/command-sessions' || url === '/api/access/grants' || url === '/api/audit/events' ||
       url.startsWith('/api/file-changes')
     ) return jsonResponse([]);
@@ -923,6 +994,7 @@ test('MCP connections page updates chat context mode for a URL-based OAuth clien
     }
     if (
       url === '/api/devices' || url === '/api/docker/workspaces' || url === '/api/thin-clients' ||
+      url === '/api/chat-contexts/v1/operator/contexts' ||
       url === '/api/command-sessions' || url === '/api/access/grants' || url === '/api/audit/events' ||
       url.startsWith('/api/file-changes')
     ) return jsonResponse([]);
@@ -997,6 +1069,7 @@ test('MCP connections page inspects revisions and soft-removes with optimistic h
     if (url === '/api/mcp/servers/server-1' && init?.method === 'DELETE') return jsonResponse({ ...server, status: 'disabled', version: 5, disabled_at: '2026-07-24T00:01:00Z' });
     if (
       url === '/api/devices' || url === '/api/docker/workspaces' || url === '/api/thin-clients' ||
+      url === '/api/chat-contexts/v1/operator/contexts' ||
       url === '/api/command-sessions' || url === '/api/access/grants' || url === '/api/audit/events' ||
       url.startsWith('/api/file-changes')
     ) return jsonResponse([]);

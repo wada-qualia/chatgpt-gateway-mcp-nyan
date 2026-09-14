@@ -33,7 +33,9 @@ MCP_CLIENT_INFO_META_KEY = "io.modelcontextprotocol/clientInfo"
 MCP_SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo"
 MCP_APPS_EXTENSION_ID = "io.modelcontextprotocol/ui"
 MCP_TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks"
-QUALIFIED_SERVER_EXTENSIONS = frozenset()
+QUALIFIED_UPSTREAM_EXTENSIONS = frozenset()
+QUALIFIED_SERVER_EXTENSIONS = QUALIFIED_UPSTREAM_EXTENSIONS
+QUALIFIED_PUBLIC_SERVER_EXTENSIONS = frozenset({MCP_APPS_EXTENSION_ID})
 MCP_HEADER_MISMATCH_CODE = -32020
 MCP_UNSUPPORTED_PROTOCOL_VERSION_CODE = -32022
 
@@ -163,10 +165,30 @@ def validate_http_protocol_version(header_value: str | None) -> str:
     )
 
 
-def gateway_public_server_capabilities(*, tools_list_changed: bool) -> dict[str, Any]:
-    return {
+def gateway_public_server_capabilities(
+    *,
+    tools_list_changed: bool,
+    extensions: Mapping[str, Any] | None = None,
+    resources: bool = False,
+    prompts: bool = False,
+    completions: bool = False,
+) -> dict[str, Any]:
+    requested = dict(extensions or {})
+    unsupported = sorted(set(requested).difference(QUALIFIED_PUBLIC_SERVER_EXTENSIONS))
+    if unsupported:
+        raise ValueError(f"Unqualified public MCP extension: {unsupported[0]}")
+    capabilities: dict[str, Any] = {
         "tools": {"listChanged": True} if tools_list_changed else {},
     }
+    if resources or requested:
+        capabilities["resources"] = {}
+    if prompts:
+        capabilities["prompts"] = {}
+    if completions:
+        capabilities["completions"] = {}
+    if requested:
+        capabilities["extensions"] = requested
+    return capabilities
 
 
 def gateway_public_discover_result(
@@ -174,11 +196,19 @@ def gateway_public_discover_result(
     server_name: str,
     server_version: str,
     tools_list_changed: bool,
+    extensions: Mapping[str, Any] | None = None,
+    resources: bool = False,
+    prompts: bool = False,
+    completions: bool = False,
 ) -> dict[str, Any]:
     return {
         "supportedVersions": list(SUPPORTED_MCP_PROTOCOL_VERSIONS),
         "capabilities": gateway_public_server_capabilities(
-            tools_list_changed=tools_list_changed
+            tools_list_changed=tools_list_changed,
+            extensions=extensions,
+            resources=resources,
+            prompts=prompts,
+            completions=completions,
         ),
         "ttlMs": 0,
         "cacheScope": "private",
@@ -328,6 +358,17 @@ def public_request_protocol_admission(
         else None
     )
     header_value = headers.get("mcp-protocol-version")
+    method = body.get("method")
+    if (
+        modern_meta is None
+        and header_value in MODERN_MCP_PROTOCOL_VERSIONS
+        and method in {"resources/list", "resources/read"}
+    ):
+        # ChatGPT fetches an already-advertised App template as a standard MCP
+        # resource request and does not repeat Gateway's stateless client _meta.
+        # Keep the relaxation scoped to the read-only first-party resource surface;
+        # routed tool/discovery requests still require the full modern envelope.
+        return validate_http_protocol_version(header_value)
     if modern_meta is not None or header_value in MODERN_MCP_PROTOCOL_VERSIONS:
         return validate_modern_request_envelope(body, headers)
     return validate_http_protocol_version(header_value)
@@ -387,9 +428,10 @@ def admit_upstream_capabilities(
 
 
 def admit_upstream_initialize(initialized: Any) -> CapabilityAdmission:
-    protocol_version = negotiate_legacy_initialize_protocol_version(
-        getattr(initialized, "protocolVersion", None)
-    )
+    protocol_version = getattr(initialized, "protocolVersion", None)
+    if protocol_version is None:
+        protocol_version = getattr(initialized, "protocol_version", None)
+    protocol_version = negotiate_legacy_initialize_protocol_version(protocol_version)
     return admit_upstream_capabilities(
         protocol_version=protocol_version,
         capabilities=getattr(initialized, "capabilities", None),

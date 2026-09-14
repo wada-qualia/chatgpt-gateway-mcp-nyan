@@ -508,11 +508,33 @@ def test_phase_one_machine_readable_contracts() -> None:
     openapi = yaml.safe_load(
         (root / "openapi" / "mcp-federation.openapi.yaml").read_text()
     )
+    dynamic_openapi = create_app().openapi()
     dynamic_paths = {
-        path for path in create_app().openapi()["paths"] if path.startswith("/api/mcp/")
+        path for path in dynamic_openapi["paths"] if path.startswith("/api/mcp/")
     }
     assert set(openapi["paths"]) == dynamic_paths
-    assert len(dynamic_paths) == 33
+    assert len(dynamic_paths) == 39
+    assert {
+        "/api/mcp/resources",
+        "/api/mcp/resources/{entity_id}/revisions",
+        "/api/mcp/resources/{entity_id}/exposure",
+        "/api/mcp/root-grants",
+        "/api/mcp/servers/{server_id}/roots/sync",
+        "/api/mcp/root-grants/{grant_id}/review",
+    } <= dynamic_paths
+    for schema_name in (
+        "McpCredentialMaterialCreate",
+        "McpCredentialMaterialRotate",
+        "McpOAuthAuthorizationComplete",
+        "McpOAuthAuthorizationStart",
+        "McpGatewayRootsSync",
+        "McpRootGrantOut",
+        "McpRootGrantReview",
+    ):
+        assert (
+            openapi["components"]["schemas"][schema_name]
+            == dynamic_openapi["components"]["schemas"][schema_name]
+        )
 
     asyncapi = yaml.safe_load(
         (root / "asyncapi" / "gateway-events.asyncapi.yaml").read_text()

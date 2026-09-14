@@ -890,3 +890,82 @@
     grid-template-columns: 1fr;
   }
 }
+
+.chat-contexts-page .section-title {
+  align-items: flex-start;
+}
+
+.chat-contexts-page .section-title h1,
+.chat-contexts-page .section-title p {
+  margin: 0;
+}
+
+.chat-contexts-page .section-title p {
+  color: #667085;
+  margin-top: 6px;
+  max-width: 860px;
+}
+
+.chat-context-stat-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.chat-context-stat {
+  background: #ffffff;
+  border: 1px solid #dfe4ea;
+  border-radius: 10px;
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+}
+
+.chat-context-stat span {
+  color: #667085;
+  font-size: 13px;
+}
+
+.chat-context-stat strong {
+  font-size: 24px;
+}
+
+.chat-context-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.chat-context-toolbar .search-field {
+  max-width: 520px;
+  width: 100%;
+}
+
+.chat-context-id {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.chat-context-activity {
+  display: grid;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+@media (max-width: 980px) {
+  .chat-context-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .chat-context-stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-context-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

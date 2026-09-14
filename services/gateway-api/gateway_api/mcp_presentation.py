@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+import jwt
 from fastapi import HTTPException, Request, status
 from jsonschema import Draft202012Validator, SchemaError
 from sqlalchemy import func
@@ -16,6 +17,14 @@ from sqlalchemy.orm import Session
 from .auth import decode_jwt
 from .events import emit_event
 from .mcp_chat_context import validate_chat_context_mode
+from .mcp_model_context_policy import (
+    context_budget_registry_payload,
+    context_policy_payload,
+    mode_within_configured_budget,
+    project_model_annotations,
+    project_model_metadata_text,
+    project_model_schema,
+)
 from .models import (
     McpProjectionGeneration,
     McpProjectionTool,
@@ -161,6 +170,7 @@ def presentation_profile_payload(profile_id: str) -> dict[str, Any]:
     profile["modes"] = [
         presentation_mode_payload(mode_id) for mode_id in profile["allowed_modes"]
     ]
+    profile["context_policy"] = context_budget_registry_payload()
     return {"id": profile_id, **profile}
 
 
@@ -203,17 +213,29 @@ def negotiate_presentation_mode(
     deferred_required = frozenset(
         PRESENTATION_MODES["deferred_native"]["required_capabilities"]
     )
-    if "deferred_native" in allowed_modes and deferred_required.issubset(normalized):
+    deferred_capable = (
+        "deferred_native" in allowed_modes and deferred_required.issubset(normalized)
+    )
+    if deferred_capable and mode_within_configured_budget(
+        configured_mode=configured_mode,
+        candidate_mode="deferred_native",
+    ):
         return "deferred_native", "smallest_capability_complete_surface"
     native_required = frozenset(
         PRESENTATION_MODES["native_projected"]["required_capabilities"]
     )
-    if configured_mode == "native_projected" and native_required.issubset(normalized):
-        return "native_projected", "immutable_native_capability_verified"
-    missing = sorted(
-        (deferred_required if configured_mode == "deferred_native" else native_required)
-        - normalized
+    native_capable = configured_mode == "native_projected" and native_required.issubset(
+        normalized
     )
+    if native_capable and mode_within_configured_budget(
+        configured_mode=configured_mode,
+        candidate_mode="native_projected",
+    ):
+        return "native_projected", "immutable_native_capability_verified"
+    required = deferred_required if configured_mode == "deferred_native" else native_required
+    missing = sorted(required - normalized)
+    if not missing and (deferred_capable or native_capable):
+        return "catalog_broker", "broker_fallback:context_budget"
     suffix = ",".join(missing) if missing else "policy_or_capability_mismatch"
     return "catalog_broker", f"broker_fallback:{suffix}"
 
@@ -229,7 +251,7 @@ def resolve_presentation_context(
         token = auth_header.split(" ", 1)[1].strip()
         try:
             claims = decode_jwt(token)
-        except Exception:
+        except jwt.PyJWTError:
             claims = {}
     client_id = str(claims.get("client_id") or "").strip() or None
     scopes = frozenset(str(claims.get("scope") or "").split())
@@ -443,9 +465,7 @@ def _is_additive_object_schema(old: dict[str, Any], new: dict[str, Any]) -> bool
         return False
     old_additional = old.get("additionalProperties", True)
     new_additional = new.get("additionalProperties", True)
-    if old_additional is True and new_additional is False:
-        return False
-    return True
+    return not (old_additional is True and new_additional is False)
 
 
 def classify_projection_change(
@@ -1044,14 +1064,16 @@ def native_tool_definition(entry: NativeProjectionEntry) -> dict[str, Any]:
     tool = entry.tool
     definition: dict[str, Any] = {
         "name": tool.public_name,
-        "description": tool.sanitized_description,
-        "inputSchema": tool.input_schema,
-        "annotations": dict(tool.annotations or {}),
+        "description": project_model_metadata_text(tool.sanitized_description),
+        "inputSchema": project_model_schema(tool.input_schema),
+        "annotations": project_model_annotations(tool.annotations or {}),
     }
     if tool.sanitized_title:
-        definition["title"] = tool.sanitized_title
+        title = project_model_metadata_text(tool.sanitized_title, maximum_chars=240)
+        if title:
+            definition["title"] = title
     if tool.output_schema is not None:
-        definition["outputSchema"] = tool.output_schema
+        definition["outputSchema"] = project_model_schema(tool.output_schema)
     return definition
 
 
@@ -1118,6 +1140,12 @@ def oauth_client_presentation_payload(client: OAuthClient) -> dict[str, Any]:
         "chat_context_mode": client.chat_context_mode,
         "selected_mode": selected_mode,
         "selection_reason": selection_reason,
+        "context_policy": context_policy_payload(
+            configured_mode=client.presentation_mode,
+            selected_mode=selected_mode,
+            selection_reason=selection_reason,
+            capabilities=client.presentation_capabilities or [],
+        ),
         "presentation_capabilities": list(client.presentation_capabilities or []),
         "workspace_plan": client.workspace_plan,
         "allowed_tool_names": list(client.allowed_tool_names or []),

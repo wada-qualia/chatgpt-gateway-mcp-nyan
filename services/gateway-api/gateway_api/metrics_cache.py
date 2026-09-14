@@ -22,6 +22,7 @@ from .models import (
     RecoveryLoop,
 )
 from .outbox import OutboxService
+from .task_progress import task_progress_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -313,6 +314,7 @@ class GatewayMetricsCache:
             lines.append(f'gateway_mcp_circuits{{state="{state}"}} {int(value)}')
         lines.append(f"gateway_mcp_catalogs_stale {int(federation.get('stale_catalogs') or 0)}")
         lines.extend(self.upstream_mcp_manager.telemetry.prometheus_lines())
+        lines.extend(task_progress_telemetry.prometheus_lines())
         return "\n".join(lines) + "\n"
 
     def _bound_statement_timeout(self, db: Session) -> None:

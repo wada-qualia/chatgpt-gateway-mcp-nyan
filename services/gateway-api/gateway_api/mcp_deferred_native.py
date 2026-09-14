@@ -13,6 +13,12 @@ from .mcp_federation_broker import (
     mcp_federation_broker_tool_names,
     resolve_authorized_revision,
 )
+from .mcp_model_context_policy import (
+    context_policy_payload,
+    project_model_annotations,
+    project_model_metadata_text,
+    project_model_schema,
+)
 from .mcp_presentation import PresentationContext, public_projection_name
 from .mcp_tool_registry import ToolDispatchTarget
 from .models import McpServer, McpTool, McpToolRevision, User
@@ -150,14 +156,16 @@ def deferred_native_tool_definition(entry: DeferredNativeEntry) -> dict[str, Any
     revision = item.revision
     definition: dict[str, Any] = {
         "name": entry.public_name,
-        "description": _bounded_text(revision.sanitized_description, limit=1800),
-        "inputSchema": revision.input_schema,
-        "annotations": dict(revision.annotations or {}),
+        "description": project_model_metadata_text(revision.sanitized_description),
+        "inputSchema": project_model_schema(revision.input_schema),
+        "annotations": project_model_annotations(revision.annotations or {}),
     }
     if revision.sanitized_title:
-        definition["title"] = _bounded_text(revision.sanitized_title, limit=240)
+        title = project_model_metadata_text(revision.sanitized_title, maximum_chars=240)
+        if title:
+            definition["title"] = title
     if revision.output_schema is not None:
-        definition["outputSchema"] = revision.output_schema
+        definition["outputSchema"] = project_model_schema(revision.output_schema)
     return definition
 
 
@@ -256,6 +264,7 @@ def deferred_native_profile_payload(
                 "name": entry.namespace_name,
                 "description": entry.namespace_description,
                 "direct_read_tools": 0,
+                "load_reason": "tenant_authorized_policy_filtered_current_read_only_revision",
             },
         )
         namespace["direct_read_tools"] += 1
@@ -292,6 +301,27 @@ def deferred_native_profile_payload(
         "selected_mode": context.selected_mode,
         "effective_mode": effective_mode,
         "selection_reason": context.selection_reason,
+        "context_policy": context_policy_payload(
+            configured_mode=context.configured_mode,
+            selected_mode=context.selected_mode,
+            selection_reason=context.selection_reason,
+            capabilities=context.capabilities,
+        ),
+        "load_explanation": {
+            "reason": "tenant_authorized_policy_filtered_current_read_only_revision",
+            "direct_tool_count": len(direct_names),
+            "namespace_count": len(namespaces),
+            "examples": [
+                {
+                    "tool": entry.public_name,
+                    "namespace": entry.namespace_name,
+                    "revision_id": entry.authorized.revision.id,
+                    "schema_hash": entry.authorized.revision.schema_hash,
+                }
+                for entry in entries[:24]
+            ],
+            "examples_truncated": len(entries) > 24,
+        },
         "policy_generation": context.policy_generation,
         "capabilities": sorted(context.capabilities),
         "authorization": {

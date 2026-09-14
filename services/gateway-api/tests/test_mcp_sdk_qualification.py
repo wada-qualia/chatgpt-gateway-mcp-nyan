@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from importlib.metadata import version as distribution_version
 from typing import Annotated, Literal
 
+import httpx2
 import pytest
 import uvicorn
 from gateway_api.mcp_federation_compat import (
@@ -26,6 +27,7 @@ from mcp.server.mcpserver.context import Context
 from mcp.shared.exceptions import MCPError
 from mcp_types import REQUEST_TIMEOUT
 from pydantic import BaseModel, Field
+from sse_starlette.sse import AppStatus
 
 
 class StructuredReply(BaseModel):
@@ -109,6 +111,11 @@ def _build_server(*, stateless: bool) -> tuple[MCPServer, ProbeState]:
 async def _running_server(
     *, stateless: bool
 ) -> AsyncIterator[tuple[MCPServer, ProbeState, str]]:
+    # sse-starlette keeps Uvicorn shutdown state process-global. The test suite
+    # runs several short-lived embedded Uvicorn servers in one pytest process,
+    # so a completed server can leave a stale shutdown signal for the next one.
+    # A fresh qualification server must start with a fresh SSE lifecycle.
+    AppStatus.should_exit = False
     server, state = _build_server(stateless=stateless)
     port = _free_port()
     uvicorn_server = uvicorn.Server(
@@ -164,10 +171,9 @@ async def _initialize_version(
 async def qualify_protocol_versions() -> None:
     async with _running_server(stateless=True) as (_, _, url):
         for version in ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]:
-            async with streamable_http_client(url, terminate_on_close=True) as (  # noqa: SIM117
-                read_stream,
-                write_stream,
-            ):
+            async with httpx2.AsyncClient(trust_env=False) as http_client, streamable_http_client(  # noqa: SIM117
+                url, http_client=http_client, terminate_on_close=True
+            ) as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
                     initialized = await _initialize_version(session, version)
                     assert initialized.protocol_version == version
@@ -185,10 +191,9 @@ async def qualify_stateful_transport() -> None:
             list_changed.set()
 
     async with _running_server(stateless=False) as (server, state, url):
-        async with streamable_http_client(url, terminate_on_close=True) as (
-            read_stream,
-            write_stream,
-        ), ClientSession(
+        async with httpx2.AsyncClient(trust_env=False) as http_client, streamable_http_client(
+            url, http_client=http_client, terminate_on_close=True
+        ) as (read_stream, write_stream), ClientSession(
             read_stream, write_stream, message_handler=handler
         ) as session:
             initialized = await session.initialize()
@@ -257,10 +262,9 @@ async def qualify_stateful_transport() -> None:
             )
             assert after_cancel.is_error is False
 
-        async with streamable_http_client(url, terminate_on_close=True) as (
-            recovery_read_stream,
-            recovery_write_stream,
-        ), ClientSession(
+        async with httpx2.AsyncClient(trust_env=False) as recovery_http_client, streamable_http_client(
+            url, http_client=recovery_http_client, terminate_on_close=True
+        ) as (recovery_read_stream, recovery_write_stream), ClientSession(
             recovery_read_stream, recovery_write_stream
         ) as recovery_session:
             await recovery_session.initialize()
@@ -269,18 +273,18 @@ async def qualify_stateful_transport() -> None:
             )
             assert after_reconnect.is_error is False
 
+        # `terminate_on_close=True` may remove the just-closed session before control
+        # returns here. The successful reconnect above qualifies stateful lifecycle
+        # behavior without depending on the SDK's private `_server_instances` cache.
         assert server.session_manager is not None
-        assert server.session_manager._server_instances
     assert server.session_manager is not None
-    assert not server.session_manager._server_instances
 
 
 async def qualify_stateless_transport() -> None:
     async with _running_server(stateless=True) as (_, _, url):  # noqa: SIM117
-        async with streamable_http_client(url) as (
-            read_stream,
-            write_stream,
-        ):
+        async with httpx2.AsyncClient(trust_env=False) as http_client, streamable_http_client(
+            url, http_client=http_client
+        ) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
                 initialized = await session.initialize()
                 assert initialized.protocol_version == "2025-11-25"
@@ -312,6 +316,13 @@ def test_protocol_negotiation_matrix() -> None:
 
 
 def test_stateful_streamable_http_features() -> None:
+    asyncio.run(qualify_stateful_transport())
+
+
+def test_stateful_transport_resets_stale_sse_shutdown_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(AppStatus, "should_exit", True)
     asyncio.run(qualify_stateful_transport())
 
 

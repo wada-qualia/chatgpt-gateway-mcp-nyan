@@ -1911,6 +1911,69 @@ class McpCapabilityEntityRevision(Base):
     )
 
 
+
+class McpCapabilityExposure(Base):
+    __tablename__ = "mcp_capability_exposures"
+    __table_args__ = (
+        UniqueConstraint(
+            "revision_id",
+            "projection_generation",
+            name="uq_mcp_capability_exposure_revision_generation",
+        ),
+        CheckConstraint(
+            "entity_kind in ('resource', 'resource_template', 'prompt')",
+            name="ck_mcp_capability_exposure_kind",
+        ),
+        CheckConstraint(
+            "mode in ('hidden', 'catalog_only', 'native_projected')",
+            name="ck_mcp_capability_exposure_mode",
+        ),
+        CheckConstraint(
+            "approval_class in ('none', 'operator', 'quorum', 'production')",
+            name="ck_mcp_capability_exposure_approval_class",
+        ),
+        Index(
+            "ix_mcp_capability_exposure_owner_enabled",
+            "owner_subject",
+            "enabled",
+        ),
+        Index(
+            "ix_mcp_capability_exposure_entity_mode",
+            "entity_id",
+            "mode",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_subject: Mapped[str] = mapped_column(String(255), index=True)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id"), index=True)
+    entity_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_capability_entities.id"), index=True
+    )
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_capability_entity_revisions.id"), index=True
+    )
+    entity_kind: Mapped[str] = mapped_column(String(40), index=True)
+    mode: Mapped[str] = mapped_column(String(40), default="hidden", index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    required_role: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    required_scope: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    approval_class: Mapped[str] = mapped_column(String(40), default="none")
+    projection_generation: Mapped[int] = mapped_column(Integer, default=0)
+    policy_generation: Mapped[int] = mapped_column(Integer, default=1)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    reviewed_by_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
 class McpCapabilitySubscription(Base):
     __tablename__ = "mcp_capability_subscriptions"
     __table_args__ = (

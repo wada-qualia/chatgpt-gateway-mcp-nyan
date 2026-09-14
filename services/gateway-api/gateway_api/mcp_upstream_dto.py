@@ -14,6 +14,7 @@ class McpCredentialMaterialCreate(McpUpstreamStrictModel):
     binding_type: Literal["oauth", "service_account"]
     provider: str | None = Field(default=None, max_length=120)
     audience: HttpUrl | None = None
+    issuer: str | None = Field(default=None, max_length=2048)
     scopes: list[str] = Field(default_factory=list, max_length=100)
     mode: Literal["bearer", "header", "oauth"]
     access_token: SecretStr | None = None
@@ -37,6 +38,8 @@ class McpCredentialMaterialCreate(McpUpstreamStrictModel):
             if self.refresh_token is not None and self.token_endpoint is None:
                 raise ValueError("OAuth refresh tokens require a token endpoint")
         else:
+            if self.issuer is not None:
+                raise ValueError("Service-account bindings cannot declare an OAuth issuer")
             if self.mode == "oauth":
                 raise ValueError("Service-account bindings cannot use OAuth mode")
             if self.mode == "bearer" and self.access_token is None:
@@ -83,6 +86,7 @@ class McpOAuthDiscoveryOut(BaseModel):
 class McpOAuthAuthorizationStart(McpUpstreamStrictModel):
     expected_version: int = Field(ge=1)
     discovery_snapshot_id: str | None = Field(default=None, max_length=36)
+    authorization_server: str | None = Field(default=None, max_length=2048)
     authorization_endpoint: HttpUrl | None = None
     token_endpoint: HttpUrl | None = None
     client_id: str = Field(min_length=1, max_length=512)
@@ -116,6 +120,7 @@ class McpOAuthAuthorizationStarted(BaseModel):
 class McpOAuthAuthorizationComplete(McpUpstreamStrictModel):
     state: str = Field(min_length=20, max_length=512)
     code: SecretStr
+    iss: str | None = Field(default=None, max_length=2048)
 
 
 class McpUpstreamCallInput(McpUpstreamStrictModel):

@@ -1,11 +1,16 @@
 openapi: 3.1.0
 info:
   title: MCP Federation Capability Control Plane Contract
-  version: 1.1.0
+  version: 1.3.0
   description: >-
-    Versioned control-plane contract. OAuth discovery and the Gateway Client ID
-    Metadata Document are exposed; Phase 8 resources, prompts, roots, sampling,
-    elicitation, logging, completion and task execution routes remain disabled.
+    Versioned control-plane contract. OAuth discovery, the Gateway Client ID
+    Metadata Document, Phase 10 tenant-scoped resource catalog/review routes and
+    Phase 12 root grant management routes are exposed. Root raw URIs are never
+    accepted from API callers; Gateway-origin raw URIs come only from operator
+    process configuration and remain outside durable storage. Resource reads remain
+    separately authorized through the public MCP surface; remote roots wire support
+    is protocol-version fenced, while sampling, elicitation, logging and task
+    execution remain disabled unless another versioned capability contract enables them.
 paths:
   /api/mcp/servers/{server_id}/oauth/discover:
     post:
@@ -29,6 +34,171 @@ paths:
               schema: {$ref: '#/components/schemas/OAuthDiscoverySnapshot'}
         '409': {description: Optimistic conflict or issuer selection required}
         '422': {description: Invalid resource, issuer, endpoint or scope metadata}
+  /api/mcp/resources:
+    get:
+      operationId: listFederatedMcpResources
+      summary: List tenant-scoped federated MCP resources and resource templates
+      parameters:
+        - name: server_id
+          in: query
+          required: false
+          schema: {type: [string, 'null'], format: uuid}
+        - name: entity_kind
+          in: query
+          required: false
+          schema: {type: [string, 'null'], enum: [resource, resource_template, null]}
+        - name: lifecycle_state
+          in: query
+          required: false
+          schema: {type: [string, 'null'], enum: [active, missing, disabled, null]}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 500, default: 200}
+      responses:
+        '200':
+          description: Tenant-scoped resource catalog metadata; raw local paths are not stored
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ResourceEntity'}
+        '422': {description: Invalid resource filter}
+  /api/mcp/resources/{entity_id}/revisions:
+    get:
+      operationId: listFederatedMcpResourceRevisions
+      summary: List immutable revisions for one tenant-scoped resource entity
+      parameters:
+        - name: entity_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 500, default: 100}
+      responses:
+        '200':
+          description: Immutable sanitized resource revision history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/CapabilityEntityRevision'}
+        '404': {description: Resource entity not found for tenant}
+  /api/mcp/resources/{entity_id}/exposure:
+    get:
+      operationId: getFederatedMcpResourceExposure
+      summary: Read the exact-revision resource exposure policy
+      parameters:
+        - name: entity_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Current exposure or null when no reviewed exposure exists
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - {$ref: '#/components/schemas/ResourceExposure'}
+                  - {type: 'null'}
+        '404': {description: Resource entity not found for tenant}
+    patch:
+      operationId: updateFederatedMcpResourceExposure
+      summary: Review and update an exact-revision resource exposure policy
+      parameters:
+        - name: entity_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 160}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ResourceExposureUpdate'}
+      responses:
+        '200':
+          description: Versioned resource exposure policy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ResourceExposure'}
+        '409': {description: Version, revision, trust or policy conflict}
+        '422': {description: Invalid exposure policy}
+  /api/mcp/root-grants:
+    get:
+      operationId: listMcpRootGrants
+      summary: List tenant-scoped MCP root grants using redacted descriptors only
+      parameters:
+        - name: server_id
+          in: query
+          required: false
+          schema: {type: [string, 'null'], format: uuid}
+        - name: status
+          in: query
+          required: false
+          schema: {type: [string, 'null'], enum: [pending, approved, revoked, expired, null]}
+      responses:
+        '200':
+          description: Root grants; raw filesystem paths and raw root URIs are absent
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/RootGrant'}
+        '422': {description: Invalid root grant filter}
+  /api/mcp/servers/{server_id}/roots/sync:
+    post:
+      operationId: syncGatewayMcpRoots
+      summary: Reconcile operator-configured roots for one Gateway-origin MCP server
+      parameters:
+        - name: server_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GatewayRootsSync'}
+      responses:
+        '200':
+          description: Reconciled hash-only root grants; new roots remain pending review
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/RootGrant'}
+        '409': {description: Optimistic server version conflict}
+        '422': {description: Non-Gateway server or invalid operator root configuration}
+  /api/mcp/root-grants/{grant_id}/review:
+    post:
+      operationId: reviewMcpRootGrant
+      summary: Approve or revoke one exact-version tenant-scoped root grant
+      parameters:
+        - name: grant_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RootGrantReview'}
+      responses:
+        '200':
+          description: Reviewed root grant
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RootGrant'}
+        '404': {description: Root grant not found for tenant}
+        '409': {description: Stale grant version, runtime binding or policy generation}
+        '422': {description: Invalid review decision}
   /oauth/client-metadata.json:
     get:
       operationId: getGatewayOAuthClientMetadata
@@ -39,8 +209,13 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/OAuthClientMetadata'}
-x-implementation-status: oauth-discovery-control-plane-exposed
+x-implementation-status: phase-12-roots-control-plane-locally-qualified
 x-capability-execution-enabled: false
+x-resource-read-execution-enabled: true
+x-roots-management-enabled: true
+x-root-raw-uri-client-input-enabled: false
+x-legacy-roots-wire-enabled: true
+x-modern-roots-wire-enabled: false
 components:
   schemas:
     CapabilitySnapshot:
@@ -49,6 +224,68 @@ components:
       $ref: ./capability-entity-revision.schema.json
     CapabilityEvent:
       $ref: ./capability-event.schema.json
+    ResourceExposure:
+      $ref: ./resource-exposure.schema.json
+    ResourceProvenance:
+      $ref: ./resource-provenance.schema.json
+    RootGrant:
+      $ref: ./root-grant.schema.json
+    GatewayRootsSync:
+      type: object
+      additionalProperties: false
+      required: [expected_server_version]
+      properties:
+        expected_server_version: {type: integer, minimum: 1}
+    RootGrantReview:
+      type: object
+      additionalProperties: false
+      required: [expected_version, decision]
+      properties:
+        expected_version: {type: integer, minimum: 1}
+        decision: {enum: [approved, revoked]}
+    ResourceEntity:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - owner_subject
+        - server_id
+        - entity_kind
+        - upstream_key
+        - normalized_key
+        - lifecycle_state
+        - version
+        - first_observed_at
+        - last_observed_at
+        - created_at
+        - updated_at
+      properties:
+        id: {type: string, format: uuid}
+        owner_subject: {type: string, minLength: 1, maxLength: 255}
+        server_id: {type: string, format: uuid}
+        entity_kind: {enum: [resource, resource_template]}
+        upstream_key: {type: string, pattern: '^[0-9a-f]{64}$'}
+        normalized_key: {type: string, pattern: '^[0-9a-f]{64}$'}
+        lifecycle_state: {enum: [active, missing, disabled]}
+        current_revision_id: {type: [string, 'null'], format: uuid}
+        version: {type: integer, minimum: 1}
+        first_observed_at: {type: string, format: date-time}
+        last_observed_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ResourceExposureUpdate:
+      type: object
+      additionalProperties: false
+      required: [expected_version, revision_id, mode, enabled, approval_class]
+      properties:
+        expected_version: {type: integer, minimum: 0}
+        revision_id: {type: string, format: uuid}
+        mode: {enum: [hidden, catalog_only, native_projected]}
+        enabled: {type: boolean}
+        required_role: {type: [string, 'null'], minLength: 1, maxLength: 120}
+        required_scope: {type: [string, 'null'], minLength: 1, maxLength: 160}
+        approval_class: {enum: [none, operator, quorum, production]}
+        projection_generation: {type: integer, minimum: 0, default: 0}
     OAuthDiscoveryRequest:
       type: object
       additionalProperties: false

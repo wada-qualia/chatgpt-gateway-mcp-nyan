@@ -147,6 +147,25 @@ paths:
       responses:
         '201':
           description: Thin client enrolled
+  /api/chat-contexts/v1/operator/contexts:
+    get:
+      operationId: listOperatorChatContexts
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 200
+      responses:
+        '200':
+          description: Owner-scoped identified ChatGPT contexts and activity counts
+        '401':
+          description: Authentication required
+        '403':
+          description: Policy denied
   /api/command-sessions:
     get:
       operationId: listCommandSessions

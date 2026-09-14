@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: ChatGPT Gateway MCP Federation Control Plane
-  version: 2.3.0
-  description: Machine-readable MCP federation, presentation-profile, immutable projection
-    and tenant-scoped hybrid catalog retrieval contract.
+  version: 2.4.0
+  description: Machine-readable MCP federation, presentation-profile, immutable projection,
+    tenant-scoped hybrid catalog retrieval and roots control-plane contract.
 paths:
   /api/mcp/credential-bindings:
     post:
@@ -562,6 +562,170 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/McpToolExposureOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/resources:
+    get:
+      tags:
+      - mcp-federation
+      summary: List Resource Capabilities
+      operationId: list_resource_capabilities_api_mcp_resources_get
+      parameters:
+      - name: server_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Server Id
+      - name: entity_kind
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Entity Kind
+      - name: lifecycle_state
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Lifecycle State
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 200
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/McpCapabilityEntityOut'
+                title: Response List Resource Capabilities Api Mcp Resources Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/resources/{entity_id}/revisions:
+    get:
+      tags:
+      - mcp-federation
+      summary: List Resource Revision History
+      operationId: list_resource_revision_history_api_mcp_resources__entity_id__revisions_get
+      parameters:
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 100
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/McpCapabilityEntityRevisionOut'
+                title: Response List Resource Revision History Api Mcp Resources  Entity
+                  Id  Revisions Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/resources/{entity_id}/exposure:
+    get:
+      tags:
+      - mcp-federation
+      summary: Get Resource Exposure
+      operationId: get_resource_exposure_api_mcp_resources__entity_id__exposure_get
+      parameters:
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/McpCapabilityExposureOut'
+                - type: 'null'
+                title: Response Get Resource Exposure Api Mcp Resources  Entity Id  Exposure
+                  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - mcp-federation
+      summary: Update Resource Exposure
+      operationId: update_resource_exposure_api_mcp_resources__entity_id__exposure_patch
+      parameters:
+      - name: entity_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Entity Id
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 160
+          title: Idempotency-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpCapabilityExposureUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpCapabilityExposureOut'
         '422':
           description: Validation Error
           content:
@@ -1237,8 +1401,489 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/root-grants:
+    get:
+      tags:
+      - mcp-federation
+      summary: Get Root Grants
+      operationId: get_root_grants_api_mcp_root_grants_get
+      parameters:
+      - name: server_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Server Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/McpRootGrantOut'
+                title: Response Get Root Grants Api Mcp Root Grants Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/servers/{server_id}/roots/sync:
+    post:
+      tags:
+      - mcp-federation
+      summary: Sync Gateway Roots
+      operationId: sync_gateway_roots_api_mcp_servers__server_id__roots_sync_post
+      parameters:
+      - name: server_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Server Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpGatewayRootsSync'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/McpRootGrantOut'
+                title: Response Sync Gateway Roots Api Mcp Servers  Server Id  Roots Sync Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/mcp/root-grants/{grant_id}/review:
+    post:
+      tags:
+      - mcp-federation
+      summary: Review Root Grant Route
+      operationId: review_root_grant_route_api_mcp_root_grants__grant_id__review_post
+      parameters:
+      - name: grant_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Grant Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpRootGrantReview'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpRootGrantOut'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    McpGatewayRootsSync:
+      properties:
+        expected_server_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Server Version
+      additionalProperties: false
+      type: object
+      required:
+      - expected_server_version
+      title: McpGatewayRootsSync
+    McpRootGrantOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          type: string
+          title: Server Id
+        runtime_connection_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Runtime Connection Id
+        root_uri_sha256:
+          type: string
+          title: Root Uri Sha256
+        root_uri_hint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Root Uri Hint
+        root_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Root Name
+        grant_scope:
+          type: string
+          title: Grant Scope
+        status:
+          type: string
+          title: Status
+        policy_generation:
+          type: integer
+          title: Policy Generation
+        version:
+          type: integer
+          title: Version
+        granted_by_subject:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Granted By Subject
+        granted_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Granted At
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - server_id
+      - root_uri_sha256
+      - grant_scope
+      - status
+      - policy_generation
+      - version
+      - created_at
+      - updated_at
+      title: McpRootGrantOut
+    McpRootGrantReview:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+        decision:
+          type: string
+          enum:
+          - approved
+          - revoked
+          title: Decision
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      - decision
+      title: McpRootGrantReview
+    McpCapabilityEntityOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          type: string
+          title: Server Id
+        entity_kind:
+          type: string
+          title: Entity Kind
+        upstream_key:
+          type: string
+          title: Upstream Key
+        normalized_key:
+          type: string
+          title: Normalized Key
+        lifecycle_state:
+          type: string
+          title: Lifecycle State
+        current_revision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Current Revision Id
+        version:
+          type: integer
+          title: Version
+        first_observed_at:
+          type: string
+          format: date-time
+          title: First Observed At
+        last_observed_at:
+          type: string
+          format: date-time
+          title: Last Observed At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - server_id
+      - entity_kind
+      - upstream_key
+      - normalized_key
+      - lifecycle_state
+      - version
+      - first_observed_at
+      - last_observed_at
+      - created_at
+      - updated_at
+      title: McpCapabilityEntityOut
+    McpCapabilityEntityRevisionOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          type: string
+          title: Server Id
+        entity_id:
+          type: string
+          title: Entity Id
+        entity_kind:
+          type: string
+          title: Entity Kind
+        revision_number:
+          type: integer
+          title: Revision Number
+        descriptor:
+          additionalProperties: true
+          type: object
+          title: Descriptor
+        argument_schema:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Argument Schema
+        content_metadata:
+          additionalProperties: true
+          type: object
+          title: Content Metadata
+        schema_hash:
+          type: string
+          title: Schema Hash
+        protocol_version:
+          type: string
+          title: Protocol Version
+        catalog_generation:
+          type: integer
+          title: Catalog Generation
+        discovered_at:
+          type: string
+          format: date-time
+          title: Discovered At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - server_id
+      - entity_id
+      - entity_kind
+      - revision_number
+      - descriptor
+      - content_metadata
+      - schema_hash
+      - protocol_version
+      - catalog_generation
+      - discovered_at
+      - created_at
+      title: McpCapabilityEntityRevisionOut
+    McpCapabilityExposureOut:
+      properties:
+        id:
+          type: string
+          title: Id
+        owner_subject:
+          type: string
+          title: Owner Subject
+        server_id:
+          type: string
+          title: Server Id
+        entity_id:
+          type: string
+          title: Entity Id
+        revision_id:
+          type: string
+          title: Revision Id
+        entity_kind:
+          type: string
+          title: Entity Kind
+        mode:
+          type: string
+          title: Mode
+        enabled:
+          type: boolean
+          title: Enabled
+        required_role:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Required Role
+        required_scope:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Required Scope
+        approval_class:
+          type: string
+          title: Approval Class
+        projection_generation:
+          type: integer
+          title: Projection Generation
+        policy_generation:
+          type: integer
+          title: Policy Generation
+        version:
+          type: integer
+          title: Version
+        reviewed_by_subject:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reviewed By Subject
+        reviewed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Reviewed At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - owner_subject
+      - server_id
+      - entity_id
+      - revision_id
+      - entity_kind
+      - mode
+      - enabled
+      - approval_class
+      - projection_generation
+      - policy_generation
+      - version
+      - created_at
+      - updated_at
+      title: McpCapabilityExposureOut
+    McpCapabilityExposureUpdate:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 0.0
+          title: Expected Version
+        revision_id:
+          type: string
+          maxLength: 36
+          title: Revision Id
+        mode:
+          type: string
+          enum:
+          - hidden
+          - catalog_only
+          - native_projected
+          title: Mode
+        enabled:
+          type: boolean
+          title: Enabled
+        required_role:
+          anyOf:
+          - type: string
+            maxLength: 120
+          - type: 'null'
+          title: Required Role
+        required_scope:
+          anyOf:
+          - type: string
+            maxLength: 160
+          - type: 'null'
+          title: Required Scope
+        approval_class:
+          type: string
+          enum:
+          - none
+          - operator
+          - quorum
+          - production
+          title: Approval Class
+        projection_generation:
+          type: integer
+          minimum: 0.0
+          title: Projection Generation
+          default: 0
+      additionalProperties: false
+      type: object
+      required:
+      - expected_version
+      - revision_id
+      - mode
+      - enabled
+      - approval_class
+      title: McpCapabilityExposureUpdate
     HTTPValidationError:
       properties:
         detail:
@@ -1507,6 +2152,12 @@ components:
             format: uri
           - type: 'null'
           title: Audience
+        issuer:
+          anyOf:
+          - type: string
+            maxLength: 2048
+          - type: 'null'
+          title: Issuer
         scopes:
           items:
             type: string
@@ -1603,6 +2254,12 @@ components:
             format: uri
           - type: 'null'
           title: Audience
+        issuer:
+          anyOf:
+          - type: string
+            maxLength: 2048
+          - type: 'null'
+          title: Issuer
         scopes:
           items:
             type: string
@@ -1970,6 +2627,12 @@ components:
           format: password
           title: Code
           writeOnly: true
+        iss:
+          anyOf:
+          - type: string
+            maxLength: 2048
+          - type: 'null'
+          title: Iss
       additionalProperties: false
       type: object
       required:
@@ -1988,6 +2651,12 @@ components:
             maxLength: 36
           - type: 'null'
           title: Discovery Snapshot Id
+        authorization_server:
+          anyOf:
+          - type: string
+            maxLength: 2048
+          - type: 'null'
+          title: Authorization Server
         authorization_endpoint:
           anyOf:
           - type: string

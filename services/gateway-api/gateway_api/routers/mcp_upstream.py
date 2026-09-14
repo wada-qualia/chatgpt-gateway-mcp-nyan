@@ -187,6 +187,7 @@ async def oauth_complete(
             actor_subject=user.subject,
             state=payload.state,
             code=payload.code.get_secret_value(),
+            iss=str(payload.iss) if payload.iss is not None else None,
         )
     except UpstreamMcpError as exc:
         raise upstream_http_error(exc) from exc

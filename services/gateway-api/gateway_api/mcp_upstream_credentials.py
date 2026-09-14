@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from .crypto import decrypt_text, encrypt_text
 from .events import emit_event
 from .mcp_federation import get_server, mcp_federation_service
+from .mcp_oauth_discovery import _canonical_url
 from .mcp_upstream import (
     UpstreamMcpError,
     UpstreamMcpManager,
@@ -41,6 +42,13 @@ def create_credential_material(
     payload: Any,
 ) -> McpCredentialBinding:
     material = material_to_secret_payload(payload)
+    oauth_issuer = (
+        _canonical_url(str(payload.issuer))
+        if payload.binding_type == "oauth" and payload.issuer is not None
+        else None
+    )
+    if oauth_issuer is not None:
+        material["issuer"] = oauth_issuer
     canonical = _canonical(material)
     secret_id = str(
         uuid.uuid5(_SECRET_NAMESPACE, f"{owner_subject}:create:{idempotency_key}")
@@ -71,7 +79,11 @@ def create_credential_material(
             "secret_blob_id": secret.id,
             "audience": str(payload.audience) if payload.audience else None,
             "scopes": payload.scopes,
-            "meta": {"mode": payload.mode, "backend_reference": True},
+            "meta": {
+                "mode": payload.mode,
+                "backend_reference": True,
+                **({"oauth_issuer": oauth_issuer} if oauth_issuer is not None else {}),
+            },
         },
     )
 
@@ -93,6 +105,26 @@ def rotate_credential_material(
     if binding.binding_type != payload.binding_type:
         raise HTTPException(status_code=422, detail="Credential binding type cannot change")
     material = material_to_secret_payload(payload)
+    oauth_issuer = None
+    if payload.binding_type == "oauth":
+        existing_issuer = (binding.meta or {}).get("oauth_issuer")
+        requested_issuer = (
+            _canonical_url(str(payload.issuer)) if payload.issuer is not None else None
+        )
+        if (
+            isinstance(existing_issuer, str)
+            and requested_issuer is not None
+            and existing_issuer != requested_issuer
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="OAuth credential issuer cannot change during rotation",
+            )
+        oauth_issuer = requested_issuer or (
+            existing_issuer if isinstance(existing_issuer, str) else None
+        )
+        if oauth_issuer is not None:
+            material["issuer"] = oauth_issuer
     canonical = _canonical(material)
     secret_id = str(
         uuid.uuid5(
@@ -124,6 +156,7 @@ def rotate_credential_material(
         "mode": payload.mode,
         "backend_reference": True,
         "last_rotation_key": idempotency_key,
+        **({"oauth_issuer": oauth_issuer} if oauth_issuer is not None else {}),
     }
     emit_event(
         db,
@@ -182,6 +215,8 @@ async def start_oauth_authorization(
 ) -> dict[str, Any]:
     server = get_server(db, owner_subject=owner_subject, server_id=server_id)
     discovery_snapshot: McpOAuthDiscoverySnapshot | None = None
+    expected_issuer: str | None = None
+    authorization_response_iss_required = False
     if payload.discovery_snapshot_id is not None:
         discovery_snapshot = db.get(
             McpOAuthDiscoverySnapshot, payload.discovery_snapshot_id
@@ -196,6 +231,21 @@ async def start_oauth_authorization(
             raise HTTPException(
                 status_code=409,
                 detail="OAuth discovery snapshot expired; rediscovery required",
+            )
+        expected_issuer = discovery_snapshot.authorization_server
+        authorization_response_iss_required = (
+            discovery_snapshot.authorization_server_metadata.get(
+                "authorization_response_iss_parameter_supported"
+            )
+            is True
+        )
+        if (
+            payload.authorization_server is not None
+            and _canonical_url(str(payload.authorization_server)) != expected_issuer
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="OAuth authorization server does not match the discovery snapshot",
             )
         authorization_endpoint = discovery_snapshot.authorization_endpoint
         token_endpoint = discovery_snapshot.token_endpoint
@@ -258,6 +308,8 @@ async def start_oauth_authorization(
         audience = str(payload.audience)
         scopes = list(payload.scopes)
         registration_mode = "static_preregistered"
+        if payload.authorization_server is not None:
+            expected_issuer = _canonical_url(str(payload.authorization_server))
 
     request_document = {
         "discovery_snapshot_id": payload.discovery_snapshot_id,
@@ -270,6 +322,8 @@ async def start_oauth_authorization(
         "audience": audience,
         "extra_authorization_parameters": payload.extra_authorization_parameters,
     }
+    if payload.authorization_server is not None:
+        request_document["authorization_server"] = expected_issuer
     request_sha256 = hashlib.sha256(_canonical(request_document).encode()).hexdigest()
     existing = (
         db.query(McpOAuthAuthorizationState)
@@ -297,12 +351,27 @@ async def start_oauth_authorization(
         raise HTTPException(status_code=409, detail="Optimistic version conflict")
     await manager.validate_endpoint(authorization_endpoint, purpose="oauth_authorization")
     await manager.validate_endpoint(token_endpoint, purpose="oauth_token")
+    if expected_issuer is not None:
+        await manager.validate_endpoint(expected_issuer, purpose="oauth_issuer")
     manager.validate_resource_audience(server.endpoint_url or "", audience)
     binding = None
     if server.credential_binding_id:
-        binding = _binding(db, owner_subject, server.credential_binding_id)
-        if binding.binding_type != "oauth":
+        candidate = _binding(db, owner_subject, server.credential_binding_id)
+        if candidate.binding_type != "oauth":
             raise HTTPException(status_code=422, detail="Server binding is not OAuth")
+        bound_issuer = (candidate.meta or {}).get("oauth_issuer")
+        if expected_issuer is None:
+            if isinstance(bound_issuer, str):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Issuer-bound OAuth reauthorization requires an explicit "
+                        "authorization_server"
+                    ),
+                )
+            binding = candidate
+        elif bound_issuer == expected_issuer:
+            binding = candidate
     if binding is None:
         seed_secret = SecretBlob(
             id=str(uuid.uuid4()),
@@ -327,6 +396,7 @@ async def start_oauth_authorization(
                 "backend_reference": True,
                 "discovery_snapshot_id": payload.discovery_snapshot_id,
                 "client_registration_mode": registration_mode,
+                **({"oauth_issuer": expected_issuer} if expected_issuer is not None else {}),
             },
             created_at=utcnow(),
             updated_at=utcnow(),
@@ -346,6 +416,8 @@ async def start_oauth_authorization(
         else None,
         "extra_authorization_parameters": payload.extra_authorization_parameters,
         "request_sha256": request_sha256,
+        "expected_issuer": expected_issuer,
+        "authorization_response_iss_required": authorization_response_iss_required,
     }
     pending_secret = SecretBlob(
         id=str(uuid.uuid4()),
@@ -379,6 +451,7 @@ async def start_oauth_authorization(
         **dict(binding.meta or {}),
         "discovery_snapshot_id": payload.discovery_snapshot_id,
         "client_registration_mode": registration_mode,
+        **({"oauth_issuer": expected_issuer} if expected_issuer is not None else {}),
     }
     binding.updated_at = utcnow()
     server.status = "authorizing"
@@ -410,6 +483,7 @@ async def complete_oauth_authorization(
     actor_subject: str,
     state: str,
     code: str,
+    iss: str | None = None,
 ) -> McpCredentialBinding:
     state_hash = hashlib.sha256(state.encode()).hexdigest()
     flow = (
@@ -437,6 +511,62 @@ async def complete_oauth_authorization(
     if pending is None or pending.owner_subject != owner_subject:
         raise HTTPException(status_code=400, detail="OAuth authorization secret is missing")
     secret_data = json.loads(decrypt_text(pending.ciphertext))
+    binding = _binding(db, owner_subject, flow.binding_id)
+    expected_issuer = secret_data.get("expected_issuer")
+    authorization_response_iss_required = (
+        secret_data.get("authorization_response_iss_required") is True
+    )
+    binding_issuer = (binding.meta or {}).get("oauth_issuer")
+    if not isinstance(expected_issuer, str) or not expected_issuer:
+        snapshot_id = (binding.meta or {}).get("discovery_snapshot_id")
+        if isinstance(snapshot_id, str) and snapshot_id:
+            snapshot = db.get(McpOAuthDiscoverySnapshot, snapshot_id)
+            if (
+                snapshot is not None
+                and snapshot.owner_subject == owner_subject
+                and snapshot.server_id == flow.server_id
+            ):
+                expected_issuer = snapshot.authorization_server
+                authorization_response_iss_required = (
+                    snapshot.authorization_server_metadata.get(
+                        "authorization_response_iss_parameter_supported"
+                    )
+                    is True
+                )
+    if (
+        (not isinstance(expected_issuer, str) or not expected_issuer)
+        and isinstance(binding_issuer, str)
+        and binding_issuer
+    ):
+        expected_issuer = binding_issuer
+    if isinstance(expected_issuer, str) and expected_issuer:
+        expected_issuer = _canonical_url(expected_issuer)
+        if (
+            isinstance(binding_issuer, str)
+            and binding_issuer
+            and _canonical_url(binding_issuer) != expected_issuer
+        ):
+            raise UpstreamMcpError(
+                "MCP_AUTH_REQUIRED",
+                "OAuth credential issuer binding does not match the authorization flow",
+                http_status=401,
+            )
+        if iss is None:
+            if authorization_response_iss_required:
+                raise UpstreamMcpError(
+                    "MCP_AUTH_REQUIRED",
+                    "OAuth authorization response omitted required issuer",
+                    http_status=401,
+                )
+        elif iss != expected_issuer:
+            raise UpstreamMcpError(
+                "MCP_AUTH_REQUIRED",
+                "OAuth authorization response issuer mismatch",
+                http_status=401,
+            )
+        await manager.validate_endpoint(expected_issuer, purpose="oauth_issuer")
+    else:
+        expected_issuer = None
     data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -471,6 +601,8 @@ async def complete_oauth_authorization(
         "client_id": secret_data["client_id"],
         "client_secret": client_secret,
     }
+    if expected_issuer is not None:
+        material["issuer"] = expected_issuer
     if isinstance(tokens.get("expires_in"), (int, float)):
         material["expires_at"] = (
             utcnow() + timedelta(seconds=float(tokens["expires_in"]))
@@ -482,8 +614,12 @@ async def complete_oauth_authorization(
         ciphertext=encrypt_text(_canonical(material)),
     )
     db.add(token_secret)
-    binding = _binding(db, owner_subject, flow.binding_id)
     binding.secret_blob_id = token_secret.id
+    if expected_issuer is not None:
+        binding.meta = {
+            **dict(binding.meta or {}),
+            "oauth_issuer": expected_issuer,
+        }
     binding.status = "active"
     binding.version += 1
     binding.rotated_at = utcnow()

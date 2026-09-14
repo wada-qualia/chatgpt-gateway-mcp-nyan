@@ -8,6 +8,10 @@ from ..auth import get_bearer_or_dev_user, get_current_user, require_role
 from ..config import Settings, get_settings
 from ..database import get_db
 from ..dto import (
+    McpCapabilityEntityOut,
+    McpCapabilityEntityRevisionOut,
+    McpCapabilityExposureOut,
+    McpCapabilityExposureUpdate,
     McpCatalogIndexBuildInput,
     McpCatalogIndexCommand,
     McpCatalogIndexGenerationOut,
@@ -15,10 +19,13 @@ from ..dto import (
     McpCredentialBindingOut,
     McpFederationPolicyOut,
     McpFederationPolicyUpdate,
+    McpGatewayRootsSync,
     McpInvocationOut,
     McpOAuthPresentationUpdate,
     McpProjectionCandidateCreate,
     McpProjectionVerificationCreate,
+    McpRootGrantOut,
+    McpRootGrantReview,
     McpRuntimeConnectionOut,
     McpServerCommand,
     McpServerCreate,
@@ -57,6 +64,19 @@ from ..mcp_presentation import (
     rollback_generation,
     update_oauth_client_profile,
 )
+from ..mcp_resource_federation import (
+    McpResourceFederationError,
+    get_current_resource_exposure,
+    get_resource_entity,
+    list_resource_entities,
+    list_resource_revisions,
+    upsert_resource_exposure,
+)
+from ..mcp_root_federation import (
+    McpRootFederationError,
+    list_root_grants,
+    review_root_grant,
+)
 from ..mcp_upstream import UpstreamMcpError, UpstreamMcpManager
 from ..models import OAuthClient, User
 from ..policy import enforce
@@ -69,6 +89,14 @@ def upstream_manager(request: Request) -> UpstreamMcpManager:
 
 
 def raise_upstream_error(exc: UpstreamMcpError) -> None:
+    raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
+
+
+def raise_resource_error(exc: McpResourceFederationError) -> None:
+    raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
+
+
+def raise_root_error(exc: McpRootFederationError) -> None:
     raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
 
 
@@ -311,6 +339,92 @@ async def update_server_policy(
     )
 
 
+@router.get("/root-grants", response_model=list[McpRootGrantOut])
+async def get_root_grants(
+    server_id: str | None = Query(default=None),
+    grant_status: str | None = Query(default=None, alias="status"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    enforce(user, action="read")
+    if grant_status not in {None, "pending", "approved", "revoked", "expired"}:
+        raise HTTPException(status_code=422, detail="Unsupported MCP root grant status")
+    if server_id is not None:
+        mcp_federation_service.get_server(
+            db, owner_subject=user.subject, server_id=server_id
+        )
+    return list_root_grants(
+        db,
+        owner_subject=user.subject,
+        server_id=server_id,
+        status=grant_status,
+    )
+
+
+@router.post(
+    "/servers/{server_id}/roots/sync", response_model=list[McpRootGrantOut]
+)
+async def sync_gateway_roots(
+    server_id: str,
+    payload: McpGatewayRootsSync,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    upstream: UpstreamMcpManager = Depends(upstream_manager),
+):
+    require_role(user, "gateway-admin")
+    enforce(user, action="update", owner_subject=user.subject)
+    server = mcp_federation_service.get_server(
+        db, owner_subject=user.subject, server_id=server_id
+    )
+    if server.origin != "gateway":
+        raise HTTPException(
+            status_code=422,
+            detail="Only Gateway-origin MCP servers use operator root configuration",
+        )
+    if server.version != payload.expected_server_version:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Optimistic version conflict: expected "
+                f"{payload.expected_server_version}, current {server.version}"
+            ),
+        )
+    try:
+        grants = upstream.reconcile_configured_gateway_roots(db, server=server)
+    except UpstreamMcpError as exc:
+        raise_upstream_error(exc)
+    await upstream.notify_root_grant_change(db, server=server)
+    return grants
+
+
+@router.post("/root-grants/{grant_id}/review", response_model=McpRootGrantOut)
+async def review_root_grant_route(
+    grant_id: str,
+    payload: McpRootGrantReview,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    upstream: UpstreamMcpManager = Depends(upstream_manager),
+):
+    require_role(user, "gateway-admin")
+    enforce(user, action="update", owner_subject=user.subject)
+    try:
+        grant = review_root_grant(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            grant_id=grant_id,
+            expected_version=payload.expected_version,
+            decision=payload.decision,
+        )
+    except McpRootFederationError as exc:
+        raise_root_error(exc)
+    server = mcp_federation_service.get_server(
+        db, owner_subject=user.subject, server_id=grant.server_id
+    )
+    await upstream.notify_root_grant_change(db, server=server)
+    return grant
+
+
 @router.get("/servers/{server_id}/tools", response_model=list[McpToolOut])
 async def list_server_tools(
     server_id: str,
@@ -390,6 +504,104 @@ async def update_tool_exposure(
         expected_version=expected_version,
         data=data,
     )
+
+
+@router.get("/resources", response_model=list[McpCapabilityEntityOut])
+async def list_resource_capabilities(
+    server_id: str | None = None,
+    entity_kind: str | None = Query(default=None),
+    lifecycle_state: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+    user: User = Depends(get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+):
+    enforce(user, action="read")
+    try:
+        return list_resource_entities(
+            db,
+            owner_subject=user.subject,
+            server_id=server_id,
+            entity_kind=entity_kind,
+            lifecycle_state=lifecycle_state,
+            limit=limit,
+        )
+    except McpResourceFederationError as exc:
+        raise_resource_error(exc)
+
+
+@router.get(
+    "/resources/{entity_id}/revisions",
+    response_model=list[McpCapabilityEntityRevisionOut],
+)
+async def list_resource_revision_history(
+    entity_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    user: User = Depends(get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+):
+    enforce(user, action="read")
+    try:
+        return list_resource_revisions(
+            db,
+            owner_subject=user.subject,
+            entity_id=entity_id,
+            limit=limit,
+        )
+    except McpResourceFederationError as exc:
+        raise_resource_error(exc)
+
+
+@router.get(
+    "/resources/{entity_id}/exposure",
+    response_model=McpCapabilityExposureOut | None,
+)
+async def get_resource_exposure(
+    entity_id: str,
+    user: User = Depends(get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+):
+    enforce(user, action="read")
+    try:
+        get_resource_entity(db, owner_subject=user.subject, entity_id=entity_id)
+        return get_current_resource_exposure(
+            db, owner_subject=user.subject, entity_id=entity_id
+        )
+    except McpResourceFederationError as exc:
+        raise_resource_error(exc)
+
+
+@router.patch(
+    "/resources/{entity_id}/exposure",
+    response_model=McpCapabilityExposureOut,
+)
+async def update_resource_exposure(
+    entity_id: str,
+    payload: McpCapabilityExposureUpdate,
+    request_key: str = Depends(idempotency_key),
+    user: User = Depends(get_current_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+):
+    require_role(user, "gateway-admin")
+    data = payload.model_dump()
+    expected_version = int(data.pop("expected_version"))
+    try:
+        return upsert_resource_exposure(
+            db,
+            owner_subject=user.subject,
+            actor_subject=user.subject,
+            entity_id=entity_id,
+            idempotency_key=request_key,
+            expected_version=expected_version,
+            revision_id=str(data["revision_id"]),
+            mode=str(data["mode"]),
+            enabled=bool(data["enabled"]),
+            required_role=data.get("required_role"),
+            required_scope=data.get("required_scope"),
+            approval_class=str(data["approval_class"]),
+            projection_generation=int(data.get("projection_generation") or 0),
+        )
+    except McpResourceFederationError as exc:
+        raise_resource_error(exc)
 
 
 @router.get("/invocations", response_model=list[McpInvocationOut])

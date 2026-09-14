@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import socket
+import uuid
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -12,6 +16,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from gateway_api.auth import get_current_user
 from gateway_api.config import get_settings
+from gateway_api.crypto import decrypt_text, encrypt_text
 from gateway_api.database import get_db
 from gateway_api.mcp_federation import mcp_federation_service
 from gateway_api.mcp_upstream import UpstreamMcpError, UpstreamMcpManager
@@ -29,12 +34,15 @@ from gateway_api.mcp_upstream_dto import (
 )
 from gateway_api.models import (
     Base,
+    McpCredentialBinding,
     McpInvocation,
     McpOAuthAuthorizationState,
+    McpOAuthDiscoverySnapshot,
     McpTool,
     McpToolRevision,
     SecretBlob,
     User,
+    utcnow,
 )
 from gateway_api.routers.mcp_federation import router as federation_router
 from gateway_api.routers.mcp_upstream import router as upstream_router
@@ -114,14 +122,25 @@ async def _running_oauth_server() -> AsyncIterator[tuple[str, list[dict[str, str
         body = parse_qs((await request.body()).decode())
         payload = {key: values[-1] for key, values in body.items()}
         exchanges.append(payload)
-        if payload.get("code") != "accepted-code":
-            raise HTTPException(status_code=400, detail="invalid code")
-        return {
-            "access_token": "oauth-access-token",
-            "refresh_token": "oauth-refresh-token",
-            "expires_in": 3600,
-            "token_type": "Bearer",
-        }
+        if payload.get("grant_type") == "authorization_code":
+            if payload.get("code") != "accepted-code":
+                raise HTTPException(status_code=400, detail="invalid code")
+            return {
+                "access_token": "oauth-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+            }
+        if payload.get("grant_type") == "refresh_token":
+            if payload.get("refresh_token") != "oauth-refresh-token":
+                raise HTTPException(status_code=400, detail="invalid refresh token")
+            return {
+                "access_token": "oauth-refreshed-access-token",
+                "refresh_token": "oauth-refresh-token",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+            }
+        raise HTTPException(status_code=400, detail="unsupported grant")
 
     port = _free_port()
     runner = uvicorn.Server(
@@ -182,6 +201,52 @@ def _server(db: Session, endpoint: str, binding_id: str | None = None):
             "credential_binding_id": binding_id,
         },
     )
+
+
+def _oauth_discovery_snapshot(
+    db: Session,
+    *,
+    server_id: str,
+    resource: str,
+    issuer: str,
+    authorization_endpoint: str,
+    token_endpoint: str,
+    response_iss_supported: bool,
+) -> McpOAuthDiscoverySnapshot:
+    now = utcnow()
+    snapshot = McpOAuthDiscoverySnapshot(
+        id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{server_id}:{issuer}")),
+        owner_subject="tenant-a",
+        server_id=server_id,
+        resource=resource,
+        resource_metadata_url=f"{resource.rstrip('/')}/.well-known/oauth-protected-resource",
+        authorization_server=issuer,
+        authorization_server_metadata_url=(
+            f"{issuer.rstrip('/')}/.well-known/oauth-authorization-server"
+        ),
+        discovery_mechanism="rfc8414",
+        authorization_endpoint=authorization_endpoint,
+        token_endpoint=token_endpoint,
+        registration_endpoint=None,
+        protected_resource_metadata={
+            "resource": resource,
+            "authorization_servers": [issuer],
+        },
+        authorization_server_metadata={
+            "issuer": issuer,
+            "authorization_response_iss_parameter_supported": response_iss_supported,
+        },
+        requested_scopes=["mcp:read"],
+        proposed_scopes=["mcp:read"],
+        metadata_hash=hashlib.sha256(f"{server_id}:{issuer}".encode()).hexdigest(),
+        created_by_subject="operator-a",
+        expires_at=now + timedelta(minutes=10),
+        created_at=now,
+    )
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+    return snapshot
 
 
 def test_private_networks_are_rejected_by_default() -> None:
@@ -668,6 +733,207 @@ def test_service_account_rotation_replay_and_revocation_fail_closed(
                 )
             assert auth_error.value.code == "MCP_AUTH_REQUIRED"
             db.refresh(server)
+            assert server.status == "auth_required"
+            await manager.stop()
+
+    asyncio.run(scenario())
+
+
+def test_oauth_authorization_response_issuer_is_checked_before_redemption(
+    db: Session,
+) -> None:
+    async def scenario() -> None:
+        async with _running_server() as endpoint, _running_oauth_server() as oauth:
+            oauth_base, exchanges = oauth
+            server = _server(db, endpoint)
+            manager = UpstreamMcpManager(
+                public_base_url="https://gateway.example.test",
+                allow_private_networks=True,
+                allow_insecure_http=True,
+            )
+            audience = f"{urlparse(endpoint).scheme}://{urlparse(endpoint).netloc}/"
+            issuer_a = f"{oauth_base}/issuer-a"
+            snapshot_a = _oauth_discovery_snapshot(
+                db,
+                server_id=server.id,
+                resource=audience,
+                issuer=issuer_a,
+                authorization_endpoint=f"{oauth_base}/authorize-a",
+                token_endpoint=f"{oauth_base}/token",
+                response_iss_supported=True,
+            )
+            started = await start_oauth_authorization(
+                db,
+                manager=manager,
+                owner_subject="tenant-a",
+                actor_subject="operator-a",
+                server_id=server.id,
+                idempotency_key="oauth-issuer-start-a",
+                payload=McpOAuthAuthorizationStart(
+                    expected_version=server.version,
+                    discovery_snapshot_id=snapshot_a.id,
+                    client_id="gateway-client",
+                    redirect_uri="https://gateway.example.test/mcp-connections",
+                    scopes=[],
+                ),
+            )
+
+            flow = db.query(McpOAuthAuthorizationState).one()
+            pending = db.get(SecretBlob, flow.secret_blob_id)
+            assert pending is not None
+            pending_data = json.loads(decrypt_text(pending.ciphertext))
+            assert pending_data["expected_issuer"] == issuer_a
+            assert pending_data["authorization_response_iss_required"] is True
+
+            with pytest.raises(UpstreamMcpError) as mismatch:
+                await complete_oauth_authorization(
+                    db,
+                    manager=manager,
+                    owner_subject="tenant-a",
+                    actor_subject="operator-a",
+                    state=started["state"],
+                    code="accepted-code",
+                    iss=f"{oauth_base}/issuer-b",
+                )
+            assert mismatch.value.code == "MCP_AUTH_REQUIRED"
+            assert "issuer mismatch" in mismatch.value.message
+            assert exchanges == []
+
+            with pytest.raises(UpstreamMcpError) as non_exact:
+                await complete_oauth_authorization(
+                    db,
+                    manager=manager,
+                    owner_subject="tenant-a",
+                    actor_subject="operator-a",
+                    state=started["state"],
+                    code="accepted-code",
+                    iss=f"{issuer_a}#spoof",
+                )
+            assert non_exact.value.code == "MCP_AUTH_REQUIRED"
+            assert "issuer mismatch" in non_exact.value.message
+            assert exchanges == []
+
+            with pytest.raises(UpstreamMcpError) as missing:
+                await complete_oauth_authorization(
+                    db,
+                    manager=manager,
+                    owner_subject="tenant-a",
+                    actor_subject="operator-a",
+                    state=started["state"],
+                    code="accepted-code",
+                )
+            assert missing.value.code == "MCP_AUTH_REQUIRED"
+            assert "omitted required issuer" in missing.value.message
+            assert exchanges == []
+
+            binding = await complete_oauth_authorization(
+                db,
+                manager=manager,
+                owner_subject="tenant-a",
+                actor_subject="operator-a",
+                state=started["state"],
+                code="accepted-code",
+                iss=issuer_a,
+            )
+            assert len(exchanges) == 1
+            assert binding.meta["oauth_issuer"] == issuer_a
+            token_secret = db.get(SecretBlob, binding.secret_blob_id)
+            assert token_secret is not None
+            token_material = json.loads(decrypt_text(token_secret.ciphertext))
+            assert token_material["issuer"] == issuer_a
+
+            token_material["expires_at"] = (utcnow() - timedelta(minutes=1)).isoformat()
+            token_secret.ciphertext = encrypt_text(
+                json.dumps(token_material, separators=(",", ":"), sort_keys=True)
+            )
+            db.commit()
+            headers = await manager.credentials.headers_for_server(db, server)
+            assert headers == {"Authorization": "Bearer oauth-refreshed-access-token"}
+            assert len(exchanges) == 2
+            assert exchanges[1]["grant_type"] == "refresh_token"
+            assert exchanges[1]["refresh_token"] == "oauth-refresh-token"
+            assert exchanges[1]["resource"] == audience
+            assert exchanges[1]["scope"] == "mcp:read"
+            db.refresh(binding)
+            refreshed_secret = db.get(SecretBlob, binding.secret_blob_id)
+            assert refreshed_secret is not None
+            refreshed_material = json.loads(decrypt_text(refreshed_secret.ciphertext))
+            assert refreshed_material["issuer"] == issuer_a
+
+            db.refresh(server)
+            issuer_b = f"{oauth_base}/issuer-b"
+            snapshot_b = _oauth_discovery_snapshot(
+                db,
+                server_id=server.id,
+                resource=audience,
+                issuer=issuer_b,
+                authorization_endpoint=f"{oauth_base}/authorize-b",
+                token_endpoint=f"{oauth_base}/token",
+                response_iss_supported=True,
+            )
+            started_b = await start_oauth_authorization(
+                db,
+                manager=manager,
+                owner_subject="tenant-a",
+                actor_subject="operator-a",
+                server_id=server.id,
+                idempotency_key="oauth-issuer-start-b",
+                payload=McpOAuthAuthorizationStart(
+                    expected_version=server.version,
+                    discovery_snapshot_id=snapshot_b.id,
+                    client_id="gateway-client",
+                    redirect_uri="https://gateway.example.test/mcp-connections",
+                    scopes=[],
+                ),
+            )
+            assert started_b["binding_id"] != binding.id
+            binding_b = db.get(McpCredentialBinding, started_b["binding_id"])
+            assert binding_b is not None
+            assert binding_b.meta["oauth_issuer"] == issuer_b
+            assert binding.meta["oauth_issuer"] == issuer_a
+            await manager.stop()
+
+    asyncio.run(scenario())
+
+
+def test_legacy_unstamped_oauth_refresh_fails_closed_without_exchange(
+    db: Session,
+) -> None:
+    async def scenario() -> None:
+        async with _running_server() as endpoint, _running_oauth_server() as oauth:
+            oauth_base, exchanges = oauth
+            audience = f"{urlparse(endpoint).scheme}://{urlparse(endpoint).netloc}/"
+            binding = create_credential_material(
+                db,
+                owner_subject="tenant-a",
+                actor_subject="operator-a",
+                idempotency_key="legacy-oauth-unbound",
+                payload=McpCredentialMaterialCreate(
+                    binding_type="oauth",
+                    mode="oauth",
+                    audience=audience,
+                    access_token=SecretStr("fixture-" + uuid.uuid4().hex),
+                    refresh_token=SecretStr("fixture-" + uuid.uuid4().hex),
+                    token_endpoint=f"{oauth_base}/token",
+                    client_id="legacy-client",
+                    expires_at=utcnow() - timedelta(minutes=1),
+                ),
+            )
+            server = _server(db, endpoint, binding.id)
+            manager = UpstreamMcpManager(
+                public_base_url="https://gateway.example.test",
+                allow_private_networks=True,
+                allow_insecure_http=True,
+            )
+
+            with pytest.raises(UpstreamMcpError) as auth_required:
+                await manager.credentials.headers_for_server(db, server)
+            assert auth_required.value.code == "MCP_AUTH_REQUIRED"
+            assert "issuer-bound credential" in auth_required.value.message
+            assert exchanges == []
+            db.refresh(binding)
+            db.refresh(server)
+            assert binding.status == "auth_required"
             assert server.status == "auth_required"
             await manager.stop()
 

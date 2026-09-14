@@ -536,6 +536,48 @@ def test_device_registration_flushes_secret_before_commit(client: TestClient, mo
     assert any(event == "commit" for event, _ in events)
 
 
+def test_device_delete_flushes_device_before_deleting_secret(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy.orm import Query
+    from sqlalchemy.orm import Session as OrmSession
+
+    created = client.post(
+        "/api/devices",
+        json={
+            "name": "delete-order-box",
+            "target": "robot@10.0.0.7:22",
+            "auth_type": "password",
+            "password": "plain-password",
+        },
+    )
+    assert created.status_code == 201
+    device_id = created.json()["id"]
+
+    events: list[tuple[str, tuple[str, ...]]] = []
+    original_flush = OrmSession.flush
+    original_query_delete = Query.delete
+
+    def tracked_flush(self, *args, **kwargs):
+        events.append(("flush", tuple(sorted(type(obj).__name__ for obj in self.deleted))))
+        return original_flush(self, *args, **kwargs)
+
+    def tracked_query_delete(self, *args, **kwargs):
+        entity = self.column_descriptions[0].get("entity") if self.column_descriptions else None
+        events.append(("query_delete", (getattr(entity, "__name__", ""),)))
+        return original_query_delete(self, *args, **kwargs)
+
+    monkeypatch.setattr(OrmSession, "flush", tracked_flush)
+    monkeypatch.setattr(Query, "delete", tracked_query_delete)
+
+    deleted = client.delete(f"/api/devices/{device_id}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"ok": True}
+    assert events.index(("flush", ("Device",))) < events.index(
+        ("query_delete", ("SecretBlob",))
+    )
+
+
 def test_device_detail_actions_update_test_and_delete(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     created = client.post(
         "/api/devices",
@@ -2989,7 +3031,7 @@ def test_phase_two_leases_fencing_and_guarded_server_write(client: TestClient) -
             "resource_id": "phase2-other-client",
             "branch_name": "agent/writer-b/fencing",
             "worktree_path": ".worktrees/writer-b-fencing",
-            "idempotency_key": "idem3-conflict",
+            "idempotency_key": "phase2-lease-fencing-b-conflict",
         },
         request_id=2222,
     )
@@ -3054,7 +3096,7 @@ def test_phase_two_leases_fencing_and_guarded_server_write(client: TestClient) -
                 "holder_agent_id": writer_b["id"],
                 "branch_name": "agent/writer-b/fencing",
                 "worktree_path": ".worktrees/writer-b-fencing",
-                "idempotency_key": "idem3",
+                "idempotency_key": "phase2-lease-fencing-b",
             },
             request_id=2227,
         )
@@ -3264,7 +3306,7 @@ def test_phase_two_conflict_handoff_and_coordinator_integration(
                 "candidate_change_ids": [change_b["file_change_id"]],
                 "comparison_change_ids": [change_a["file_change_id"]],
                 "source_lease_ids": [lease_b["id"]],
-                "idempotency_key": "idem4",
+                "idempotency_key": "phase2-integration-safe",
             },
             request_id=2240,
         )
@@ -3576,6 +3618,49 @@ def test_phase_two_additive_file_change_schema_upgrade(
         "ix_file_change_sets_lease_id",
         "ix_file_change_sets_fencing_token",
     }.issubset(indexes)
+
+
+def test_phase_two_git_worktree_state_and_gateway_validation(tmp_path: Path) -> None:
+    from gateway_api.agent_coordination import WriteLeaseContext
+    from gateway_api.routers.mcp import _local_git_state, _validate_write_git_state
+
+    source = tmp_path / "source"
+    worktree = tmp_path / "worktrees" / "writer"
+    source.mkdir()
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.email", "phase2@example.test"], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.name", "Phase 2 Test"], check=True)
+    (source / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(source), "commit", "-m", "base"], check=True, capture_output=True)
+    head = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
+    worktree.parent.mkdir()
+    subprocess.run(
+        ["git", "-C", str(source), "worktree", "add", "-b", "agent/phase2/writer", str(worktree), head],
+        check=True,
+        capture_output=True,
+    )
+
+    context = WriteLeaseContext(
+        room_id="room",
+        agent_id="agent",
+        lease_id="lease",
+        fencing_token=1,
+        base_commit=head,
+        branch_name="agent/phase2/writer",
+        worktree_path="worktrees/writer",
+        expected_head=head,
+        expected_sha256=None,
+        expected_absent=True,
+    )
+    local_state = _local_git_state(worktree, head)
+    _validate_write_git_state(local_state, context)
+
+    stale_context = WriteLeaseContext(
+        **{**context.__dict__, "expected_head": "0" * 40}
+    )
+    with pytest.raises(HTTPException, match="HEAD is stale"):
+        _validate_write_git_state(local_state, stale_context)
 
 
 def test_phase_two_guarded_thin_client_write_verifies_git_and_file_state(
@@ -4791,7 +4876,7 @@ def test_phase_four_automatic_assignment_respects_dependencies_capabilities_and_
                 "room_id": room["id"],
                 "title": "Prepare inputs",
                 "priority": 10,
-                "idempotency_key": "idem5",
+                "idempotency_key": "phase4-assignment-dependency",
             },
             request_id=4021,
         )
@@ -5465,7 +5550,7 @@ def test_phase_four_kill_revokes_active_permit_and_cancels_recovery(
                 "command_id": command["id"],
                 "executor_agent_id": executor["id"],
                 "action_class": "read",
-                "idempotency_key": "idem6",
+                "idempotency_key": "phase4-kill-approval",
             },
             request_id=4071,
         )
@@ -5611,7 +5696,7 @@ def test_phase_four_policy_generation_change_revokes_permit_and_stales_approval(
                 "command_id": command["id"],
                 "executor_agent_id": executor["id"],
                 "action_class": "read",
-                "idempotency_key": "idem7",
+                "idempotency_key": "phase4-generation-approval",
             },
             request_id=4081,
         )
@@ -7512,7 +7597,7 @@ def test_mcp_chat_context_required_bootstrap_retry_and_refresh(
     monkeypatch.setenv("GATEWAY_CHAT_CONTEXT_ENABLED", "true")
     monkeypatch.setenv(
         "GATEWAY_CHAT_CONTEXT_HMAC_KEY",
-        "test-hmac-key-000000000000000000",
+        "0123456789abcdef0123456789abcdef",
     )
     config.get_settings.cache_clear()
     try:
@@ -7767,7 +7852,7 @@ def test_mcp_chat_context_execution_state_isolation(
     monkeypatch.setenv("GATEWAY_CHAT_CONTEXT_ENABLED", "true")
     monkeypatch.setenv(
         "GATEWAY_CHAT_CONTEXT_HMAC_KEY",
-        "test-hmac-key-000000000000000000",
+        "0123456789abcdef0123456789abcdef",
     )
     config.get_settings.cache_clear()
     try:
@@ -8011,5 +8096,353 @@ def test_mcp_chat_context_execution_state_isolation(
             "thin_client_items",
         ):
             assert shared_a[key] == shared_b[key]
+    finally:
+        config.get_settings.cache_clear()
+
+
+def test_task_progress_apps_modern_http_surface_and_tenant_isolation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gateway_api import config
+    from gateway_api.database import SessionLocal
+    from gateway_api.models import AgentWorkItem, CollaborationRoom
+
+    monkeypatch.setenv("GATEWAY_TASK_PROGRESS_UI_ENABLED", "true")
+    config.get_settings.cache_clear()
+    try:
+        room_id = str(uuid.uuid4())
+        other_room_id = str(uuid.uuid4())
+        with SessionLocal() as db:
+            db.add_all(
+                [
+                    CollaborationRoom(
+                        id=room_id,
+                        owner_subject="dev:local",
+                        title="Task Progress HTTP integration",
+                        project_path="/home/robot/projects/gateway",
+                        repository_identity="gitlab:project:170",
+                        base_commit="a" * 40,
+                        status="active",
+                        policy={},
+                    ),
+                    CollaborationRoom(
+                        id=other_room_id,
+                        owner_subject="other-owner",
+                        title="Other tenant run",
+                        project_path="/srv/other",
+                        repository_identity="gitlab:project:999",
+                        base_commit="b" * 40,
+                        status="active",
+                        policy={},
+                    ),
+                    AgentWorkItem(
+                        id=str(uuid.uuid4()),
+                        owner_subject="dev:local",
+                        room_id=room_id,
+                        title="HTTP qualification",
+                        description="Verify first-party Apps surface",
+                        status="in_progress",
+                        priority=90,
+                        version=1,
+                        base_commit="a" * 40,
+                        dependencies=[],
+                        acceptance_criteria=["apps", "fallback"],
+                        required_capabilities=[],
+                        assignment_constraints={},
+                        result={"acceptance": [True, False]},
+                    ),
+                ]
+            )
+            db.commit()
+
+        def modern_meta(*, apps: bool = True) -> dict[str, object]:
+            extensions = (
+                {
+                    "io.modelcontextprotocol/ui": {
+                        "mimeTypes": ["text/html;profile=mcp-app"]
+                    }
+                }
+                if apps
+                else {}
+            )
+            return {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {
+                    "extensions": extensions
+                },
+                "io.modelcontextprotocol/clientInfo": {
+                    "name": "task-progress-http-test",
+                    "version": "1",
+                },
+            }
+
+        def call(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            name: str | None = None,
+            apps: bool = True,
+        ):
+            payload_params = dict(params or {})
+            payload_params["_meta"] = modern_meta(apps=apps)
+            headers = {
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": method,
+            }
+            if name is not None:
+                headers["Mcp-Name"] = name
+            return client.post(
+                "/mcp",
+                headers=headers,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": f"task-progress-{method}-{name or 'none'}",
+                    "method": method,
+                    "params": payload_params,
+                },
+            )
+
+        discovered = call("server/discover")
+        assert discovered.status_code == 200
+        capabilities = discovered.json()["result"]["capabilities"]
+        assert capabilities["resources"] == {}
+        assert capabilities["extensions"] == {"io.modelcontextprotocol/ui": {}}
+
+        no_apps = call("server/discover", apps=False)
+        assert no_apps.status_code == 200
+        assert "extensions" not in no_apps.json()["result"]["capabilities"]
+        assert no_apps.json()["result"]["capabilities"]["resources"] == {}
+        listed_resources_no_apps = call("resources/list", apps=False)
+        assert listed_resources_no_apps.status_code == 200
+        assert listed_resources_no_apps.json()["result"]["resources"][0]["uri"] == "ui://atlas/task-progress/v10.html"
+
+        listed_resources = call("resources/list")
+        assert listed_resources.status_code == 200
+        resource = listed_resources.json()["result"]["resources"][0]
+        assert resource["uri"] == "ui://atlas/task-progress/v10.html"
+        assert resource["mimeType"] == "text/html;profile=mcp-app"
+
+        read_resource = call(
+            "resources/read",
+            {"uri": "ui://atlas/task-progress/v1.html"},
+            name="ui://atlas/task-progress/v1.html",
+        )
+        assert read_resource.status_code == 200
+        resource_content = read_resource.json()["result"]["contents"][0]
+        assert resource_content["mimeType"] == "text/html;profile=mcp-app"
+        assert "ATLAS Task Progress" in resource_content["text"]
+
+        frozen_v2_resource = call(
+            "resources/read",
+            {"uri": "ui://atlas/task-progress/v2.html"},
+            name="ui://atlas/task-progress/v2.html",
+        )
+        assert frozen_v2_resource.status_code == 200
+        frozen_v2_content = frozen_v2_resource.json()["result"]["contents"][0]
+        assert frozen_v2_content["uri"] == "ui://atlas/task-progress/v2.html"
+        assert "isDefiniteStandardBridgeUnavailable" not in frozen_v2_content["text"]
+
+        frozen_v3_resource = call(
+            "resources/read",
+            {"uri": "ui://atlas/task-progress/v3.html"},
+            name="ui://atlas/task-progress/v3.html",
+        )
+        assert frozen_v3_resource.status_code == 200
+        frozen_v3_content = frozen_v3_resource.json()["result"]["contents"][0]
+        assert frozen_v3_content["uri"] == "ui://atlas/task-progress/v3.html"
+        assert "allowLegacyFallback" in frozen_v3_content["text"]
+
+        frozen_v4_resource = call(
+            "resources/read",
+            {"uri": "ui://atlas/task-progress/v4.html"},
+            name="ui://atlas/task-progress/v4.html",
+        )
+        assert frozen_v4_resource.status_code == 200
+        frozen_v4_content = frozen_v4_resource.json()["result"]["contents"][0]
+        assert frozen_v4_content["uri"] == "ui://atlas/task-progress/v4.html"
+        assert "allowLegacyFallback" not in frozen_v4_content["text"]
+        assert "message.params&&message.params.arguments||{}" in frozen_v4_content["text"]
+
+        frozen_v5_resource = call(
+            "resources/read",
+            {"uri": "ui://atlas/task-progress/v5.html"},
+            name="ui://atlas/task-progress/v5.html",
+        )
+        assert frozen_v5_resource.status_code == 200
+        frozen_v5_content = frozen_v5_resource.json()["result"]["contents"][0]
+        assert frozen_v5_content["uri"] == "ui://atlas/task-progress/v5.html"
+        assert "const input=params.arguments" in frozen_v5_content["text"]
+        assert "allowCompatibilityFallback" not in frozen_v5_content["text"]
+
+        frozen_v6_resource = call(
+            "resources/read",
+            {"uri": "ui://atlas/task-progress/v6.html"},
+            name="ui://atlas/task-progress/v6.html",
+        )
+        assert frozen_v6_resource.status_code == 200
+        frozen_v6_content = frozen_v6_resource.json()["result"]["contents"][0]
+        assert frozen_v6_content["uri"] == "ui://atlas/task-progress/v6.html"
+        assert "allowCompatibilityFallback" in frozen_v6_content["text"]
+        assert 'settleStandardBridge("ready")' in frozen_v6_content["text"]
+        assert "hostCapabilities" not in frozen_v6_content["text"]
+
+        frozen_v7_resource = call(
+            "resources/read",
+            {"uri": "ui://atlas/task-progress/v7.html"},
+            name="ui://atlas/task-progress/v7.html",
+        )
+        assert frozen_v7_resource.status_code == 200
+        frozen_v7_content = frozen_v7_resource.json()["result"]["contents"][0]
+        assert frozen_v7_content["uri"] == "ui://atlas/task-progress/v7.html"
+        assert "const capabilities=result&&result.hostCapabilities" in frozen_v7_content["text"]
+        assert 'capabilities.serverTools?"ready":"unavailable"' in frozen_v7_content["text"]
+        assert "mcp_tool_result" not in frozen_v7_content["text"]
+        assert "call_tool_result" not in frozen_v7_content["text"]
+
+        frozen_v8_resource = call(
+            "resources/read",
+            {"uri": "ui://atlas/task-progress/v8.html"},
+            name="ui://atlas/task-progress/v8.html",
+        )
+        assert frozen_v8_resource.status_code == 200
+        frozen_v8_content = frozen_v8_resource.json()["result"]["contents"][0]
+        assert frozen_v8_content["uri"] == "ui://atlas/task-progress/v8.html"
+        assert "mcp_tool_result" in frozen_v8_content["text"]
+        assert "call_tool_result" in frozen_v8_content["text"]
+        assert "function deferInitializeHostBridge()" not in frozen_v8_content["text"]
+
+        active_resource = call(
+            "resources/read",
+            {"uri": "ui://atlas/task-progress/v10.html"},
+            name="ui://atlas/task-progress/v10.html",
+        )
+        assert active_resource.status_code == 200
+        active_content = active_resource.json()["result"]["contents"][0]
+        assert active_content["uri"] == "ui://atlas/task-progress/v10.html"
+        assert "allowLegacyFallback" not in active_content["text"]
+        assert "const input=params.arguments" in active_content["text"]
+        assert "allowCompatibilityFallback" in active_content["text"]
+        assert "try{return await standardCallTool(name,toolArgs)}" in active_content["text"]
+        assert "const capabilities=result&&result.hostCapabilities" in active_content["text"]
+        assert 'capabilities.serverTools?"ready":"unavailable"' in active_content["text"]
+        assert "mcp_tool_result" in active_content["text"]
+        assert "call_tool_result" in active_content["text"]
+        assert "function initializeHostBridge()" in active_content["text"]
+        assert "function deferInitializeHostBridge()" in active_content["text"]
+        assert 'window.addEventListener("load",deferInitializeHostBridge,{once:true})' in active_content["text"]
+
+        template_fetch = client.post(
+            "/mcp",
+            headers={"MCP-Protocol-Version": "2026-07-28"},
+            json={
+                "jsonrpc": "2.0",
+                "id": "task-progress-template-fetch",
+                "method": "resources/read",
+                "params": {"uri": "ui://atlas/task-progress/v10.html"},
+            },
+        )
+        assert template_fetch.status_code == 200
+        template_content = template_fetch.json()["result"]["contents"][0]
+        assert template_content["uri"] == "ui://atlas/task-progress/v10.html"
+        assert template_content["mimeType"] == "text/html;profile=mcp-app"
+        assert "ATLAS Task Progress" in template_content["text"]
+
+        strict_tools_without_meta = client.post(
+            "/mcp",
+            headers={"MCP-Protocol-Version": "2026-07-28"},
+            json={
+                "jsonrpc": "2.0",
+                "id": "task-progress-strict-tools",
+                "method": "tools/list",
+                "params": {},
+            },
+        )
+        assert strict_tools_without_meta.status_code == 400
+        assert strict_tools_without_meta.json()["error"]["code"] == -32602
+
+        unsupported_template_fetch = client.post(
+            "/mcp",
+            headers={"MCP-Protocol-Version": "2027-01-01"},
+            json={
+                "jsonrpc": "2.0",
+                "id": "task-progress-template-unsupported",
+                "method": "resources/read",
+                "params": {"uri": "ui://atlas/task-progress/v1.html"},
+            },
+        )
+        assert unsupported_template_fetch.status_code == 400
+
+        tools_response = call("tools/list")
+        assert tools_response.status_code == 200
+        tools = {
+            tool["name"]: tool
+            for tool in tools_response.json()["result"]["tools"]
+        }
+        assert tools["render_task_progress"]["_meta"]["ui"]["resourceUri"] == (
+            "ui://atlas/task-progress/v10.html"
+        )
+        expected_security_schemes = [{"type": "oauth2", "scopes": []}]
+        for tool_name in (
+            "render_task_progress",
+            "task_progress_get",
+            "task_progress_cancel",
+        ):
+            assert tools[tool_name]["securitySchemes"] == expected_security_schemes
+            assert tools[tool_name]["_meta"]["securitySchemes"] == expected_security_schemes
+        assert tools["task_progress_cancel"]["annotations"]["destructiveHint"] is True
+
+        legacy = client.post(
+            "/mcp",
+            headers={"MCP-Protocol-Version": "2025-11-25"},
+            json={"jsonrpc": "2.0", "id": "legacy-task-progress", "method": "tools/list"},
+        )
+        assert legacy.status_code == 200
+        legacy_tools = {
+            tool["name"]: tool for tool in legacy.json()["result"]["tools"]
+        }
+        assert "render_task_progress" in legacy_tools
+        assert legacy_tools["render_task_progress"]["_meta"]["ui"]["resourceUri"] == "ui://atlas/task-progress/v10.html"
+        assert legacy_tools["render_task_progress"]["_meta"]["ui/resourceUri"] == "ui://atlas/task-progress/v10.html"
+
+        rendered = call(
+            "tools/call",
+            {
+                "name": "render_task_progress",
+                "arguments": {"run_id": room_id},
+            },
+            name="render_task_progress",
+        )
+        assert rendered.status_code == 200
+        render_result = rendered.json()["result"]
+        assert render_result["isError"] is False
+        assert render_result["structuredContent"]["run_id"] == room_id
+        assert "snapshot" not in render_result["structuredContent"]
+        assert (
+            render_result["_meta"]["atlas.task_progress_ui"]["snapshot"]["run_id"]
+            == room_id
+        )
+
+        forbidden = call(
+            "tools/call",
+            {
+                "name": "render_task_progress",
+                "arguments": {"run_id": other_room_id},
+            },
+            name="render_task_progress",
+        )
+        assert forbidden.status_code == 200
+        assert forbidden.json()["error"]["code"] == 404
+
+        cancel = call(
+            "tools/call",
+            {
+                "name": "task_progress_cancel",
+                "arguments": {"run_id": room_id},
+            },
+            name="task_progress_cancel",
+        )
+        assert cancel.status_code == 200
+        assert cancel.json()["error"]["code"] == 409
     finally:
         config.get_settings.cache_clear()

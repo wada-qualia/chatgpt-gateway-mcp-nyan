@@ -1,3 +1,4 @@
+# ruff: noqa: B008
 from __future__ import annotations
 
 import uuid
@@ -273,6 +274,7 @@ async def delete_device(
     secret_id = device.credential_secret_id
     event_payload = {"device_id": device.id, "host": device.host, "port": device.port}
     db.delete(device)
+    db.flush()
     if secret_id:
         db.query(SecretBlob).filter(SecretBlob.id == secret_id).delete()
     emit_event(

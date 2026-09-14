@@ -11,8 +11,10 @@ import {
   FileText,
   GitMerge,
   KeyRound,
+  MessageSquareText,
   Network,
   Plus,
+  Search,
   Server,
   Settings,
   ShieldCheck,
@@ -32,7 +34,7 @@ import {
   ThinClientPanel,
   type GatewayNavItem,
 } from "@gateway/components";
-import { Button } from "@gateway/ui";
+import { Button, SearchField, StatusPill, TableFrame } from "@gateway/ui";
 import {
   api,
   type AccountSettings,
@@ -54,6 +56,7 @@ export type GatewayPageId =
   | "workspaces"
   | "thin"
   | "monitoring"
+  | "chats"
   | "mcpConnections"
   | "activity"
   | "collaboration"
@@ -70,6 +73,7 @@ const pageRoutes: Record<GatewayPageId, string> = {
   workspaces: "/workspaces",
   thin: "/thin-clients",
   monitoring: "/monitoring",
+  chats: "/chats",
   mcpConnections: "/mcp-connections",
   activity: "/activity",
   collaboration: "/collaboration",
@@ -90,6 +94,8 @@ const pageByPath: Record<string, GatewayPageId> = {
   "/thin": "thin",
   "/monitoring": "monitoring",
   "/command-sessions": "monitoring",
+  "/chats": "chats",
+  "/chat-contexts": "chats",
   "/mcp-connections": "mcpConnections",
   "/activity": "activity",
   "/execution-history": "activity",
@@ -112,6 +118,7 @@ const navDefinitions = [
   { id: "workspaces", labelKey: "nav.workspaces", icon: Box },
   { id: "thin", labelKey: "nav.thinClients", icon: TerminalSquare },
   { id: "monitoring", labelKey: "nav.monitoring", icon: Activity },
+  { id: "chats", labelKey: "nav.chats", icon: MessageSquareText },
   { id: "mcpConnections", labelKey: "nav.mcpConnections", icon: Network },
   { id: "activity", labelKey: "nav.activity", icon: Activity },
   { id: "collaboration", labelKey: "nav.collaboration", icon: Bot },
@@ -238,6 +245,15 @@ export function MonitoringRemote() {
   return (
     <RemotePageFrame>
       <MonitoringPage controller={controller} />
+    </RemotePageFrame>
+  );
+}
+
+export function ChatContextsRemote() {
+  const controller = useGatewayController("chats");
+  return (
+    <RemotePageFrame>
+      <ChatContextsPage controller={controller} />
     </RemotePageFrame>
   );
 }
@@ -435,6 +451,100 @@ export function ChatGPTAccessPage({
   );
 }
 
+export function ChatContextsPage({ controller }: { controller: GatewayController }) {
+  const { t } = useTranslation();
+  const [search, setSearch] = useState("");
+  const normalizedSearch = search.trim().toLowerCase();
+  const contexts = useMemo(
+    () =>
+      controller.chatContexts.filter((context) =>
+        [context.context_id, context.chat_context, context.project_ref, context.state]
+          .filter(Boolean)
+          .join(" " )
+          .toLowerCase()
+          .includes(normalizedSearch),
+      ),
+    [controller.chatContexts, normalizedSearch],
+  );
+  const totals = controller.chatContexts.reduce(
+    (accumulator, context) => ({
+      tools: accumulator.tools + context.tool_call_count,
+      sessions: accumulator.sessions + context.command_session_count,
+      changes: accumulator.changes + context.file_change_count,
+    }),
+    { tools: 0, sessions: 0, changes: 0 },
+  );
+
+  return (
+    <div className="subview chat-contexts-page">
+      <div className="section-title">
+        <div>
+          <h1>{t("chats.title")}</h1>
+          <p>{t("chats.description")}</p>
+        </div>
+      </div>
+      <div className="chat-context-stat-grid">
+        <div className="chat-context-stat"><span>{t("chats.contexts")}</span><strong>{controller.chatContexts.length}</strong></div>
+        <div className="chat-context-stat"><span>{t("chats.toolCalls")}</span><strong>{totals.tools}</strong></div>
+        <div className="chat-context-stat"><span>{t("chats.sessions")}</span><strong>{totals.sessions}</strong></div>
+        <div className="chat-context-stat"><span>{t("chats.fileChanges")}</span><strong>{totals.changes}</strong></div>
+      </div>
+      <div className="chat-context-toolbar">
+        <SearchField
+          aria-label={t("chats.search")}
+          icon={<Search size={17} />}
+          onChange={setSearch}
+          placeholder={t("chats.search")}
+          value={search}
+        />
+        <span className="muted">{t("chats.visibleCount", { count: contexts.length })}</span>
+      </div>
+      <TableFrame compact className="chat-context-table">
+        <table>
+          <thead>
+            <tr>
+              <th>{t("common.fields.status")}</th>
+              <th>{t("chats.alias")}</th>
+              <th>{t("chats.contextId")}</th>
+              <th>{t("chats.project")}</th>
+              <th>{t("chats.binding")}</th>
+              <th>{t("chats.activity")}</th>
+              <th>{t("chats.lastSeen")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {controller.chatContextsState.isLoading ? (
+              <tr><td colSpan={7}>{t("chats.loading")}</td></tr>
+            ) : controller.chatContextsState.errorMessage ? (
+              <tr><td colSpan={7} role="alert">{controller.chatContextsState.errorMessage}</td></tr>
+            ) : contexts.length === 0 ? (
+              <tr><td colSpan={7}>{normalizedSearch ? t("chats.noMatch") : t("chats.empty")}</td></tr>
+            ) : (
+              contexts.map((context) => (
+                <tr key={context.context_id}>
+                  <td><StatusPill status={context.state} /></td>
+                  <td>
+                    {context.chat_context ? <span className="context-badge chat identified">#{context.chat_context}</span> : <span className="muted">{t("chats.noActiveAlias")}</span>}
+                  </td>
+                  <td><code className="chat-context-id">{context.context_id}</code></td>
+                  <td>{context.project_ref ?? "—"}</td>
+                  <td>{context.bound ? t("chats.bound") : t("chats.provisional")}</td>
+                  <td className="chat-context-activity">
+                    <span>{t("chats.toolCallsShort", { count: context.tool_call_count })}</span>
+                    <span>{t("chats.sessionsShort", { count: context.command_session_count })}</span>
+                    <span>{t("chats.changesShort", { count: context.file_change_count })}</span>
+                  </td>
+                  <td>{new Date(context.last_seen_at).toLocaleString()}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </TableFrame>
+    </div>
+  );
+}
+
 export function MonitoringPage({ controller }: { controller: GatewayController }) {
   const { t } = useTranslation();
   return (
@@ -443,6 +553,7 @@ export function MonitoringPage({ controller }: { controller: GatewayController }
         <h1>{t("monitoring.title")}</h1>
       </div>
       <MonitoringSessionsPanel
+        chatContexts={controller.chatContexts}
         emptyMessage={t("monitoring.empty")}
         errorMessage={controller.commandSessionsState.errorMessage}
         fileChanges={controller.fileChanges}
@@ -581,6 +692,7 @@ function ActiveGatewayPage({ controller }: { controller: GatewayController }) {
     return <ThinClientsPage controller={controller} />;
   if (controller.active === "monitoring")
     return <MonitoringPage controller={controller} />;
+  if (controller.active === "chats") return <ChatContextsPage controller={controller} />;
   if (controller.active === "mcpConnections") return <McpConnectionsPage />;
   if (controller.active === "activity") return <ActivityRegistryPage />;
   if (controller.active === "collaboration")
@@ -671,14 +783,23 @@ function useGatewayController(
   const grantsQuery = useQuery({ queryKey: ["grants"], queryFn: api.grants });
   const auditQuery = useQuery({ queryKey: ["audit"], queryFn: api.audit });
   const imagesQuery = useQuery({ queryKey: ["images"], queryFn: api.images });
+  const chatContextsQuery = useQuery({
+    queryKey: ["chatContexts"],
+    queryFn: api.chatContexts,
+    enabled: active === "chats" || active === "monitoring",
+    staleTime: 15000,
+    refetchInterval: 15000,
+  });
   const commandSessionsQuery = useQuery({
     queryKey: ["commandSessions"],
     queryFn: api.commandSessions,
+    enabled: active === "monitoring",
     refetchInterval: 3000,
   });
   const fileChangesQuery = useQuery({
     queryKey: ["fileChanges"],
     queryFn: () => api.fileChanges({ limit: 50 }),
+    enabled: active === "monitoring",
     refetchInterval: 5000,
   });
 
@@ -687,6 +808,7 @@ function useGatewayController(
   const thinClients = thinClientsQuery.data ?? [];
   const grants = grantsQuery.data ?? [];
   const audit = auditQuery.data ?? [];
+  const chatContexts = chatContextsQuery.data ?? [];
   const commandSessions = commandSessionsQuery.data ?? [];
   const fileChanges = fileChangesQuery.data ?? [];
   const selectedCommandSession = commandSessions.find(
@@ -988,6 +1110,8 @@ function useGatewayController(
     availableImages,
     beginWorkspaceEdit,
     cancelWorkspaceEdit,
+    chatContexts,
+    chatContextsState: getQueryState(chatContextsQuery),
     clientCommand,
     cloneWorkspace,
     commandSessionOutput: commandSessionOutputQuery.data,

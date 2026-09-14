@@ -22,7 +22,7 @@ from .migration_operations import CreateIndexConcurrently, DropIndexConcurrently
 
 BASELINE_REVISION = "20260725_0001"
 PROJECTION_REVISION = "20260725_0002"
-HEAD_REVISION = "20260828_0016"
+HEAD_REVISION = "20260908_0020"
 LEGACY_ANCHOR_TABLES = {"users", "secret_blobs", "oauth_clients"}
 REVISION_PATTERN = re.compile(r"^(?P<date>\d{8})_(?P<sequence>\d{4})$")
 
@@ -204,6 +204,7 @@ def _validate_legacy_identity(connection: Connection) -> None:
         "chat_contexts",
         "chat_context_aliases",
         "chat_context_events",
+        "mcp_capability_exposures",
     }
     required_legacy_tables = (
         set(_models.Base.metadata.tables) - adoptable_missing_tables
@@ -687,13 +688,47 @@ def run_schema_migrations(
         )
     lower = initial_revisions[0] if initial_revisions else "base"
     pending_scripts = tuple(reversed(tuple(scripts.iterate_revisions(head, lower))))
-    online_operations = _online_operations_for_scripts(pending_scripts)
-    online_receipts: tuple[OnlineIndexReceipt, ...] = ()
+    _online_operations_for_scripts(pending_scripts)
+    immediate_online_operations: list[
+        CreateIndexConcurrently | DropIndexConcurrently
+    ] = []
+    staged_online_operations: list[
+        tuple[str, tuple[CreateIndexConcurrently | DropIndexConcurrently, ...]]
+    ] = []
+    for script in pending_scripts:
+        declared = _online_operations_for_scripts((script,))
+        if not declared:
+            continue
+        prerequisite = getattr(
+            script.module, "online_operations_prerequisite_revision", None
+        )
+        if prerequisite is None:
+            immediate_online_operations.extend(declared)
+            continue
+        if not isinstance(prerequisite, str) or not prerequisite:
+            raise TypeError(
+                f"Alembic revision {script.revision} "
+                "online_operations_prerequisite_revision must be a revision string"
+            )
+        if prerequisite != script.down_revision:
+            raise RuntimeError(
+                f"Alembic revision {script.revision} online operation prerequisite "
+                f"{prerequisite} must match down_revision {script.down_revision}"
+            )
+        staged_online_operations.append((prerequisite, declared))
 
-    def upgrade_transactionally(connection: Connection) -> None:
+    def upgrade_transactionally(
+        connection: Connection,
+        target_revision: str,
+        *,
+        bootstrap_online_indexes: bool,
+        validate_metadata: bool,
+    ) -> None:
         nonlocal adopted
         config.attributes["connection"] = connection
-        config.attributes["gateway_online_index_bootstrap"] = bootstrap_empty
+        config.attributes[
+            "gateway_online_index_bootstrap"
+        ] = bootstrap_online_indexes
         try:
             with connection.begin():
                 current = _current_revisions(connection)
@@ -701,40 +736,78 @@ def run_schema_migrations(
                     _validate_legacy_identity(connection)
                     command.stamp(config, BASELINE_REVISION, purge=True)
                     adopted = True
-                command.upgrade(config, "head")
+                command.upgrade(config, target_revision)
                 current = _current_revisions(connection)
-                if current != (head,):
+                if current != (target_revision,):
                     raise RuntimeError(
-                        f"Database revision {current} did not reach Alembic head {head}"
+                        f"Database revision {current} did not reach Alembic "
+                        f"revision {target_revision}"
                     )
-                _validate_metadata_schema(connection)
+                if validate_metadata:
+                    _validate_metadata_schema(connection)
         finally:
             config.attributes.pop("connection", None)
             config.attributes.pop("gateway_online_index_bootstrap", None)
 
+    online_receipts: list[OnlineIndexReceipt] = []
     if active_engine.dialect.name == "postgresql":
         with active_engine.connect() as lock_connection:
             lock_key = _configure_postgresql_lock_session(lock_connection)
             try:
-                if not bootstrap_empty:
-                    online_receipts = _run_online_index_operations(
-                        active_engine,
-                        online_operations,
+                if bootstrap_empty:
+                    with active_engine.connect() as migration_connection:
+                        _configure_postgresql_migration_session(migration_connection)
+                        upgrade_transactionally(
+                            migration_connection,
+                            head,
+                            bootstrap_online_indexes=True,
+                            validate_metadata=True,
+                        )
+                else:
+                    online_receipts.extend(
+                        _run_online_index_operations(
+                            active_engine,
+                            tuple(immediate_online_operations),
+                        )
                     )
-                with active_engine.connect() as migration_connection:
-                    _configure_postgresql_migration_session(migration_connection)
-                    upgrade_transactionally(migration_connection)
+                    for prerequisite, operations in staged_online_operations:
+                        with active_engine.connect() as migration_connection:
+                            _configure_postgresql_migration_session(
+                                migration_connection
+                            )
+                            upgrade_transactionally(
+                                migration_connection,
+                                prerequisite,
+                                bootstrap_online_indexes=False,
+                                validate_metadata=False,
+                            )
+                        online_receipts.extend(
+                            _run_online_index_operations(active_engine, operations)
+                        )
+                    with active_engine.connect() as migration_connection:
+                        _configure_postgresql_migration_session(migration_connection)
+                        upgrade_transactionally(
+                            migration_connection,
+                            head,
+                            bootstrap_online_indexes=False,
+                            validate_metadata=True,
+                        )
             finally:
                 _release_postgresql_lock(lock_connection, lock_key)
     else:
         with active_engine.connect() as connection:
-            upgrade_transactionally(connection)
+            upgrade_transactionally(
+                connection,
+                head,
+                bootstrap_online_indexes=bootstrap_empty,
+                validate_metadata=True,
+            )
     return MigrationStatus(
         current_revisions=(head,),
         head_revision=head,
         at_head=True,
         adopted_legacy_schema=adopted,
-        online_index_operations=online_receipts,
+        online_index_operations=tuple(online_receipts),
     )
 
 

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gateway.invalid/contracts/mcp-federation/v1/root-grant.schema.json",
+  "title": "Gateway MCP root grant",
+  "description": "Tenant-scoped, operator-reviewed root authority. Persistent and API representations contain only SHA-256 identity plus redacted descriptors; raw filesystem paths and raw root URIs are not part of this contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "owner_subject",
+    "server_id",
+    "runtime_connection_id",
+    "root_uri_sha256",
+    "root_uri_hint",
+    "root_name",
+    "grant_scope",
+    "status",
+    "policy_generation",
+    "version",
+    "granted_by_subject",
+    "granted_at",
+    "expires_at",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "owner_subject": {"type": "string", "minLength": 1, "maxLength": 255},
+    "server_id": {"type": "string", "format": "uuid"},
+    "runtime_connection_id": {"type": ["string", "null"], "format": "uuid"},
+    "root_uri_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "root_uri_hint": {
+      "type": ["string", "null"],
+      "pattern": "^(?:local|gateway)-root:[0-9a-f]{12,64}$",
+      "maxLength": 77
+    },
+    "root_name": {"type": ["string", "null"], "minLength": 1, "maxLength": 240},
+    "grant_scope": {"enum": ["read"]},
+    "status": {"enum": ["pending", "approved", "revoked", "expired"]},
+    "policy_generation": {"type": "integer", "minimum": 1},
+    "version": {"type": "integer", "minimum": 1},
+    "granted_by_subject": {"type": ["string", "null"], "minLength": 1, "maxLength": 255},
+    "granted_at": {"type": ["string", "null"], "format": "date-time"},
+    "expires_at": {"type": ["string", "null"], "format": "date-time"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"}
+  }
+}

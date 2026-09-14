@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chatgpt-gateway-mcp-nyan"
-version = "0.13.9"
+version = "0.13.41"
 description = "Agent infrastructure control plane for MCP, remote execution, chat isolation, approvals and auditability."
 readme = "README.md"
 license = "MIT"

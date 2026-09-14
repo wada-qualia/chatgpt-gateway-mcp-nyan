@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from ..auth import decode_jwt, get_current_user
@@ -22,9 +23,25 @@ from ..chat_context import (
 )
 from ..config import Settings, get_settings
 from ..database import get_db
-from ..models import User
+from ..models import (
+    AgentToolCall,
+    ChatContext,
+    ChatContextAlias,
+    CommandSession,
+    FileChangeSet,
+    User,
+)
+from ..policy import enforce
 
 router = APIRouter(prefix="/api/chat-contexts/v1", tags=["chat-context"])
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 class CreateChatContextRequest(BaseModel):
@@ -61,6 +78,25 @@ class ChatContextBindingResponse(BaseModel):
     context_id: str
     key_version: int = Field(ge=1)
     newly_bound: bool
+
+
+class ChatContextOperatorSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    context_id: str
+    state: str
+    host_kind: str
+    project_ref: str | None = None
+    chat_context: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]{4}$")
+    generation: int = Field(ge=0)
+    alias_expires_at: datetime | None = None
+    bound: bool
+    created_at: datetime
+    last_seen_at: datetime
+    updated_at: datetime
+    tool_call_count: int = Field(ge=0)
+    command_session_count: int = Field(ge=0)
+    file_change_count: int = Field(ge=0)
 
 
 async def require_browser_extension_chat_context_principal(
@@ -139,6 +175,88 @@ def _lease_response(lease: ChatContextLease) -> ChatContextLeaseResponse:
         generation=lease.generation,
         expires_at=lease.expires_at,
     )
+
+
+@router.get(
+    "/operator/contexts",
+    response_model=list[ChatContextOperatorSummaryResponse],
+)
+def list_operator_contexts(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> list[ChatContextOperatorSummaryResponse]:
+    enforce(user, action="read")
+
+    tool_call_count = (
+        select(func.count())
+        .where(
+            AgentToolCall.owner_subject == user.subject,
+            AgentToolCall.chat_context_id == ChatContext.id,
+        )
+        .correlate(ChatContext)
+        .scalar_subquery()
+    )
+    command_session_count = (
+        select(func.count())
+        .where(
+            CommandSession.owner_subject == user.subject,
+            CommandSession.chat_context_id == ChatContext.id,
+        )
+        .correlate(ChatContext)
+        .scalar_subquery()
+    )
+    file_change_count = (
+        select(func.count())
+        .where(
+            FileChangeSet.owner_subject == user.subject,
+            FileChangeSet.chat_context_id == ChatContext.id,
+        )
+        .correlate(ChatContext)
+        .scalar_subquery()
+    )
+
+    rows = (
+        db.query(
+            ChatContext,
+            ChatContextAlias,
+            tool_call_count.label("tool_call_count"),
+            command_session_count.label("command_session_count"),
+            file_change_count.label("file_change_count"),
+        )
+        .outerjoin(
+            ChatContextAlias,
+            and_(
+                ChatContextAlias.context_id == ChatContext.id,
+                ChatContextAlias.owner_subject == ChatContext.owner_subject,
+                ChatContextAlias.status == "active",
+            ),
+        )
+        .filter(ChatContext.owner_subject == user.subject)
+        .order_by(ChatContext.last_seen_at.desc(), ChatContext.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        ChatContextOperatorSummaryResponse(
+            context_id=context.id,
+            state=context.state,
+            host_kind=context.host_kind,
+            project_ref=context.project_ref,
+            chat_context=alias.code if alias is not None else None,
+            generation=context.generation,
+            alias_expires_at=_as_utc(alias.expires_at) if alias is not None else None,
+            bound=context.conversation_ref_hmac is not None,
+            created_at=_as_utc(context.created_at),
+            last_seen_at=_as_utc(context.last_seen_at),
+            updated_at=_as_utc(context.updated_at),
+            tool_call_count=int(tool_calls or 0),
+            command_session_count=int(command_sessions or 0),
+            file_change_count=int(file_changes or 0),
+        )
+        for context, alias, tool_calls, command_sessions, file_changes in rows
+    ]
 
 
 @router.post("/contexts", response_model=ChatContextLeaseResponse)

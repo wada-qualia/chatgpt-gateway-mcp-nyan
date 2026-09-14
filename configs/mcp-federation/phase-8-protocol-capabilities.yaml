@@ -1,4 +1,4 @@
-version: 2
+version: 3
 task: CMG-FED-810
 current_qualification_task: CMG-FED-815
 specification:
@@ -19,6 +19,8 @@ specification:
     - Mcp-Name
   extension_admission: qualified_handlers_only
   qualified_server_extensions: []
+  qualified_public_server_extensions:
+    - io.modelcontextprotocol/ui
   apps_extension: io.modelcontextprotocol/ui
   tasks_extension: io.modelcontextprotocol/tasks
   draft_policy: reject_without_accepted_adr_and_pinned_sdk
@@ -90,6 +92,22 @@ server_capabilities:
     observed: true
     federated_end_to_end: false
     advertised_by_gateway: false
+first_party_extensions:
+  io.modelcontextprotocol/ui:
+    qualification_task: CMG-PRG-120
+    scope: gateway_owned_task_progress_only
+    upstream_federation: false
+    generic_resources_federation: false
+    protocol_eras:
+      legacy: textual_tool_fallback_without_extension_advertisement
+      modern: capability_and_mime_negotiated
+    resource_uri: ui://atlas/task-progress/v10.html
+    mime_type: text/html;profile=mcp-app
+    tools:
+      - render_task_progress
+      - task_progress_get
+      - task_progress_cancel
+
 utilities:
   initialization: legacy_only
   discovery: modern_server_discover
@@ -152,3 +170,12 @@ qualification:
       nodeids:
         - services/gateway-api/tests/test_mcp_2026_07_28_qualification.py::test_apps_and_tasks_are_observed_but_not_qualified
         - services/gateway-api/tests/test_mcp_2026_07_28_qualification.py::test_modern_unsupported_protocol_uses_dedicated_error_code
+    - id: first_party_task_progress_apps
+      levels: [unit, contract, integration, compatibility, failure_injection]
+      nodeids:
+        - services/gateway-api/tests/test_task_progress_app.py::test_apps_negotiation_is_modern_feature_and_policy_gated
+        - services/gateway-api/tests/test_task_progress_app.py::test_public_apps_qualification_does_not_qualify_upstream_apps
+        - services/gateway-api/tests/test_task_progress_app.py::test_task_progress_resource_is_immutable_self_contained_and_sandboxed
+        - services/gateway-api/tests/test_task_progress_app.py::test_task_progress_tools_have_strict_schemas_and_component_only_metadata
+        - services/gateway-api/tests/test_task_progress_app.py::test_task_progress_tool_result_keeps_complete_text_fallback
+        - services/gateway-api/tests/test_gateway_api.py::test_task_progress_apps_modern_http_surface_and_tenant_isolation

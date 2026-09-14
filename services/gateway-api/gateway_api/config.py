@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from typing import Literal
 
@@ -111,6 +112,7 @@ class Settings(BaseSettings):
         default=3600, ge=300, le=86400
     )
     gateway_chat_context_enabled: bool = False
+    gateway_task_progress_ui_enabled: bool = False
     gateway_chat_context_ttl_seconds: int = Field(default=172800, ge=300, le=2678400)
     gateway_chat_context_renew_threshold_seconds: int = Field(
         default=43200, ge=60, le=604800
@@ -129,6 +131,7 @@ class Settings(BaseSettings):
     gateway_mcp_upstream_allow_private_networks: bool = False
     gateway_mcp_upstream_allow_insecure_http: bool = False
     gateway_mcp_trusted_internal_endpoints: str = ""
+    gateway_mcp_gateway_roots_json: SecretStr = SecretStr("{}")
     gateway_mcp_upstream_connect_timeout_seconds: float = 10.0
     gateway_mcp_upstream_call_timeout_seconds: float = 30.0
     gateway_mcp_upstream_cancellation_grace_seconds: float = 3.0
@@ -294,6 +297,43 @@ class Settings(BaseSettings):
             for endpoint in self.gateway_mcp_trusted_internal_endpoints.split(",")
             if endpoint.strip()
         }
+
+    @property
+    def mcp_gateway_roots_by_server(self) -> dict[str, list[dict[str, str]]]:
+        text = self.gateway_mcp_gateway_roots_json.get_secret_value().strip()
+        if not text:
+            return {}
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("gateway_mcp_gateway_roots_json must be valid JSON") from exc
+        if not isinstance(payload, dict) or len(payload) > 256:
+            raise ValueError("gateway_mcp_gateway_roots_json must be a bounded object")
+        result: dict[str, list[dict[str, str]]] = {}
+        for raw_server_id, raw_roots in payload.items():
+            if not isinstance(raw_server_id, str):
+                raise ValueError("Gateway MCP root config server ids must be strings")
+            server_id = raw_server_id.strip()
+            if not server_id or len(server_id) > 160:
+                raise ValueError("Gateway MCP root config server id is invalid")
+            if not isinstance(raw_roots, list) or len(raw_roots) > 64:
+                raise ValueError("Gateway MCP root config entries must be bounded lists")
+            roots: list[dict[str, str]] = []
+            for item in raw_roots:
+                if not isinstance(item, dict) or set(item).difference({"uri", "name"}):
+                    raise ValueError("Gateway MCP root config entries must contain uri/name only")
+                uri = item.get("uri")
+                if not isinstance(uri, str) or not uri.strip() or len(uri) > 4096:
+                    raise ValueError("Gateway MCP root config uri is invalid")
+                root: dict[str, str] = {"uri": uri.strip()}
+                name = item.get("name")
+                if name is not None:
+                    if not isinstance(name, str) or not name.strip() or len(name) > 240:
+                        raise ValueError("Gateway MCP root config name is invalid")
+                    root["name"] = name.strip()
+                roots.append(root)
+            result[server_id] = roots
+        return result
 
     @property
     def supported_scopes(self) -> list[str]:

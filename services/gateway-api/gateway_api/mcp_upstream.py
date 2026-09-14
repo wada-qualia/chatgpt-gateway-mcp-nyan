@@ -49,6 +49,32 @@ from .mcp_federation_runtime import (
     resolve_endpoint,
     sanitize_untrusted,
 )
+from .mcp_prompt_federation import (
+    McpPromptFederationError,
+    normalize_completion_result,
+    normalize_prompt_descriptor,
+    normalize_prompt_get_result,
+    reconcile_prompt_catalog,
+    validate_completion_request,
+    validate_prompt_arguments,
+)
+from .mcp_resource_federation import (
+    McpResourceFederationError,
+    normalize_resource_descriptor,
+    normalize_resource_read_result,
+    reconcile_resource_catalog,
+    record_resource_content_revision,
+    resolve_live_resource_uri,
+    resource_provenance,
+)
+from .mcp_root_federation import (
+    McpRootFederationError,
+    approved_gateway_root_values,
+    approved_root_grants,
+    normalize_gateway_root_candidate,
+    reconcile_gateway_root_candidates,
+    thin_root_sync_payload,
+)
 from .mcp_rich_fidelity import (
     RichFidelityError,
     project_call_result,
@@ -57,6 +83,8 @@ from .mcp_rich_fidelity import (
     tool_descriptor_hash,
 )
 from .models import (
+    McpCapabilityEntity,
+    McpCapabilityEntityRevision,
     McpCredentialBinding,
     McpInvocation,
     McpRuntimeConnection,
@@ -178,6 +206,184 @@ class UpstreamProtocolHandshake:
     source: str
 
 
+_REMOTE_ROOTS_PROTOCOL_VERSIONS = frozenset(
+    {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
+)
+
+
+class GatewayUpstreamClientSession(ClientSession):
+    def _build_capabilities(self, version: str) -> types.ClientCapabilities:
+        capabilities = super()._build_capabilities(version)
+        if version not in _REMOTE_ROOTS_PROTOCOL_VERSIONS:
+            return capabilities.model_copy(update={"roots": None})
+        return capabilities
+
+
+@dataclass(slots=True)
+class ActiveRemoteRootSession:
+    connection_instance_id: str
+    owner_subject: str
+    server_id: str
+    policy_generation: int
+    roots: list[dict[str, str]]
+    root_set_sha256: str
+    session: ClientSession | None = None
+
+
+def _remote_root_set_sha256(roots: list[dict[str, str]]) -> str:
+    return sha256_json(
+        [
+            {
+                "root_uri_sha256": root["root_uri_sha256"],
+                "root_name": root["root_name"],
+            }
+            for root in sorted(roots, key=lambda item: item["root_uri_sha256"])
+        ]
+    )
+
+
+def _sdk_resource_descriptor(value: Any) -> dict[str, Any]:
+    if not hasattr(value, "model_dump"):
+        raise UpstreamMcpError(
+            "MCP_PROTOCOL_MISMATCH",
+            "Upstream MCP resource descriptor is not serializable",
+            http_status=422,
+        )
+    payload = value.model_dump(mode="json", by_alias=True, exclude_none=True)
+    if not isinstance(payload, dict):
+        raise UpstreamMcpError(
+            "MCP_PROTOCOL_MISMATCH",
+            "Upstream MCP resource descriptor is invalid",
+            http_status=422,
+        )
+    return payload
+
+
+def _sdk_prompt_descriptor(value: Any) -> dict[str, Any]:
+    if not hasattr(value, "model_dump"):
+        raise UpstreamMcpError(
+            "MCP_PROTOCOL_MISMATCH",
+            "Upstream MCP prompt descriptor is not serializable",
+            http_status=422,
+        )
+    payload = value.model_dump(mode="json", by_alias=True, exclude_none=True)
+    if not isinstance(payload, dict):
+        raise UpstreamMcpError(
+            "MCP_PROTOCOL_MISMATCH",
+            "Upstream MCP prompt descriptor is invalid",
+            http_status=422,
+        )
+    return payload
+
+
+async def _list_session_prompt_catalog(
+    session: ClientSession,
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    cursor: str | None = None
+    while True:
+        params = types.PaginatedRequestParams(cursor=cursor) if cursor else None
+        try:
+            page = await session.list_prompts(params=params)
+        except MCPError as exc:
+            if exc.code == -32601:
+                return []
+            raise
+        values = getattr(page, "prompts", None)
+        if not isinstance(values, list):
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Upstream MCP list_prompts response is invalid",
+                http_status=422,
+            )
+        result.extend(_sdk_prompt_descriptor(item) for item in values)
+        if len(result) > 5_000:
+            raise UpstreamMcpError(
+                "MCP_PROMPT_CATALOG_TOO_LARGE",
+                "Upstream MCP prompt catalog exceeds 5000 entries",
+                http_status=422,
+            )
+        cursor = page.next_cursor
+        if not cursor:
+            return result
+
+
+def _record_upstream_catalog_change_notification(
+    message: Any,
+    *,
+    tools_changed: asyncio.Event,
+    prompts_changed: asyncio.Event,
+) -> None:
+    root = getattr(message, "root", message)
+    if isinstance(root, types.ToolListChangedNotification):
+        tools_changed.set()
+    elif isinstance(root, types.PromptListChangedNotification):
+        prompts_changed.set()
+
+
+async def _list_session_prompt_catalog_stable(
+    session: ClientSession,
+    *,
+    prompts_changed: asyncio.Event,
+    max_reloads: int = 2,
+) -> tuple[list[dict[str, Any]], bool]:
+    snapshot = await _list_session_prompt_catalog(session)
+    list_changed_seen = False
+    for _ in range(max_reloads):
+        await asyncio.sleep(0)
+        if not prompts_changed.is_set():
+            return snapshot, list_changed_seen
+        list_changed_seen = True
+        prompts_changed.clear()
+        snapshot = await _list_session_prompt_catalog(session)
+    await asyncio.sleep(0)
+    if prompts_changed.is_set():
+        raise UpstreamMcpError(
+            "MCP_PROMPT_CATALOG_UNSTABLE",
+            "Upstream MCP prompt catalog changed repeatedly during refresh",
+            retryable=True,
+            http_status=409,
+        )
+    return snapshot, list_changed_seen
+
+
+async def _list_session_resource_catalog(
+    session: ClientSession,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    async def collect(method_name: str, field_name: str) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            params = types.PaginatedRequestParams(cursor=cursor) if cursor else None
+            try:
+                page = await getattr(session, method_name)(params=params)
+            except MCPError as exc:
+                if exc.code == -32601:
+                    return []
+                raise
+            values = getattr(page, field_name, None)
+            if not isinstance(values, list):
+                raise UpstreamMcpError(
+                    "MCP_PROTOCOL_MISMATCH",
+                    f"Upstream MCP {method_name} response is invalid",
+                    http_status=422,
+                )
+            result.extend(_sdk_resource_descriptor(item) for item in values)
+            if len(result) > 5_000:
+                raise UpstreamMcpError(
+                    "MCP_RESOURCE_CATALOG_TOO_LARGE",
+                    "Upstream MCP resource catalog exceeds 5000 entries",
+                    http_status=422,
+                )
+            cursor = page.next_cursor
+            if not cursor:
+                return result
+
+    resources = await collect("list_resources", "resources")
+    templates = await collect("list_resource_templates", "resource_templates")
+    return resources, templates
+
+
 class UpstreamMcpError(RuntimeError):
     def __init__(
         self,
@@ -292,6 +498,21 @@ class UpstreamCredentialResolver:
                 http_status=401,
             )
         self.manager.validate_resource_audience(server.endpoint_url or "", audience)
+        binding_issuer = (binding.meta or {}).get("oauth_issuer")
+        material_issuer = material.get("issuer")
+        issuer_stamps = (
+            isinstance(binding_issuer, str) and bool(binding_issuer),
+            isinstance(material_issuer, str) and bool(material_issuer),
+        )
+        if issuer_stamps[0] != issuer_stamps[1] or (
+            issuer_stamps[0] and binding_issuer != material_issuer
+        ):
+            self._mark_auth_required(db, server, binding)
+            raise UpstreamMcpError(
+                "MCP_AUTH_REQUIRED",
+                "OAuth credential issuer binding is invalid; re-authorization required",
+                http_status=401,
+            )
         access_token = material.get("access_token")
         expires_at = _parse_datetime(material.get("expires_at"))
         refresh_needed = not access_token or (
@@ -316,6 +537,22 @@ class UpstreamCredentialResolver:
         binding: McpCredentialBinding,
         material: dict[str, Any],
     ) -> dict[str, Any]:
+        binding_issuer = (binding.meta or {}).get("oauth_issuer")
+        material_issuer = material.get("issuer")
+        if (
+            not isinstance(binding_issuer, str)
+            or not binding_issuer
+            or not isinstance(material_issuer, str)
+            or not material_issuer
+            or binding_issuer != material_issuer
+        ):
+            self._mark_auth_required(db, server, binding)
+            raise UpstreamMcpError(
+                "MCP_AUTH_REQUIRED",
+                "OAuth refresh requires an issuer-bound credential; re-authorization required",
+                http_status=401,
+            )
+        await self.manager.validate_endpoint(binding_issuer, purpose="oauth_issuer")
         refresh_token = material.get("refresh_token")
         token_endpoint = material.get("token_endpoint")
         if not isinstance(refresh_token, str) or not refresh_token:
@@ -487,6 +724,7 @@ class UpstreamMcpManager:
         max_content_items: int = 16,
         max_catalog_tools: int = 500,
         thin_client_transport: ThinClientConnectionManager | None = None,
+        gateway_roots_by_server: dict[str, list[dict[str, str]]] | None = None,
     ) -> None:
         self.public_base_url = public_base_url.rstrip("/")
         self.allow_private_networks = allow_private_networks
@@ -525,6 +763,20 @@ class UpstreamMcpManager:
         self.max_content_items = max_content_items
         self.max_catalog_tools = max(1, int(max_catalog_tools))
         self.thin_client_transport = thin_client_transport or thin_client_manager
+        self.gateway_roots_by_server: dict[str, list[dict[str, str]]] = {}
+        for server_id, candidates in (gateway_roots_by_server or {}).items():
+            try:
+                normalized = [normalize_gateway_root_candidate(item) for item in candidates]
+            except McpRootFederationError as exc:
+                raise ValueError(f"Invalid Gateway MCP root config for server {server_id}") from exc
+            hashes = [item["root_uri_sha256"] for item in normalized]
+            if len(set(hashes)) != len(hashes):
+                raise ValueError(f"Duplicate Gateway MCP root config for server {server_id}")
+            self.gateway_roots_by_server[str(server_id)] = [
+                {"uri": item["uri"], "name": item["root_name"]}
+                for item in normalized
+            ]
+        self._active_remote_root_sessions: dict[str, ActiveRemoteRootSession] = {}
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._tenant_semaphores: dict[str, asyncio.Semaphore] = {}
         self._circuits: dict[str, CircuitState] = {}
@@ -540,6 +792,88 @@ class UpstreamMcpManager:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        self._active_remote_root_sessions.clear()
+
+    def configured_gateway_roots(self, server_id: str) -> list[dict[str, str]]:
+        return [dict(item) for item in self.gateway_roots_by_server.get(server_id, [])]
+
+    def reconcile_configured_gateway_roots(
+        self, db: Session, *, server: McpServer
+    ) -> list[Any]:
+        try:
+            grants = reconcile_gateway_root_candidates(
+                db,
+                owner_subject=server.owner_subject,
+                server=server,
+                candidates=self.configured_gateway_roots(server.id),
+            )
+        except McpRootFederationError as exc:
+            raise UpstreamMcpError(exc.code, str(exc), http_status=exc.http_status) from exc
+        db.commit()
+        return grants
+
+    def _approved_gateway_root_values(
+        self, db: Session, *, server: McpServer
+    ) -> list[dict[str, str]]:
+        return approved_gateway_root_values(
+            db,
+            owner_subject=server.owner_subject,
+            server=server,
+            candidates=self.configured_gateway_roots(server.id),
+        )
+
+    async def notify_root_grant_change(self, db: Session, *, server: McpServer) -> bool:
+        if server.origin == "thin_client":
+            runtime = (
+                db.query(McpRuntimeConnection)
+                .filter(
+                    McpRuntimeConnection.owner_subject == server.owner_subject,
+                    McpRuntimeConnection.server_id == server.id,
+                    McpRuntimeConnection.state == "online",
+                )
+                .order_by(McpRuntimeConnection.connected_at.desc())
+                .first()
+            )
+            if (
+                runtime is None
+                or not server.thin_client_id
+                or not server.runtime_id
+                or not server.local_server_id
+            ):
+                return False
+            grants = approved_root_grants(
+                db,
+                owner_subject=server.owner_subject,
+                server=server,
+                runtime=runtime,
+            )
+            payload = thin_root_sync_payload(server=server, runtime=runtime, grants=grants)
+            try:
+                return await self.thin_client_transport.send_mcp_control(
+                    server.thin_client_id,
+                    runtime_id=server.runtime_id,
+                    local_server_id=server.local_server_id,
+                    connection_instance_id=runtime.connection_instance_id,
+                    message=payload,
+                    best_effort=True,
+                )
+            except ThinClientMcpError:
+                return False
+        roots = self._approved_gateway_root_values(db, server=server)
+        digest = _remote_root_set_sha256(roots)
+        notified = False
+        for state in list(self._active_remote_root_sessions.values()):
+            if state.owner_subject != server.owner_subject or state.server_id != server.id:
+                continue
+            if state.root_set_sha256 == digest:
+                continue
+            state.policy_generation = server.policy_generation
+            state.roots = [dict(item) for item in roots]
+            state.root_set_sha256 = digest
+            if state.session is not None:
+                await state.session.send_roots_list_changed()
+                notified = True
+        return notified
 
     def readiness_snapshot(self, db: Session) -> dict[str, Any]:
         servers = db.scalars(select(McpServer)).all()
@@ -797,12 +1131,14 @@ class UpstreamMcpManager:
             return server
         generation = server.catalog_generation + 1
         tools_changed = asyncio.Event()
+        prompts_changed = asyncio.Event()
 
         async def handler(message: Any) -> None:
-            if isinstance(message, types.ServerNotification) and isinstance(
-                message.root, types.ToolListChangedNotification
-            ):
-                tools_changed.set()
+            _record_upstream_catalog_change_notification(
+                message,
+                tools_changed=tools_changed,
+                prompts_changed=prompts_changed,
+            )
 
         try:
             async with self._bounded(server):  # noqa: SIM117
@@ -819,6 +1155,14 @@ class UpstreamMcpManager:
                         cursor = page.next_cursor
                         if not cursor:
                             break
+                    resource_snapshot, resource_template_snapshot = (
+                        await _list_session_resource_catalog(session)
+                    )
+                    prompt_snapshot, prompts_list_changed_seen = (
+                        await _list_session_prompt_catalog_stable(
+                            session, prompts_changed=prompts_changed
+                        )
+                    )
             snapshot = []
             for tool in discovered:
                 descriptor = sdk_tool_descriptor(tool)
@@ -847,6 +1191,27 @@ class UpstreamMcpManager:
                     max_tools=self.max_catalog_tools,
                     tools_list_changed_seen=tools_changed.is_set(),
                 )
+                reconcile_resource_catalog(
+                    db,
+                    owner_subject=owner_subject,
+                    server_id=server.id,
+                    protocol_version=initialized.protocolVersion,
+                    catalog_generation=generation,
+                    resources=resource_snapshot,
+                    resource_templates=resource_template_snapshot,
+                )
+                reconcile_prompt_catalog(
+                    db,
+                    owner_subject=owner_subject,
+                    server_id=server.id,
+                    protocol_version=initialized.protocolVersion,
+                    catalog_generation=generation,
+                    prompts=prompt_snapshot,
+                )
+                if prompts_list_changed_seen:
+                    self.telemetry.increment(
+                        "catalog_list_changed", capability="prompts", origin="remote"
+                    )
             except Exception as exc:
                 raise UpstreamMcpError(
                     "MCP_PROTOCOL_MISMATCH",
@@ -1374,6 +1739,809 @@ class UpstreamMcpManager:
                 "Local MCP result does not match the MCP CallToolResult contract",
             ) from exc
 
+    @staticmethod
+    def _assert_exact_capability_binding(
+        *,
+        owner_subject: str,
+        server: McpServer,
+        entity: McpCapabilityEntity,
+        revision: McpCapabilityEntityRevision,
+        allowed_kinds: set[str],
+    ) -> None:
+        if (
+            server.owner_subject != owner_subject
+            or entity.owner_subject != owner_subject
+            or revision.owner_subject != owner_subject
+            or entity.server_id != server.id
+            or revision.server_id != server.id
+            or revision.entity_id != entity.id
+            or entity.current_revision_id != revision.id
+            or entity.entity_kind not in allowed_kinds
+            or revision.entity_kind != entity.entity_kind
+            or entity.lifecycle_state != "active"
+        ):
+            raise UpstreamMcpError(
+                "MCP_CAPABILITY_BINDING_STALE",
+                "MCP capability binding is no longer the exact current revision",
+                http_status=409,
+            )
+
+    @staticmethod
+    def _verify_prompt_descriptor_evidence(
+        raw_descriptor: dict[str, Any],
+        *,
+        entity: McpCapabilityEntity,
+        revision: McpCapabilityEntityRevision,
+    ) -> dict[str, Any]:
+        try:
+            name_hash, descriptor, argument_schema, content_metadata = (
+                normalize_prompt_descriptor(raw_descriptor)
+            )
+        except McpPromptFederationError as exc:
+            raise UpstreamMcpError(
+                exc.code,
+                exc.message,
+                http_status=exc.http_status,
+            ) from exc
+        schema_hash = sha256_json(
+            {
+                "entity_kind": "prompt",
+                "descriptor": descriptor,
+                "argument_schema": argument_schema,
+                "content_metadata": content_metadata,
+            }
+        )
+        if name_hash != entity.upstream_key or schema_hash != revision.schema_hash:
+            raise UpstreamMcpError(
+                "MCP_PROMPT_SCHEMA_CHANGED",
+                "MCP prompt descriptor no longer matches the selected exact revision",
+                http_status=409,
+            )
+        return descriptor
+
+    @staticmethod
+    def _verify_resource_template_descriptor_evidence(
+        raw_descriptor: dict[str, Any],
+        *,
+        entity: McpCapabilityEntity,
+        revision: McpCapabilityEntityRevision,
+    ) -> dict[str, Any]:
+        try:
+            uri_hash, descriptor, argument_schema, content_metadata = (
+                normalize_resource_descriptor(
+                    raw_descriptor,
+                    entity_kind="resource_template",
+                )
+            )
+        except McpResourceFederationError as exc:
+            raise UpstreamMcpError(
+                exc.code,
+                exc.message,
+                http_status=exc.http_status,
+            ) from exc
+        schema_hash = sha256_json(
+            {
+                "entity_kind": "resource_template",
+                "descriptor": descriptor,
+                "argument_schema": argument_schema,
+                "content_metadata": content_metadata,
+            }
+        )
+        if uri_hash != entity.upstream_key or schema_hash != revision.schema_hash:
+            raise UpstreamMcpError(
+                "MCP_RESOURCE_SCHEMA_CHANGED",
+                "MCP resource template no longer matches the selected exact revision",
+                http_status=409,
+            )
+        return descriptor
+
+    def _exact_thin_client_connection(
+        self,
+        db: Session,
+        *,
+        server: McpServer,
+    ) -> Any:
+        if not server.thin_client_id or not server.runtime_id or not server.local_server_id:
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Thin-client MCP server identity is incomplete",
+                http_status=409,
+            )
+        try:
+            connection = self.thin_client_transport.active_mcp_connection(
+                server.thin_client_id,
+                runtime_id=server.runtime_id,
+                local_server_id=server.local_server_id,
+            )
+        except ThinClientMcpError as exc:
+            raise UpstreamMcpError(
+                exc.code,
+                exc.message,
+                retryable=exc.retryable,
+                http_status=exc.http_status,
+                unknown_outcome=exc.unknown_outcome,
+            ) from exc
+        runtime = (
+            db.query(McpRuntimeConnection)
+            .filter(
+                McpRuntimeConnection.owner_subject == server.owner_subject,
+                McpRuntimeConnection.server_id == server.id,
+                McpRuntimeConnection.thin_client_id == server.thin_client_id,
+                McpRuntimeConnection.runtime_id == server.runtime_id,
+                McpRuntimeConnection.connection_instance_id
+                == connection.connection_instance_id,
+                McpRuntimeConnection.state == "online",
+            )
+            .one_or_none()
+        )
+        if runtime is None:
+            raise UpstreamMcpError(
+                "MCP_STALE_CONNECTION",
+                "Thin-client MCP runtime evidence is stale",
+                retryable=True,
+                http_status=409,
+            )
+        return connection
+
+    @staticmethod
+    def _thin_client_terminal_result(
+        response: dict[str, Any],
+        *,
+        expected_result_type: str,
+        expected_failed_type: str,
+        default_code: str,
+        default_message: str,
+        revision: McpCapabilityEntityRevision,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if response.get("type") == expected_failed_type:
+            raise UpstreamMcpError(
+                str(response.get("code") or default_code)[:120],
+                str(response.get("message") or default_message)[:500],
+                retryable=bool(response.get("retryable", False)),
+                http_status=int(response.get("http_status", 502)),
+            )
+        if response.get("type") != expected_result_type:
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Local MCP runtime returned an invalid capability result",
+                http_status=502,
+            )
+        try:
+            generation = int(response.get("catalog_generation", -1))
+        except (TypeError, ValueError):
+            generation = -1
+        if (
+            str(response.get("schema_hash") or "") != revision.schema_hash
+            or generation != revision.catalog_generation
+        ):
+            raise UpstreamMcpError(
+                "MCP_CAPABILITY_SCHEMA_CHANGED",
+                "Local MCP result does not match the selected catalog revision",
+                http_status=409,
+            )
+        descriptor = response.get("descriptor")
+        result = response.get("result")
+        if not isinstance(descriptor, dict) or not isinstance(result, dict):
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Local MCP runtime returned malformed capability evidence",
+                http_status=502,
+            )
+        return descriptor, result
+
+    async def get_exact_prompt(
+        self,
+        db: Session,
+        *,
+        owner_subject: str,
+        server: McpServer,
+        entity: McpCapabilityEntity,
+        revision: McpCapabilityEntityRevision,
+        arguments: dict[str, str],
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        self._assert_exact_capability_binding(
+            owner_subject=owner_subject,
+            server=server,
+            entity=entity,
+            revision=revision,
+            allowed_kinds={"prompt"},
+        )
+        try:
+            validated_arguments = validate_prompt_arguments(revision, arguments)
+            async with self._bounded(server):
+                if server.origin == "thin_client":
+                    connection = self._exact_thin_client_connection(db, server=server)
+                    try:
+                        response = await self.thin_client_transport.request_mcp_prompt(
+                            server.thin_client_id,
+                            runtime_id=server.runtime_id,
+                            local_server_id=server.local_server_id,
+                            connection_instance_id=connection.connection_instance_id,
+                            request_id=str(uuid.uuid4()),
+                            server_id=server.id,
+                            entity_id=entity.id,
+                            revision_id=revision.id,
+                            schema_hash=revision.schema_hash,
+                            prompt_name_sha256=entity.upstream_key,
+                            catalog_generation=revision.catalog_generation,
+                            arguments=validated_arguments,
+                            timeout_seconds=timeout_seconds or self.call_timeout_seconds,
+                        )
+                    except ThinClientMcpError as exc:
+                        raise UpstreamMcpError(
+                            exc.code,
+                            exc.message,
+                            retryable=exc.retryable,
+                            http_status=exc.http_status,
+                            unknown_outcome=exc.unknown_outcome,
+                        ) from exc
+                    raw_descriptor, raw_result = self._thin_client_terminal_result(
+                        response,
+                        expected_result_type="mcp_prompt_get_result",
+                        expected_failed_type="mcp_prompt_get_failed",
+                        default_code="MCP_PROMPT_GET_FAILED",
+                        default_message="Local MCP prompt retrieval failed",
+                        revision=revision,
+                    )
+                    self._verify_prompt_descriptor_evidence(
+                        raw_descriptor,
+                        entity=entity,
+                        revision=revision,
+                    )
+                else:
+                    async with self._session(db, server) as (session, _handshake, _):
+                        raw_descriptor = None
+                        for candidate in await _list_session_prompt_catalog(session):
+                            try:
+                                name_hash, _descriptor, _schema, _metadata = (
+                                    normalize_prompt_descriptor(candidate)
+                                )
+                            except McpPromptFederationError:
+                                continue
+                            if name_hash == entity.upstream_key:
+                                raw_descriptor = candidate
+                                break
+                        if raw_descriptor is None:
+                            raise UpstreamMcpError(
+                                "MCP_PROMPT_NOT_FOUND",
+                                "The selected MCP prompt is no longer present upstream",
+                                http_status=404,
+                            )
+                        descriptor = self._verify_prompt_descriptor_evidence(
+                            raw_descriptor,
+                            entity=entity,
+                            revision=revision,
+                        )
+                        upstream_name = str(descriptor.get("upstream_name") or "").strip()
+                        if not upstream_name:
+                            raise UpstreamMcpError(
+                                "MCP_PROTOCOL_MISMATCH",
+                                "The selected MCP prompt has no executable upstream name",
+                                http_status=502,
+                            )
+                        try:
+                            result = await asyncio.wait_for(
+                                session.get_prompt(
+                                    upstream_name,
+                                    validated_arguments,
+                                    allow_input_required=False,
+                                ),
+                                timeout=timeout_seconds or self.call_timeout_seconds,
+                            )
+                        except TimeoutError as exc:
+                            raise UpstreamMcpError(
+                                "MCP_PROMPT_GET_TIMEOUT",
+                                "Upstream MCP prompt retrieval exceeded the Gateway deadline",
+                                retryable=True,
+                                http_status=504,
+                            ) from exc
+                        if not hasattr(result, "model_dump"):
+                            raise UpstreamMcpError(
+                                "MCP_PROTOCOL_MISMATCH",
+                                "Upstream MCP prompt result is invalid",
+                                http_status=502,
+                            )
+                        raw_result = result.model_dump(
+                            mode="json",
+                            by_alias=True,
+                            exclude_none=True,
+                        )
+                normalized = normalize_prompt_get_result(
+                    raw_result,
+                    max_text_bytes=self.max_text_bytes,
+                    max_result_bytes=self.max_result_bytes,
+                    max_content_items=self.max_content_items,
+                )
+                self._record_success(server.id)
+                return normalized
+        except UpstreamMcpError as exc:
+            self._record_failure(server.id, exc)
+            raise
+        except McpPromptFederationError as exc:
+            error = UpstreamMcpError(
+                exc.code,
+                exc.message,
+                http_status=exc.http_status,
+            )
+            self._record_failure(server.id, error)
+            raise error from exc
+        except (MCPError, OSError, RuntimeError, httpx.HTTPError) as exc:
+            error = UpstreamMcpError(
+                "MCP_PROMPT_GET_FAILED",
+                "Upstream MCP prompt retrieval failed",
+                retryable=True,
+                http_status=502,
+            )
+            self._record_failure(server.id, error)
+            raise error from exc
+
+    async def complete_exact_reference(
+        self,
+        db: Session,
+        *,
+        owner_subject: str,
+        server: McpServer,
+        entity: McpCapabilityEntity,
+        revision: McpCapabilityEntityRevision,
+        argument: dict[str, str],
+        context_arguments: dict[str, str],
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        self._assert_exact_capability_binding(
+            owner_subject=owner_subject,
+            server=server,
+            entity=entity,
+            revision=revision,
+            allowed_kinds={"prompt", "resource_template"},
+        )
+        try:
+            validated_argument, validated_context = validate_completion_request(
+                revision,
+                argument,
+                context_arguments,
+            )
+            async with self._bounded(server):
+                if server.origin == "thin_client":
+                    connection = self._exact_thin_client_connection(db, server=server)
+                    try:
+                        response = await self.thin_client_transport.request_mcp_completion(
+                            server.thin_client_id,
+                            runtime_id=server.runtime_id,
+                            local_server_id=server.local_server_id,
+                            connection_instance_id=connection.connection_instance_id,
+                            request_id=str(uuid.uuid4()),
+                            server_id=server.id,
+                            entity_id=entity.id,
+                            revision_id=revision.id,
+                            schema_hash=revision.schema_hash,
+                            ref_kind=revision.entity_kind,
+                            ref_key_sha256=entity.upstream_key,
+                            catalog_generation=revision.catalog_generation,
+                            argument=validated_argument,
+                            context_arguments=validated_context,
+                            timeout_seconds=timeout_seconds or self.call_timeout_seconds,
+                        )
+                    except ThinClientMcpError as exc:
+                        raise UpstreamMcpError(
+                            exc.code,
+                            exc.message,
+                            retryable=exc.retryable,
+                            http_status=exc.http_status,
+                            unknown_outcome=exc.unknown_outcome,
+                        ) from exc
+                    raw_descriptor, raw_result = self._thin_client_terminal_result(
+                        response,
+                        expected_result_type="mcp_completion_result",
+                        expected_failed_type="mcp_completion_failed",
+                        default_code="MCP_COMPLETION_FAILED",
+                        default_message="Local MCP completion failed",
+                        revision=revision,
+                    )
+                    if str(response.get("ref_kind") or revision.entity_kind) != revision.entity_kind:
+                        raise UpstreamMcpError(
+                            "MCP_PROTOCOL_MISMATCH",
+                            "Local MCP completion reference kind changed after selection",
+                            http_status=502,
+                        )
+                    if revision.entity_kind == "prompt":
+                        self._verify_prompt_descriptor_evidence(
+                            raw_descriptor,
+                            entity=entity,
+                            revision=revision,
+                        )
+                    else:
+                        self._verify_resource_template_descriptor_evidence(
+                            raw_descriptor,
+                            entity=entity,
+                            revision=revision,
+                        )
+                else:
+                    async with self._session(db, server) as (session, _handshake, _):
+                        if revision.entity_kind == "prompt":
+                            raw_descriptor = None
+                            for candidate in await _list_session_prompt_catalog(session):
+                                try:
+                                    name_hash, _descriptor, _schema, _metadata = (
+                                        normalize_prompt_descriptor(candidate)
+                                    )
+                                except McpPromptFederationError:
+                                    continue
+                                if name_hash == entity.upstream_key:
+                                    raw_descriptor = candidate
+                                    break
+                            if raw_descriptor is None:
+                                raise UpstreamMcpError(
+                                    "MCP_PROMPT_NOT_FOUND",
+                                    "The selected MCP prompt is no longer present upstream",
+                                    http_status=404,
+                                )
+                            descriptor = self._verify_prompt_descriptor_evidence(
+                                raw_descriptor,
+                                entity=entity,
+                                revision=revision,
+                            )
+                            upstream_name = str(descriptor.get("upstream_name") or "").strip()
+                            reference: types.PromptReference | types.ResourceTemplateReference = (
+                                types.PromptReference(name=upstream_name)
+                            )
+                        else:
+                            _resources, templates = await _list_session_resource_catalog(session)
+                            raw_descriptor = None
+                            for candidate in templates:
+                                try:
+                                    uri_hash, _descriptor, _schema, _metadata = (
+                                        normalize_resource_descriptor(
+                                            candidate,
+                                            entity_kind="resource_template",
+                                        )
+                                    )
+                                except McpResourceFederationError:
+                                    continue
+                                if uri_hash == entity.upstream_key:
+                                    raw_descriptor = candidate
+                                    break
+                            if raw_descriptor is None:
+                                raise UpstreamMcpError(
+                                    "MCP_RESOURCE_NOT_FOUND",
+                                    "The selected MCP resource template is no longer present upstream",
+                                    http_status=404,
+                                )
+                            self._verify_resource_template_descriptor_evidence(
+                                raw_descriptor,
+                                entity=entity,
+                                revision=revision,
+                            )
+                            upstream_uri = str(raw_descriptor.get("uriTemplate") or "").strip()
+                            if not upstream_uri:
+                                raise UpstreamMcpError(
+                                    "MCP_PROTOCOL_MISMATCH",
+                                    "The selected MCP resource template has no executable URI",
+                                    http_status=502,
+                                )
+                            reference = types.ResourceTemplateReference(uri=upstream_uri)
+                        try:
+                            result = await asyncio.wait_for(
+                                session.complete(
+                                    reference,
+                                    validated_argument,
+                                    validated_context,
+                                ),
+                                timeout=timeout_seconds or self.call_timeout_seconds,
+                            )
+                        except TimeoutError as exc:
+                            raise UpstreamMcpError(
+                                "MCP_COMPLETION_TIMEOUT",
+                                "Upstream MCP completion exceeded the Gateway deadline",
+                                retryable=True,
+                                http_status=504,
+                            ) from exc
+                        if not hasattr(result, "model_dump"):
+                            raise UpstreamMcpError(
+                                "MCP_PROTOCOL_MISMATCH",
+                                "Upstream MCP completion result is invalid",
+                                http_status=502,
+                            )
+                        raw_result = result.model_dump(
+                            mode="json",
+                            by_alias=True,
+                            exclude_none=True,
+                        )
+                normalized = normalize_completion_result(
+                    raw_result,
+                    max_result_bytes=self.max_result_bytes,
+                )
+                self._record_success(server.id)
+                return normalized
+        except UpstreamMcpError as exc:
+            self._record_failure(server.id, exc)
+            raise
+        except (McpPromptFederationError, McpResourceFederationError) as exc:
+            error = UpstreamMcpError(
+                exc.code,
+                exc.message,
+                http_status=exc.http_status,
+            )
+            self._record_failure(server.id, error)
+            raise error from exc
+        except (MCPError, OSError, RuntimeError, httpx.HTTPError) as exc:
+            error = UpstreamMcpError(
+                "MCP_COMPLETION_FAILED",
+                "Upstream MCP completion failed",
+                retryable=True,
+                http_status=502,
+            )
+            self._record_failure(server.id, error)
+            raise error from exc
+
+    async def read_exact_resource(
+        self,
+        db: Session,
+        *,
+        owner_subject: str,
+        server: McpServer,
+        entity: McpCapabilityEntity,
+        revision: McpCapabilityEntityRevision,
+        arguments: dict[str, str],
+        public_uri: str,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        if (
+            server.owner_subject != owner_subject
+            or entity.owner_subject != owner_subject
+            or revision.owner_subject != owner_subject
+            or entity.server_id != server.id
+            or revision.server_id != server.id
+            or revision.entity_id != entity.id
+            or entity.current_revision_id != revision.id
+        ):
+            raise UpstreamMcpError(
+                "MCP_RESOURCE_BINDING_STALE",
+                "MCP resource binding is no longer the exact current revision",
+                http_status=409,
+            )
+        try:
+            async with self._bounded(server):
+                if server.origin == "thin_client":
+                    raw_descriptor, raw_result, protocol_version = (
+                        await self._read_thin_client_resource(
+                            db,
+                            server=server,
+                            entity=entity,
+                            revision=revision,
+                            arguments=arguments,
+                            timeout_seconds=timeout_seconds or self.call_timeout_seconds,
+                        )
+                    )
+                    exact_uri = resolve_live_resource_uri(
+                        raw_descriptor=raw_descriptor,
+                        revision=revision,
+                        arguments=arguments,
+                    )
+                else:
+                    async with self._session(db, server) as (session, handshake, _):
+                        resources, templates = await _list_session_resource_catalog(session)
+                        candidates = resources if entity.entity_kind == "resource" else templates
+                        raw_descriptor = None
+                        for candidate in candidates:
+                            try:
+                                uri_hash, _descriptor, _argument_schema, _content_metadata = (
+                                    normalize_resource_descriptor(
+                                        candidate, entity_kind=entity.entity_kind
+                                    )
+                                )
+                            except McpResourceFederationError:
+                                continue
+                            if uri_hash == entity.upstream_key:
+                                raw_descriptor = candidate
+                                break
+                        if raw_descriptor is None:
+                            raise UpstreamMcpError(
+                                "MCP_RESOURCE_NOT_FOUND",
+                                "The selected MCP resource is no longer present upstream",
+                                http_status=404,
+                            )
+                        exact_uri = resolve_live_resource_uri(
+                            raw_descriptor=raw_descriptor,
+                            revision=revision,
+                            arguments=arguments,
+                        )
+                        try:
+                            read_result = await asyncio.wait_for(
+                                session.read_resource(exact_uri),
+                                timeout=timeout_seconds or self.call_timeout_seconds,
+                            )
+                        except TimeoutError as exc:
+                            raise UpstreamMcpError(
+                                "MCP_RESOURCE_READ_TIMEOUT",
+                                "Upstream MCP resource read exceeded the Gateway deadline",
+                                retryable=True,
+                                http_status=504,
+                            ) from exc
+                        if not hasattr(read_result, "model_dump"):
+                            raise UpstreamMcpError(
+                                "MCP_PROTOCOL_MISMATCH",
+                                "Upstream MCP resource read result is invalid",
+                                http_status=502,
+                            )
+                        raw_result = read_result.model_dump(
+                            mode="json", by_alias=True, exclude_none=True
+                        )
+                        protocol_version = handshake.protocolVersion
+                contents = raw_result.get("contents") if isinstance(raw_result, dict) else None
+                try:
+                    normalized = normalize_resource_read_result(
+                        requested_uri=exact_uri,
+                        contents=contents,
+                        max_result_bytes=self.max_result_bytes,
+                    )
+                except McpResourceFederationError as exc:
+                    raise UpstreamMcpError(
+                        exc.code, exc.message, http_status=exc.http_status
+                    ) from exc
+                public_contents = [dict(item, uri=public_uri) for item in normalized["contents"]]
+                content_metadata = dict(normalized["content_metadata"])
+                if entity.entity_kind == "resource":
+                    content_revision = record_resource_content_revision(
+                        db,
+                        owner_subject=owner_subject,
+                        entity_id=entity.id,
+                        protocol_version=protocol_version,
+                        catalog_generation=revision.catalog_generation,
+                        content_metadata=content_metadata,
+                    )
+                    provenance = resource_provenance(
+                        server=server,
+                        entity=entity,
+                        catalog_revision=revision,
+                        content_revision=content_revision,
+                    )
+                else:
+                    provenance = {
+                        "server_id": server.id,
+                        "server_origin": server.origin,
+                        "entity_id": entity.id,
+                        "catalog_revision_id": revision.id,
+                        "uri_sha256": content_metadata.get("uri_sha256"),
+                        "uri_hint": content_metadata.get("uri_hint"),
+                        "content_sha256": content_metadata.get("content_sha256"),
+                        "total_bytes": content_metadata.get("total_bytes"),
+                        "mime_types": sorted(
+                            {
+                                str(item.get("mime_type"))
+                                for item in content_metadata.get("items", [])
+                                if isinstance(item, dict) and item.get("mime_type")
+                            }
+                        ),
+                    }
+                self._record_success(server.id)
+                return {
+                    "contents": public_contents,
+                    "_meta": {"gateway": {"resourceProvenance": provenance}},
+                }
+        except UpstreamMcpError as exc:
+            self._record_failure(server.id, exc)
+            raise
+        except McpResourceFederationError as exc:
+            error = UpstreamMcpError(exc.code, exc.message, http_status=exc.http_status)
+            self._record_failure(server.id, error)
+            raise error from exc
+        except (MCPError, OSError, RuntimeError, httpx.HTTPError) as exc:
+            error = UpstreamMcpError(
+                "MCP_RESOURCE_READ_FAILED",
+                "Upstream MCP resource read failed",
+                retryable=True,
+                http_status=502,
+            )
+            self._record_failure(server.id, error)
+            raise error from exc
+
+    async def _read_thin_client_resource(
+        self,
+        db: Session,
+        *,
+        server: McpServer,
+        entity: McpCapabilityEntity,
+        revision: McpCapabilityEntityRevision,
+        arguments: dict[str, str],
+        timeout_seconds: float,
+    ) -> tuple[dict[str, Any], dict[str, Any], str]:
+        if not server.thin_client_id or not server.runtime_id or not server.local_server_id:
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Thin-client MCP server identity is incomplete",
+                http_status=409,
+            )
+        try:
+            connection = self.thin_client_transport.active_mcp_connection(
+                server.thin_client_id,
+                runtime_id=server.runtime_id,
+                local_server_id=server.local_server_id,
+            )
+        except ThinClientMcpError as exc:
+            raise UpstreamMcpError(
+                exc.code,
+                exc.message,
+                retryable=exc.retryable,
+                http_status=exc.http_status,
+                unknown_outcome=exc.unknown_outcome,
+            ) from exc
+        runtime = (
+            db.query(McpRuntimeConnection)
+            .filter(
+                McpRuntimeConnection.owner_subject == server.owner_subject,
+                McpRuntimeConnection.server_id == server.id,
+                McpRuntimeConnection.thin_client_id == server.thin_client_id,
+                McpRuntimeConnection.runtime_id == server.runtime_id,
+                McpRuntimeConnection.connection_instance_id == connection.connection_instance_id,
+                McpRuntimeConnection.state == "online",
+            )
+            .one_or_none()
+        )
+        if runtime is None:
+            raise UpstreamMcpError(
+                "MCP_STALE_CONNECTION",
+                "Thin-client MCP runtime evidence is stale",
+                retryable=True,
+                http_status=409,
+            )
+        try:
+            response = await self.thin_client_transport.request_mcp_resource(
+                server.thin_client_id,
+                runtime_id=server.runtime_id,
+                local_server_id=server.local_server_id,
+                connection_instance_id=connection.connection_instance_id,
+                request_id=str(uuid.uuid4()),
+                server_id=server.id,
+                entity_kind=entity.entity_kind,
+                entity_id=entity.id,
+                revision_id=revision.id,
+                schema_hash=revision.schema_hash,
+                uri_sha256=entity.upstream_key,
+                catalog_generation=revision.catalog_generation,
+                arguments=arguments,
+                timeout_seconds=timeout_seconds,
+            )
+        except ThinClientMcpError as exc:
+            raise UpstreamMcpError(
+                exc.code,
+                exc.message,
+                retryable=exc.retryable,
+                http_status=exc.http_status,
+            ) from exc
+        if response.get("type") == "mcp_resource_read_failed":
+            raise UpstreamMcpError(
+                str(response.get("code") or "MCP_RESOURCE_READ_FAILED")[:120],
+                str(response.get("message") or "Local MCP resource read failed")[:500],
+                retryable=bool(response.get("retryable", False)),
+                http_status=int(response.get("http_status", 502)),
+            )
+        if response.get("type") != "mcp_resource_read_result":
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Local MCP runtime returned an invalid resource read result",
+                http_status=502,
+            )
+        if (
+            str(response.get("schema_hash") or "") != revision.schema_hash
+            or int(response.get("catalog_generation", -1)) != revision.catalog_generation
+        ):
+            raise UpstreamMcpError(
+                "MCP_RESOURCE_SCHEMA_CHANGED",
+                "Local MCP resource result does not match the selected catalog revision",
+                http_status=409,
+            )
+        descriptor = response.get("descriptor")
+        result = response.get("result")
+        if not isinstance(descriptor, dict) or not isinstance(result, dict):
+            raise UpstreamMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Local MCP runtime returned malformed resource evidence",
+                http_status=502,
+            )
+        protocol_version = str(response.get("mcp_protocol_version") or revision.protocol_version)
+        return descriptor, result, protocol_version
+
     async def _find_upstream_tool(self, session: ClientSession, name: str) -> Any:
         cursor: str | None = None
         while True:
@@ -1490,6 +2658,26 @@ class UpstreamMcpManager:
                 ) from exc
 
         connection_id = str(uuid.uuid4())
+        configured_roots = self.configured_gateway_roots(server.id)
+        self.reconcile_configured_gateway_roots(db, server=server)
+        root_values = self._approved_gateway_root_values(db, server=server)
+        root_state = ActiveRemoteRootSession(
+            connection_instance_id=connection_id,
+            owner_subject=server.owner_subject,
+            server_id=server.id,
+            policy_generation=server.policy_generation,
+            roots=root_values,
+            root_set_sha256=_remote_root_set_sha256(root_values),
+        )
+
+        async def list_roots_callback(_context: Any) -> types.ListRootsResult:
+            return types.ListRootsResult(
+                roots=[
+                    types.Root(uri=root["uri"], name=root["root_name"])
+                    for root in root_state.roots
+                ]
+            )
+
         runtime = McpRuntimeConnection(
             id=str(uuid.uuid4()),
             owner_subject=server.owner_subject,
@@ -1518,9 +2706,10 @@ class UpstreamMcpManager:
                     http_client=http_client,
                     terminate_on_close=True,
                 ) as (read_stream, write_stream):
-                    async with ClientSession(
+                    async with GatewayUpstreamClientSession(
                         read_stream,
                         write_stream,
+                        list_roots_callback=(list_roots_callback if configured_roots else None),
                         message_handler=message_handler,
                         client_info=types.Implementation(
                             name="chatgpt-mcp-federation-gateway", version="1"
@@ -1575,6 +2764,18 @@ class UpstreamMcpManager:
                                 instructions=discovered.instructions,
                                 source="remote_discover",
                             )
+                        remote_roots_enabled = bool(configured_roots) and (
+                            capability_admission.protocol_version
+                            in _REMOTE_ROOTS_PROTOCOL_VERSIONS
+                        )
+                        if remote_roots_enabled:
+                            root_state.roots = self._approved_gateway_root_values(
+                                db, server=server
+                            )
+                            root_state.root_set_sha256 = _remote_root_set_sha256(
+                                root_state.roots
+                            )
+                            root_state.policy_generation = server.policy_generation
                         runtime.state = "online"
                         runtime.supported_protocol_versions = [
                             capability_admission.protocol_version
@@ -1597,7 +2798,11 @@ class UpstreamMcpManager:
                                 by_alias=True,
                                 exclude_none=True,
                             ),
-                            client_capabilities={},
+                            client_capabilities=(
+                                {"roots": {"listChanged": True}}
+                                if remote_roots_enabled
+                                else {}
+                            ),
                             negotiated_features=capability_admission.as_dict(),
                         )
                         emit_event(
@@ -1618,11 +2823,19 @@ class UpstreamMcpManager:
                             commit=False,
                         )
                         db.commit()
+                        if remote_roots_enabled:
+                            root_state.session = session
+                            self._active_remote_root_sessions[connection_id] = root_state
                         self.telemetry.active_connections += 1
                         self.telemetry.increment("runtime_connected", outcome="online")
                         try:
                             yield session, handshake, None
                         finally:
+                            if remote_roots_enabled:
+                                current = self._active_remote_root_sessions.get(connection_id)
+                                if current is root_state:
+                                    self._active_remote_root_sessions.pop(connection_id, None)
+                                root_state.session = None
                             self.telemetry.active_connections = max(
                                 0, self.telemetry.active_connections - 1
                             )

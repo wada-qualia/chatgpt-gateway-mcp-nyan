@@ -10,7 +10,19 @@ from sqlalchemy.orm import Session
 from .mcp_capability_control_plane import record_capability_snapshot
 from .mcp_federation import reconcile_catalog_snapshot
 from .mcp_federation_policy import normalize_slug, sha256_json
+from .mcp_prompt_federation import McpPromptFederationError, reconcile_prompt_catalog
+from .mcp_resource_federation import (
+    McpResourceFederationError,
+    reconcile_resource_catalog,
+)
 from .mcp_rich_fidelity import sanitize_server_instructions
+from .mcp_root_federation import (
+    McpRootFederationError,
+    approved_root_grants,
+    normalize_root_candidate,
+    reconcile_runtime_root_candidates,
+    thin_root_sync_payload,
+)
 from .models import (
     McpInvocation,
     McpRuntimeConnection,
@@ -121,7 +133,7 @@ def register_runtime(
     if client is None:
         raise ThinClientMcpError("MCP_SERVER_OFFLINE", "Thin client not found")
 
-    descriptors: list[dict[str, str]] = []
+    descriptors: list[dict[str, Any]] = []
     local_server_ids: set[str] = set()
     for raw in raw_servers:
         if not isinstance(raw, dict):
@@ -144,11 +156,35 @@ def register_runtime(
         display_name = " ".join(
             str(raw.get("display_name") or local_server_id).split()
         )[:180]
+        raw_roots = raw.get("roots", [])
+        if raw_roots and "mcp_roots_v1" not in capabilities:
+            raise ThinClientMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Thin-client root candidates require mcp_roots_v1",
+                http_status=422,
+            )
+        if not isinstance(raw_roots, list) or len(raw_roots) > 64:
+            raise ThinClientMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Thin-client root candidates must be a bounded list",
+                http_status=422,
+            )
+        try:
+            roots = [normalize_root_candidate(item, hint_prefix="local") for item in raw_roots]
+        except McpRootFederationError as exc:
+            raise ThinClientMcpError(exc.code, str(exc), http_status=exc.http_status) from exc
+        if transport == "private_http" and roots:
+            raise ThinClientMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "private_http runtimes cannot register thin-client filesystem roots",
+                http_status=422,
+            )
         descriptors.append(
             {
                 "local_server_id": local_server_id,
                 "transport": transport,
                 "display_name": display_name,
+                "roots": roots,
             }
         )
 
@@ -291,6 +327,28 @@ def register_runtime(
             runtime.disconnected_at = None
 
         db.flush([runtime])
+        try:
+            reconcile_runtime_root_candidates(
+                db,
+                owner_subject=owner_subject,
+                server=server,
+                runtime=runtime,
+                candidates=descriptor["roots"],
+            )
+            root_update = None
+            if "mcp_roots_v1" in capabilities:
+                root_update = thin_root_sync_payload(
+                    server=server,
+                    runtime=runtime,
+                    grants=approved_root_grants(
+                        db,
+                        owner_subject=owner_subject,
+                        server=server,
+                        runtime=runtime,
+                    ),
+                )
+        except McpRootFederationError as exc:
+            raise ThinClientMcpError(exc.code, str(exc), http_status=exc.http_status) from exc
         record_capability_snapshot(
             db,
             owner_subject=owner_subject,
@@ -300,7 +358,11 @@ def register_runtime(
             protocol_version=protocol_version,
             catalog_generation=server.catalog_generation,
             server_capabilities={"tools": {"catalog": True}},
-            client_capabilities={},
+            client_capabilities=(
+                {"roots": {"listChanged": True}}
+                if "mcp_roots_v1" in capabilities
+                else {}
+            ),
             negotiated_features={
                 "thin_client_protocol": MCP_THIN_CLIENT_PROTOCOL_VERSION,
                 "runtime_capabilities": sorted(
@@ -310,13 +372,14 @@ def register_runtime(
             },
         )
         server.last_connected_at = now
-        mappings.append(
-            {
-                "local_server_id": local_server_id,
-                "server_id": server_id,
-                "gateway_catalog_generation": server.catalog_generation,
-            }
-        )
+        mapping: dict[str, Any] = {
+            "local_server_id": local_server_id,
+            "server_id": server_id,
+            "gateway_catalog_generation": server.catalog_generation,
+        }
+        if root_update is not None:
+            mapping["_root_update"] = root_update
+        mappings.append(mapping)
 
     client.status = "online"
     client.last_seen_at = now
@@ -337,6 +400,96 @@ def register_runtime(
         "runtime_id": runtime_id,
         "servers": mappings,
     }
+
+
+def record_roots_update_ack(
+    db: Session,
+    *,
+    owner_subject: str,
+    client_id: str,
+    connection: ThinClientConnection,
+    message: dict[str, Any],
+) -> None:
+    runtime_id = _required_identifier(message, "runtime_id")
+    local_server_id = _required_identifier(message, "local_server_id")
+    if (
+        runtime_id != connection.runtime_id
+        or str(message.get("connection_instance_id", ""))
+        != connection.connection_instance_id
+    ):
+        raise ThinClientMcpError(
+            "MCP_STALE_CONNECTION",
+            "Root acknowledgement references a stale runtime connection",
+            http_status=409,
+        )
+    server = _resolve_server(
+        db,
+        owner_subject=owner_subject,
+        client_id=client_id,
+        runtime_id=runtime_id,
+        local_server_id=local_server_id,
+    )
+    if str(message.get("server_id", "")) != server.id:
+        raise ThinClientMcpError(
+            "MCP_CROSS_TENANT_REFERENCE",
+            "Root acknowledgement server identity mismatch",
+            http_status=403,
+        )
+    runtime = _runtime_connection(
+        db,
+        owner_subject=owner_subject,
+        server_id=server.id,
+        client_id=client_id,
+        runtime_id=runtime_id,
+        connection_instance_id=connection.connection_instance_id,
+    )
+    runtime_capabilities = set((runtime.meta or {}).get("capabilities") or [])
+    if "mcp_roots_v1" not in runtime_capabilities:
+        raise ThinClientMcpError(
+            "MCP_PROTOCOL_MISMATCH",
+            "Root acknowledgement requires negotiated mcp_roots_v1",
+            http_status=422,
+        )
+    generation = message.get("policy_generation")
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation != server.policy_generation
+    ):
+        raise ThinClientMcpError(
+            "MCP_POLICY_STALE",
+            "Root acknowledgement policy generation is stale",
+            http_status=409,
+        )
+    try:
+        expected = thin_root_sync_payload(
+            server=server,
+            runtime=runtime,
+            grants=approved_root_grants(
+                db,
+                owner_subject=owner_subject,
+                server=server,
+                runtime=runtime,
+            ),
+        )
+    except McpRootFederationError as exc:
+        raise ThinClientMcpError(exc.code, str(exc), http_status=exc.http_status) from exc
+    digest = str(message.get("root_set_sha256", ""))
+    if digest != expected["root_set_sha256"]:
+        raise ThinClientMcpError(
+            "MCP_ROOT_SET_MISMATCH",
+            "Root acknowledgement does not match the approved exact root set",
+            http_status=409,
+        )
+    meta = dict(runtime.meta or {})
+    meta["roots_ack"] = {
+        "policy_generation": generation,
+        "root_set_sha256": digest,
+        "acked_at": utcnow().isoformat(),
+    }
+    runtime.meta = meta
+    runtime.last_seen_at = utcnow()
+    db.commit()
 
 
 def _resolve_server(
@@ -390,6 +543,18 @@ def reconcile_snapshot(
         raise ThinClientMcpError(
             "MCP_PROTOCOL_MISMATCH", "Catalog snapshot tools must be a list"
         )
+    resources = message.get("resources", [])
+    resource_templates = message.get("resource_templates", [])
+    prompts = message.get("prompts", [])
+    if (
+        not isinstance(resources, list)
+        or not isinstance(resource_templates, list)
+        or not isinstance(prompts, list)
+    ):
+        raise ThinClientMcpError(
+            "MCP_PROTOCOL_MISMATCH",
+            "Catalog snapshot resources, resource templates, and prompts must be lists",
+        )
     client_generation = int(message.get("catalog_generation", 0))
     if client_generation < 1:
         raise ThinClientMcpError(
@@ -411,7 +576,15 @@ def reconcile_snapshot(
         connection_instance_id=connection.connection_instance_id,
     )
     instructions = sanitize_server_instructions(message.get("server_instructions"))
-    snapshot_hash = sha256_json({"tools": tools, "server_instructions": instructions})
+    snapshot_hash = sha256_json(
+        {
+            "tools": tools,
+            "resources": resources,
+            "resource_templates": resource_templates,
+            "prompts": prompts,
+            "server_instructions": instructions,
+        }
+    )
     server.sanitized_instructions = instructions
     server.instructions_sha256 = (
         sha256_json({"instructions": instructions}) if instructions else None
@@ -433,17 +606,36 @@ def reconcile_snapshot(
             "unchanged": True,
         }
 
+    gateway_generation = server.catalog_generation + 1
+    protocol_version = str(message.get("mcp_protocol_version") or "2025-11-25")
     try:
         reconciliation = reconcile_catalog_snapshot(
             db,
             owner_subject=owner_subject,
             actor_subject=actor_subject,
             server_id=server.id,
-            catalog_generation=server.catalog_generation + 1,
-            protocol_version=str(message.get("mcp_protocol_version") or "2025-11-25"),
+            catalog_generation=gateway_generation,
+            protocol_version=protocol_version,
             tools=tools,
             max_tools=max_tools,
             tools_list_changed_seen=bool(message.get("tools_list_changed_seen", False)),
+        )
+        resource_reconciliation = reconcile_resource_catalog(
+            db,
+            owner_subject=owner_subject,
+            server_id=server.id,
+            protocol_version=protocol_version,
+            catalog_generation=gateway_generation,
+            resources=resources,
+            resource_templates=resource_templates,
+        )
+        prompt_reconciliation = reconcile_prompt_catalog(
+            db,
+            owner_subject=owner_subject,
+            server_id=server.id,
+            protocol_version=protocol_version,
+            catalog_generation=gateway_generation,
+            prompts=prompts,
         )
     except HTTPException as exc:
         db.rollback()
@@ -451,6 +643,11 @@ def reconcile_snapshot(
             "MCP_PROTOCOL_MISMATCH",
             str(exc.detail)[:500],
             http_status=exc.status_code,
+        ) from exc
+    except (McpResourceFederationError, McpPromptFederationError) as exc:
+        db.rollback()
+        raise ThinClientMcpError(
+            exc.code, exc.message, http_status=exc.http_status
         ) from exc
     server = reconciliation["server"]
     runtime = db.get(McpRuntimeConnection, runtime.id)
@@ -481,6 +678,12 @@ def reconcile_snapshot(
         "tool_count": reconciliation["tool_count"],
         "created_revision_count": reconciliation["created_revision_count"],
         "missing_tool_count": reconciliation["missing_tool_count"],
+        "resource_count": resource_reconciliation["resources"],
+        "resource_template_count": resource_reconciliation["resource_templates"],
+        "created_resource_revision_count": resource_reconciliation["created_revisions"],
+        "prompt_count": prompt_reconciliation["prompts"],
+        "created_prompt_revision_count": prompt_reconciliation["created_revisions"],
+        "missing_prompt_count": prompt_reconciliation["missing"],
     }
 
 

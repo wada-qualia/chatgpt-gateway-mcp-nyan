@@ -168,6 +168,7 @@ class CommandLineOut(BaseModel):
 
 class CommandSessionOut(OrmModel):
     id: str
+    chat_context_id: str | None = None
     owner_subject: str
     origin: str
     resource_id: str | None = None
@@ -200,6 +201,7 @@ class CommandSessionTerminate(BaseModel):
 
 class AgentToolCallOut(OrmModel):
     id: str
+    chat_context_id: str | None = None
     tool_name: str
     arguments: dict[str, Any]
     status: str
@@ -241,6 +243,7 @@ class AuditEventOut(OrmModel):
 
 class FileChangeSetOut(OrmModel):
     id: str
+    chat_context_id: str | None = None
     owner_subject: str
     origin: str
     resource_id: str | None = None
@@ -1242,6 +1245,34 @@ class McpFederationPolicyOut(OrmModel):
     updated_at: datetime
 
 
+class McpRootGrantOut(OrmModel):
+    id: str
+    owner_subject: str
+    server_id: str
+    runtime_connection_id: str | None = None
+    root_uri_sha256: str
+    root_uri_hint: str | None = None
+    root_name: str | None = None
+    grant_scope: str
+    status: str
+    policy_generation: int
+    version: int
+    granted_by_subject: str | None = None
+    granted_at: datetime | None = None
+    expires_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class McpRootGrantReview(McpStrictModel):
+    expected_version: int = Field(ge=1)
+    decision: Literal["approved", "revoked"]
+
+
+class McpGatewayRootsSync(McpStrictModel):
+    expected_server_version: int = Field(ge=1)
+
+
 class McpToolRevisionClassification(McpStrictModel):
     expected_version: int = Field(ge=1)
     action_class: Literal["read", "write", "destructive", "production"]
@@ -1308,6 +1339,71 @@ class McpToolExposureOut(OrmModel):
     revision_id: str
     mode: str
     projected_name: str | None = None
+    enabled: bool
+    required_role: str | None = None
+    required_scope: str | None = None
+    approval_class: str
+    projection_generation: int
+    policy_generation: int
+    version: int
+    reviewed_by_subject: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class McpCapabilityEntityOut(OrmModel):
+    id: str
+    owner_subject: str
+    server_id: str
+    entity_kind: str
+    upstream_key: str
+    normalized_key: str
+    lifecycle_state: str
+    current_revision_id: str | None = None
+    version: int
+    first_observed_at: datetime
+    last_observed_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class McpCapabilityEntityRevisionOut(OrmModel):
+    id: str
+    owner_subject: str
+    server_id: str
+    entity_id: str
+    entity_kind: str
+    revision_number: int
+    descriptor: dict[str, Any]
+    argument_schema: dict[str, Any] | None = None
+    content_metadata: dict[str, Any]
+    schema_hash: str
+    protocol_version: str
+    catalog_generation: int
+    discovered_at: datetime
+    created_at: datetime
+
+
+class McpCapabilityExposureUpdate(McpStrictModel):
+    expected_version: int = Field(ge=0)
+    revision_id: str = Field(max_length=36)
+    mode: Literal["hidden", "catalog_only", "native_projected"]
+    enabled: bool
+    required_role: str | None = Field(default=None, max_length=120)
+    required_scope: str | None = Field(default=None, max_length=160)
+    approval_class: Literal["none", "operator", "quorum", "production"]
+    projection_generation: int = Field(default=0, ge=0)
+
+
+class McpCapabilityExposureOut(OrmModel):
+    id: str
+    owner_subject: str
+    server_id: str
+    entity_id: str
+    revision_id: str
+    entity_kind: str
+    mode: str
     enabled: bool
     required_role: str | None = None
     required_scope: str | None = None

@@ -1014,3 +1014,57 @@
     position: static;
   }
 }
+
+.monitoring-panel-title > div {
+  display: grid;
+  gap: 3px;
+}
+
+.monitoring-chat-filter {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.monitoring-chat-filter span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.monitoring-chat-filter select {
+  background: #ffffff;
+  border: 1px solid #c8d0da;
+  border-radius: 7px;
+  font: inherit;
+  max-width: 300px;
+  padding: 7px 9px;
+}
+
+.context-badge.chat {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.context-badge.chat.identified {
+  background: #e8eefc;
+  color: #274690;
+}
+
+.context-badge.chat.unscoped {
+  background: #f1f3f5;
+  color: #5f6b7a;
+}
+
+@media (max-width: 760px) {
+  .monitoring-panel-title,
+  .monitoring-chat-filter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .monitoring-chat-filter select {
+    max-width: none;
+    width: 100%;
+  }
+}

@@ -7,16 +7,30 @@ capabilities:
     execution_status: production_read_only_pilot
   resources:
     methods: [resources/list, resources/templates/list, resources/read, resources/subscribe, resources/unsubscribe, notifications/resources/list_changed, notifications/resources/updated]
-    execution_status: not_enabled
-    storage_entities: [resource, resource_template, subscription]
+    execution_status: phase_10_read_path_locally_qualified
+    public_methods: [resources/list, resources/templates/list, resources/read]
+    public_subscription_advertisement: false
+    internal_subscription_lifecycle: [resources/subscribe, resources/unsubscribe]
+    storage_entities: [resource, resource_template, subscription, capability_exposure]
+    authorization_separate_from_tool_exposure: true
+    public_uri_authority: gateway_opaque_exact_revision
+    upstream_uri_network_dereference_by_gateway: false
+    thin_client_capability: mcp_resources_v1
   prompts:
     methods: [prompts/list, prompts/get, notifications/prompts/list_changed, completion/complete]
     execution_status: not_enabled
     storage_entities: [prompt]
   roots:
     methods: [roots/list, notifications/roots/list_changed]
-    execution_status: not_enabled
+    execution_status: locally_qualified_production_pending
     storage_entities: [root_grant]
+    durable_contract: root-grant.schema.json
+    persistent_raw_uri: false
+    thin_client_capability: mcp_roots_v1
+    remote_protocols_enabled: ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]
+    remote_protocols_suppressed: ["2026-07-28"]
+    remote_authority_source: operator_process_config_plus_reviewed_grant
+    list_change_digest_deduplication: true
   sampling:
     methods: [sampling/createMessage]
     execution_status: not_enabled

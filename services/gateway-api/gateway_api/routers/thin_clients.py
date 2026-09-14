@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import secrets
 import uuid
 from datetime import timedelta
 from html import escape
+from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import (
@@ -31,6 +33,7 @@ from ..dto import (
     ThinClientToolResult,
 )
 from ..events import emit_event
+from ..mcp_resource_federation import revoke_resource_subscriptions_for_thin_client
 from ..models import CommandSession, DeviceCode, ThinClient, User, utcnow
 from ..monitoring import monitoring_service
 from ..policy import enforce
@@ -47,6 +50,7 @@ from ..thin_client_mcp import (
     reconcile_delta,
     reconcile_snapshot,
     record_call_progress,
+    record_roots_update_ack,
     record_server_status,
     register_runtime,
 )
@@ -56,6 +60,42 @@ activation_router = APIRouter(tags=["thin-client-activation"])
 _UNBOUND_DEVICE_CODE_SUBJECT_PREFIX = "device-code:"
 THIN_CLIENT_SESSION_FINISH_STATUSES = {"completed", "failed", "terminated"}
 THIN_CLIENT_SESSION_STREAMS = {"stdout", "stderr"}
+_WEBSOCKET_NOT_CONNECTED_ERROR = 'WebSocket is not connected. Need to call "accept" first.'
+
+
+def _is_websocket_disconnect_runtime_error(exc: RuntimeError) -> bool:
+    return str(exc) == _WEBSOCKET_NOT_CONNECTED_ERROR
+
+
+def _mcp_notification_refresh_message(
+    connection: Any, message: dict[str, object]
+) -> dict[str, object] | None:
+    refresh_reasons = {
+        "notifications/tools/list_changed": "tools_list_changed",
+        "notifications/prompts/list_changed": "prompts_list_changed",
+    }
+    refresh_reason = refresh_reasons.get(str(message.get("method", "")))
+    if refresh_reason is None:
+        return None
+    local_server_id = str(message.get("local_server_id", "")).strip()
+    if (
+        not connection.runtime_id
+        or not local_server_id
+        or local_server_id not in connection.local_server_ids
+    ):
+        raise ThinClientMcpError(
+            "MCP_STALE_CONNECTION",
+            "MCP notification local_server_id is not bound to the exact runtime",
+            http_status=409,
+        )
+    return {
+        "type": "mcp_refresh_catalog",
+        "protocol_version": MCP_THIN_CLIENT_PROTOCOL_VERSION,
+        "connection_instance_id": connection.connection_instance_id,
+        "runtime_id": connection.runtime_id,
+        "local_server_id": local_server_id,
+        "reason": refresh_reason,
+    }
 
 
 def _session_exit_code(value: object) -> int | None:
@@ -610,7 +650,14 @@ async def websocket_control(
                             connection=connection,
                             message=message,
                         )
+                    root_updates: list[dict[str, Any]] = []
+                    for server in acknowledgement["servers"]:
+                        root_update = server.pop("_root_update", None)
+                        if isinstance(root_update, dict):
+                            root_updates.append(root_update)
                     await websocket.send_json(acknowledgement)
+                    for root_update in root_updates:
+                        await websocket.send_json(root_update)
                     for server in acknowledgement["servers"]:
                         await websocket.send_json(
                             {
@@ -651,6 +698,16 @@ async def websocket_control(
                             max_tools=settings.gateway_mcp_catalog_max_tools,
                         )
                     await websocket.send_json(response)
+                elif message_type == "mcp_roots_update_ack":
+                    ensure_exact_connection_message(connection, message)
+                    with SessionLocal() as db:
+                        record_roots_update_ack(
+                            db,
+                            owner_subject=owner_subject,
+                            client_id=client_id,
+                            connection=connection,
+                            message=message,
+                        )
                 elif message_type == "mcp_server_status":
                     ensure_exact_connection_message(connection, message)
                     with SessionLocal() as db:
@@ -678,7 +735,16 @@ async def websocket_control(
                             connection=connection,
                             message=message,
                         )
-                elif message_type in {"mcp_call_result", "mcp_call_failed"}:
+                elif message_type in {
+                    "mcp_call_result",
+                    "mcp_call_failed",
+                    "mcp_resource_read_result",
+                    "mcp_resource_read_failed",
+                    "mcp_prompt_get_result",
+                    "mcp_prompt_get_failed",
+                    "mcp_completion_result",
+                    "mcp_completion_failed",
+                }:
                     ensure_exact_connection_message(connection, message)
                     completed = await thin_client_manager.complete_mcp(
                         client_id, connection, message
@@ -690,25 +756,15 @@ async def websocket_control(
                         )
                 elif message_type == "mcp_notification":
                     ensure_exact_connection_message(connection, message)
-                    if (
-                        str(message.get("method", ""))
-                        == "notifications/tools/list_changed"
-                    ):
-                        await websocket.send_json(
-                            {
-                                "type": "mcp_refresh_catalog",
-                                "protocol_version": MCP_THIN_CLIENT_PROTOCOL_VERSION,
-                                "connection_instance_id": connection.connection_instance_id,
-                                "runtime_id": connection.runtime_id,
-                                "local_server_id": message.get("local_server_id"),
-                                "reason": "tools_list_changed",
-                            }
-                        )
+                    refresh_message = _mcp_notification_refresh_message(connection, message)
+                    if refresh_message is not None:
+                        await websocket.send_json(refresh_message)
                 elif message_type == "session_output":
                     stream = str(message.get("stream", "stdout"))
                     if stream not in THIN_CLIENT_SESSION_STREAMS:
                         stream = "stdout"
-                    monitoring_service.append_output(
+                    await asyncio.to_thread(
+                        monitoring_service.append_output,
                         str(message.get("session_id", "")),
                         stream=stream,
                         text=str(message.get("text", "")),
@@ -720,7 +776,8 @@ async def websocket_control(
                     status_value = str(message.get("status") or "completed")
                     if status_value not in THIN_CLIENT_SESSION_FINISH_STATUSES:
                         continue
-                    monitoring_service.finish_session(
+                    await asyncio.to_thread(
+                        monitoring_service.finish_session,
                         str(message.get("session_id", "")),
                         status_value=status_value,
                         exit_code=_session_exit_code(message.get("exit_code", 0)),
@@ -731,7 +788,8 @@ async def websocket_control(
                 elif message_type == "session_failed":
                     session_id = str(message.get("session_id", ""))
                     error = str(message.get("error", ""))
-                    monitoring_service.append_output(
+                    await asyncio.to_thread(
+                        monitoring_service.append_output,
                         session_id,
                         stream="stderr",
                         text=error + "\n",
@@ -739,7 +797,8 @@ async def websocket_control(
                         origin="thin_client",
                         resource_id=client_id,
                     )
-                    monitoring_service.finish_session(
+                    await asyncio.to_thread(
+                        monitoring_service.finish_session,
                         session_id,
                         status_value="failed",
                         exit_code=None,
@@ -785,6 +844,9 @@ async def websocket_control(
                 await websocket.send_json(protocol_error_payload(exc))
     except WebSocketDisconnect:
         pass
+    except RuntimeError as exc:
+        if not _is_websocket_disconnect_runtime_error(exc):
+            raise
     finally:
         with SessionLocal() as db:
             mark_connection_disconnected(
@@ -809,4 +871,9 @@ async def websocket_control(
                 for session in running_sessions:
                     session.status = "disconnecting"
                     session.updated_at = utcnow()
+                revoke_resource_subscriptions_for_thin_client(
+                    db,
+                    owner_subject=owner_subject,
+                    thin_client_id=client_id,
+                )
                 db.commit()

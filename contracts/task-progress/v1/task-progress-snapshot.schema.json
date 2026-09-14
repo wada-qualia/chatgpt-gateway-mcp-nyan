@@ -1,0 +1,494 @@
+{
+  "$defs": {
+    "TaskProgressBlockerV1": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "source_id",
+        "message",
+        "status"
+      ],
+      "title": "TaskProgressBlockerV1",
+      "type": "object"
+    },
+    "TaskProgressCheckV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "stage_id": {
+          "title": "Stage Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "passed",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "stage_id",
+        "label",
+        "status"
+      ],
+      "title": "TaskProgressCheckV1",
+      "type": "object"
+    },
+    "TaskProgressEvidenceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "recorded_at": {
+          "format": "date-time",
+          "title": "Recorded At",
+          "type": "string"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "status",
+        "label",
+        "recorded_at"
+      ],
+      "title": "TaskProgressEvidenceV1",
+      "type": "object"
+    },
+    "TaskProgressResourceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "base_commit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Commit"
+        },
+        "branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Branch"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Origin"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "status"
+      ],
+      "title": "TaskProgressResourceV1",
+      "type": "object"
+    },
+    "TaskProgressSourceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "base_commit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Commit"
+        },
+        "command_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Command Ids",
+          "type": "array"
+        },
+        "project_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Project Path"
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository"
+        },
+        "session_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Session Ids",
+          "type": "array"
+        },
+        "work_item_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Work Item Ids",
+          "type": "array"
+        }
+      },
+      "title": "TaskProgressSourceV1",
+      "type": "object"
+    },
+    "TaskProgressStageV1": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptance_passed": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Acceptance Passed",
+          "type": "integer"
+        },
+        "acceptance_total": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Acceptance Total",
+          "type": "integer"
+        },
+        "dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "priority": {
+          "default": 50,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "waiting",
+            "blocked",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "rolling_back",
+            "rolled_back",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "status",
+        "updated_at"
+      ],
+      "title": "TaskProgressStageV1",
+      "type": "object"
+    },
+    "TaskProgressValueV1": {
+      "additionalProperties": false,
+      "properties": {
+        "completed": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed"
+        },
+        "mode": {
+          "enum": [
+            "determinate",
+            "indeterminate"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "total": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total"
+        },
+        "unit": {
+          "default": "stage",
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "TaskProgressValueV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifacts": {
+      "items": {
+        "$ref": "#/$defs/TaskProgressEvidenceV1"
+      },
+      "title": "Artifacts",
+      "type": "array"
+    },
+    "blockers": {
+      "items": {
+        "$ref": "#/$defs/TaskProgressBlockerV1"
+      },
+      "title": "Blockers",
+      "type": "array"
+    },
+    "cancel_supported": {
+      "default": false,
+      "title": "Cancel Supported",
+      "type": "boolean"
+    },
+    "capability": {
+      "const": "atlas.task_progress_ui/v1",
+      "default": "atlas.task_progress_ui/v1",
+      "title": "Capability",
+      "type": "string"
+    },
+    "changes": {
+      "additionalProperties": true,
+      "title": "Changes",
+      "type": "object"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/TaskProgressCheckV1"
+      },
+      "title": "Checks",
+      "type": "array"
+    },
+    "current_stage_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Current Stage Id"
+    },
+    "delivery": {
+      "additionalProperties": true,
+      "title": "Delivery",
+      "type": "object"
+    },
+    "progress": {
+      "$ref": "#/$defs/TaskProgressValueV1"
+    },
+    "project": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Project"
+    },
+    "resources": {
+      "items": {
+        "$ref": "#/$defs/TaskProgressResourceV1"
+      },
+      "title": "Resources",
+      "type": "array"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sequence": {
+      "minimum": 0,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "source": {
+      "$ref": "#/$defs/TaskProgressSourceV1"
+    },
+    "stages": {
+      "items": {
+        "$ref": "#/$defs/TaskProgressStageV1"
+      },
+      "title": "Stages",
+      "type": "array"
+    },
+    "status": {
+      "enum": [
+        "queued",
+        "running",
+        "waiting",
+        "blocked",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "rolling_back",
+        "rolled_back",
+        "unknown"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "title",
+    "status",
+    "source",
+    "progress",
+    "sequence",
+    "updated_at"
+  ],
+  "title": "TaskProgressSnapshotV1",
+  "type": "object"
+}

@@ -11,12 +11,14 @@ from gateway_api.mcp_federation_compat import (
     GATEWAY_UPSTREAM_CLIENT_CAPABILITIES,
     LEGACY_HTTP_PROTOCOL_FALLBACK_VERSION,
     LEGACY_MCP_PROTOCOL_VERSIONS,
+    MCP_APPS_EXTENSION_ID,
     MCP_CURRENT_PROTOCOL_VERSION,
     MCP_PRESENTATION_MODES,
     MCP_SDK_REQUIREMENT,
     MCP_STABLE_PROTOCOL_VERSION,
     MODERN_MCP_PROTOCOL_VERSIONS,
     PREFERRED_MCP_PROTOCOL_VERSION,
+    QUALIFIED_PUBLIC_SERVER_EXTENSIONS,
     SUPPORTED_MCP_PROTOCOL_VERSIONS,
     McpProtocolAdmissionError,
     admit_upstream_initialize,
@@ -44,6 +46,15 @@ def test_phase_eight_matrix_matches_runtime_policy() -> None:
         LEGACY_HTTP_PROTOCOL_FALLBACK_VERSION
     )
     assert matrix["sdk"]["requirement"] == MCP_SDK_REQUIREMENT
+    assert set(specification["qualified_public_server_extensions"]) == (
+        QUALIFIED_PUBLIC_SERVER_EXTENSIONS
+    )
+    first_party = matrix["first_party_extensions"][MCP_APPS_EXTENSION_ID]
+    assert first_party["qualification_task"] == "CMG-PRG-120"
+    assert first_party["upstream_federation"] is False
+    assert first_party["generic_resources_federation"] is False
+    assert first_party["resource_uri"] == "ui://atlas/task-progress/v10.html"
+    assert first_party["mime_type"] == "text/html;profile=mcp-app"
     assert tuple(matrix["presentation_modes"]) == MCP_PRESENTATION_MODES
     assert FEDERATED_SERVER_CAPABILITIES == {"tools"}
     advertised_client = matrix["client_capabilities_advertised_to_upstreams"]

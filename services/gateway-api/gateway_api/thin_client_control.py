@@ -5,8 +5,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from fastapi import HTTPException, WebSocket, status
-
+from fastapi import HTTPException, WebSocket, WebSocketDisconnect, status
 
 MCP_THIN_CLIENT_PROTOCOL_VERSION = "1.0"
 MCP_THIN_CLIENT_CAPABILITIES = frozenset(
@@ -14,6 +13,10 @@ MCP_THIN_CLIENT_CAPABILITIES = frozenset(
         "mcp_runtime_v1",
         "mcp_catalog_snapshot",
         "mcp_catalog_delta",
+        "mcp_resources_v1",
+        "mcp_prompts_v1",
+        "mcp_completion_v1",
+        "mcp_roots_v1",
         "mcp_call",
         "mcp_cancel",
         "mcp_progress",
@@ -220,6 +223,7 @@ class ThinClientConnectionManager:
                         http_status=409,
                     )
                 )
+                pending.future.exception()
             self._pending.pop(request_id, None)
 
     async def complete(self, request_id: str, message: dict[str, Any]) -> None:
@@ -236,7 +240,15 @@ class ThinClientConnectionManager:
     ) -> bool:
         request_id = str(message.get("request_id", ""))
         pending = self._pending.get(request_id)
-        if pending is None or pending.kind != "mcp":
+        if pending is None:
+            return False
+        expected_types = {
+            "mcp": {"mcp_call_result", "mcp_call_failed"},
+            "mcp_resource": {"mcp_resource_read_result", "mcp_resource_read_failed"},
+            "mcp_prompt": {"mcp_prompt_get_result", "mcp_prompt_get_failed"},
+            "mcp_completion": {"mcp_completion_result", "mcp_completion_failed"},
+        }
+        if str(message.get("type", "")) not in expected_types.get(pending.kind, set()):
             return False
         exact = (
             pending.client_id == client_id
@@ -291,11 +303,17 @@ class ThinClientConnectionManager:
                 )
                 pending.dispatched = True
             return await asyncio.wait_for(future, timeout=timeout_seconds)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             self._pending.pop(request_id, None)
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail="Thin client tool timed out",
+            ) from exc
+        except WebSocketDisconnect as exc:
+            self._pending.pop(request_id, None)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Thin client disconnected: {client_id}",
             ) from exc
         except RuntimeError as exc:
             self._pending.pop(request_id, None)
@@ -368,7 +386,7 @@ class ThinClientConnectionManager:
             return await asyncio.wait_for(
                 asyncio.shield(future), timeout=timeout_seconds
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             self._pending.pop(request_id, None)
             await self.send_mcp_control(
                 client_id,
@@ -401,6 +419,275 @@ class ThinClientConnectionManager:
                 retryable=not pending.unknown_if_interrupted,
                 http_status=409,
             ) from exc
+
+    async def request_mcp_resource(
+        self,
+        client_id: str,
+        *,
+        runtime_id: str,
+        local_server_id: str,
+        connection_instance_id: str,
+        request_id: str,
+        server_id: str,
+        entity_kind: str,
+        entity_id: str,
+        revision_id: str,
+        schema_hash: str,
+        uri_sha256: str,
+        catalog_generation: int,
+        arguments: dict[str, str],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        connection = self.active_mcp_connection(
+            client_id,
+            runtime_id=runtime_id,
+            local_server_id=local_server_id,
+        )
+        if connection.connection_instance_id != connection_instance_id:
+            raise ThinClientMcpError(
+                "MCP_STALE_CONNECTION",
+                "The selected MCP connection instance is stale",
+                retryable=True,
+                http_status=409,
+            )
+        if "mcp_resources_v1" not in connection.capabilities:
+            raise ThinClientMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                "Thin client did not negotiate mcp_resources_v1",
+                http_status=422,
+            )
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict[str, Any]] = loop.create_future()
+        pending = PendingThinClientRequest(
+            client_id=client_id,
+            connection=connection,
+            future=future,
+            kind="mcp_resource",
+            runtime_id=runtime_id,
+            local_server_id=local_server_id,
+            action_class="read",
+        )
+        self._pending[request_id] = pending
+        payload = {
+            "type": "mcp_resource_read",
+            "protocol_version": MCP_THIN_CLIENT_PROTOCOL_VERSION,
+            "request_id": request_id,
+            "connection_instance_id": connection.connection_instance_id,
+            "runtime_id": runtime_id,
+            "local_server_id": local_server_id,
+            "server_id": server_id,
+            "entity_kind": entity_kind,
+            "entity_id": entity_id,
+            "revision_id": revision_id,
+            "schema_hash": schema_hash,
+            "uri_sha256": uri_sha256,
+            "catalog_generation": catalog_generation,
+            "arguments": arguments,
+        }
+        try:
+            async with connection.send_lock:
+                await connection.websocket.send_json(payload)
+                pending.dispatched = True
+            return await asyncio.wait_for(asyncio.shield(future), timeout=timeout_seconds)
+        except TimeoutError as exc:
+            self._pending.pop(request_id, None)
+            raise ThinClientMcpError(
+                "MCP_RESOURCE_READ_TIMEOUT",
+                "Local MCP resource read exceeded the Gateway deadline",
+                retryable=True,
+                http_status=504,
+            ) from exc
+        except ThinClientMcpError:
+            self._pending.pop(request_id, None)
+            raise
+        except RuntimeError as exc:
+            self._pending.pop(request_id, None)
+            raise ThinClientMcpError(
+                "MCP_CONNECTION_LOST",
+                "Local MCP connection was lost during resource read",
+                retryable=True,
+                http_status=409,
+            ) from exc
+
+    async def _request_mcp_capability(
+        self,
+        client_id: str,
+        *,
+        runtime_id: str,
+        local_server_id: str,
+        connection_instance_id: str,
+        request_id: str,
+        server_id: str,
+        entity_id: str,
+        revision_id: str,
+        schema_hash: str,
+        catalog_generation: int,
+        capability: str,
+        kind: str,
+        message_type: str,
+        extra_payload: dict[str, Any],
+        timeout_seconds: float,
+        timeout_code: str,
+        timeout_message: str,
+    ) -> dict[str, Any]:
+        connection = self.active_mcp_connection(
+            client_id,
+            runtime_id=runtime_id,
+            local_server_id=local_server_id,
+        )
+        if connection.connection_instance_id != connection_instance_id:
+            raise ThinClientMcpError(
+                "MCP_STALE_CONNECTION",
+                "The selected MCP connection instance is stale",
+                retryable=True,
+                http_status=409,
+            )
+        if capability not in connection.capabilities:
+            raise ThinClientMcpError(
+                "MCP_PROTOCOL_MISMATCH",
+                f"Thin client did not negotiate {capability}",
+                http_status=422,
+            )
+        if request_id in self._pending:
+            raise ThinClientMcpError(
+                "MCP_REQUEST_CONFLICT",
+                "MCP request id is already active",
+                http_status=409,
+            )
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict[str, Any]] = loop.create_future()
+        pending = PendingThinClientRequest(
+            client_id=client_id,
+            connection=connection,
+            future=future,
+            kind=kind,
+            runtime_id=runtime_id,
+            local_server_id=local_server_id,
+            action_class="read",
+        )
+        self._pending[request_id] = pending
+        payload = {
+            "type": message_type,
+            "protocol_version": MCP_THIN_CLIENT_PROTOCOL_VERSION,
+            "request_id": request_id,
+            "connection_instance_id": connection.connection_instance_id,
+            "runtime_id": runtime_id,
+            "local_server_id": local_server_id,
+            "server_id": server_id,
+            "entity_id": entity_id,
+            "revision_id": revision_id,
+            "schema_hash": schema_hash,
+            "catalog_generation": catalog_generation,
+            **extra_payload,
+        }
+        try:
+            async with connection.send_lock:
+                await connection.websocket.send_json(payload)
+                pending.dispatched = True
+            return await asyncio.wait_for(asyncio.shield(future), timeout=timeout_seconds)
+        except TimeoutError as exc:
+            self._pending.pop(request_id, None)
+            raise ThinClientMcpError(
+                timeout_code,
+                timeout_message,
+                retryable=True,
+                http_status=504,
+            ) from exc
+        except ThinClientMcpError:
+            self._pending.pop(request_id, None)
+            raise
+        except RuntimeError as exc:
+            self._pending.pop(request_id, None)
+            raise ThinClientMcpError(
+                "MCP_CONNECTION_LOST",
+                "Local MCP connection was lost during capability execution",
+                retryable=True,
+                http_status=409,
+            ) from exc
+
+    async def request_mcp_prompt(
+        self,
+        client_id: str,
+        *,
+        runtime_id: str,
+        local_server_id: str,
+        connection_instance_id: str,
+        request_id: str,
+        server_id: str,
+        entity_id: str,
+        revision_id: str,
+        schema_hash: str,
+        prompt_name_sha256: str,
+        catalog_generation: int,
+        arguments: dict[str, str],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        return await self._request_mcp_capability(
+            client_id,
+            runtime_id=runtime_id,
+            local_server_id=local_server_id,
+            connection_instance_id=connection_instance_id,
+            request_id=request_id,
+            server_id=server_id,
+            entity_id=entity_id,
+            revision_id=revision_id,
+            schema_hash=schema_hash,
+            catalog_generation=catalog_generation,
+            capability="mcp_prompts_v1",
+            kind="mcp_prompt",
+            message_type="mcp_prompt_get",
+            extra_payload={
+                "prompt_name_sha256": prompt_name_sha256,
+                "arguments": arguments,
+            },
+            timeout_seconds=timeout_seconds,
+            timeout_code="MCP_PROMPT_GET_TIMEOUT",
+            timeout_message="Local MCP prompt retrieval exceeded the Gateway deadline",
+        )
+
+    async def request_mcp_completion(
+        self,
+        client_id: str,
+        *,
+        runtime_id: str,
+        local_server_id: str,
+        connection_instance_id: str,
+        request_id: str,
+        server_id: str,
+        entity_id: str,
+        revision_id: str,
+        schema_hash: str,
+        ref_kind: str,
+        ref_key_sha256: str,
+        catalog_generation: int,
+        argument: dict[str, str],
+        context_arguments: dict[str, str],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        return await self._request_mcp_capability(
+            client_id,
+            runtime_id=runtime_id,
+            local_server_id=local_server_id,
+            connection_instance_id=connection_instance_id,
+            request_id=request_id,
+            server_id=server_id,
+            entity_id=entity_id,
+            revision_id=revision_id,
+            schema_hash=schema_hash,
+            catalog_generation=catalog_generation,
+            capability="mcp_completion_v1",
+            kind="mcp_completion",
+            message_type="mcp_completion",
+            extra_payload={
+                "ref_kind": ref_kind,
+                "ref_key_sha256": ref_key_sha256,
+                "argument": argument,
+                "context_arguments": context_arguments,
+            },
+            timeout_seconds=timeout_seconds,
+            timeout_code="MCP_COMPLETION_TIMEOUT",
+            timeout_message="Local MCP completion exceeded the Gateway deadline",
+        )
 
     async def send_mcp_control(
         self,

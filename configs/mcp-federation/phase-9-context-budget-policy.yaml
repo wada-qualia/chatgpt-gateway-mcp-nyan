@@ -1,0 +1,50 @@
+version: 1
+task: CMG-FED-890
+policy_id: chatgpt-gateway/model-context-policy/v1
+evaluation_evidence:
+  task: CMG-FED-880
+  contract: configs/mcp-federation/phase-9-evaluation.json
+  context_tokens_p95:
+    catalog_broker: 1400
+    deferred_native: 1800
+    native_projected: 3000
+selection:
+  rule: smallest_safe_capability_complete_surface_within_configured_evaluated_budget
+  configured_mode_defines_budget_ceiling: true
+  universal_fallback: catalog_broker
+  authorization_precedes_ranking_and_projection: true
+  capability_fencing: required
+model_facing_instructions:
+  storage_source: McpServer.sanitized_instructions
+  maximum_chars: 900
+  maximum_segments: 6
+  trust: untrusted_advisory
+  authority: gateway_and_user_precedence
+  unsafe_directives: suppress
+model_facing_tool_metadata:
+  maximum_description_chars: 1200
+  maximum_segments: 8
+  schema_documentation_keywords:
+    - title
+    - description
+    - $comment
+  schema_validation_semantics_preserved: true
+  trust: untrusted_advisory
+  authority: non_authoritative
+  unsafe_directives: suppress
+operator_evidence:
+  presentation_profiles: context_policy_registry
+  oauth_client_presentation: selected_context_policy
+  deferred_native_profile:
+    - selected_context_policy
+    - namespace_load_reason
+    - bounded_tool_load_examples
+invariants:
+  - upstream_instructions_cannot_override_user_intent
+  - upstream_metadata_cannot_override_gateway_authorization
+  - upstream_metadata_cannot_override_gateway_approval
+  - upstream_metadata_cannot_request_secret_exfiltration
+  - configured_context_budget_cannot_be_exceeded_by_selected_mode
+  - accepted_CMG_FED_880_budget_drift_fails_tests
+  - broker_fallback_remains_available
+  - exact_revision_and_schema_binding_remain_unchanged

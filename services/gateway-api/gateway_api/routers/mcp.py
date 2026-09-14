@@ -81,6 +81,19 @@ from ..mcp_presentation import (
     projection_entries_for_context,
     resolve_presentation_context,
 )
+from ..mcp_prompt_federation import (
+    McpPromptFederationError,
+    public_prompt_catalog,
+    resolve_public_prompt_binding,
+)
+from ..mcp_resource_federation import (
+    McpResourceFederationError,
+    public_resource_catalog,
+    public_resource_templates_available,
+    public_resources_available,
+    resolve_public_resource_binding,
+    resolve_public_resource_template_reference,
+)
 from ..mcp_tool_registry import ToolDispatchTarget, ToolRegistry
 from ..mcp_upstream import UpstreamMcpError, UpstreamMcpManager
 from ..models import (
@@ -98,6 +111,18 @@ from ..models import (
 )
 from ..monitoring import CommandRunResult, monitoring_service
 from ..policy import enforce
+from ..task_progress import project_task_progress
+from ..task_progress_app import (
+    TASK_PROGRESS_CANCEL_TOOL,
+    TASK_PROGRESS_GET_TOOL,
+    TASK_PROGRESS_TOOL_NAMES,
+    task_progress_apps_negotiated,
+    task_progress_resource_list_result,
+    task_progress_resource_read_result,
+    task_progress_server_extensions,
+    task_progress_tool_definitions,
+    task_progress_tool_result,
+)
 from ..thin_client_control import thin_client_manager
 
 router = APIRouter(tags=["mcp"])
@@ -1264,6 +1289,7 @@ def _tool_registry(
     db: Session | None = None,
     user: User | None = None,
     presentation: PresentationContext | None = None,
+    task_progress_apps: bool = False,
 ) -> ToolRegistry:
     legacy = _legacy_tools(settings, ssh_command_profile)
     order_by_name = {str(tool["name"]): index for index, tool in enumerate(legacy)}
@@ -1293,6 +1319,12 @@ def _tool_registry(
             "gateway_chat_context",
             context_tools,
             start_order=len(legacy) + 100,
+        )
+    if settings.gateway_task_progress_ui_enabled:
+        registry.register(
+            "gateway_task_progress",
+            task_progress_tool_definitions(),
+            start_order=len(legacy) + 200,
         )
     if (
         db is not None
@@ -1386,6 +1418,7 @@ def _tools(
     db: Session | None = None,
     user: User | None = None,
     presentation: PresentationContext | None = None,
+    task_progress_apps: bool = False,
 ) -> list[dict[str, Any]]:
     resolved_settings = settings or get_settings()
     resolved_profile = (
@@ -1397,6 +1430,7 @@ def _tools(
         db=db,
         user=user,
         presentation=presentation,
+        task_progress_apps=task_progress_apps,
     ).tools()
 
 
@@ -1722,6 +1756,81 @@ def _mcp_jsonrpc_error(
     )
 
 
+def _mcp_resource_jsonrpc_error(
+    request_id: Any,
+    exc: McpResourceFederationError | UpstreamMcpError,
+) -> JSONResponse:
+    http_status = int(getattr(exc, "http_status", 502))
+    safe_status = http_status if 400 <= http_status <= 599 else 502
+    if http_status == 404:
+        jsonrpc_code, message = -32002, "Resource not found"
+    elif http_status == 403:
+        jsonrpc_code, message = -32003, "Resource access denied"
+    elif http_status == 409:
+        jsonrpc_code, message = -32004, "Resource revision unavailable"
+    elif http_status in {400, 422}:
+        jsonrpc_code, message = -32602, "Invalid resource parameters"
+    else:
+        jsonrpc_code, message = -32005, "Resource upstream unavailable"
+    return _mcp_jsonrpc_error(
+        request_id,
+        code=jsonrpc_code,
+        message=message,
+        status_code=safe_status,
+        data={"code": str(getattr(exc, "code", "MCP_RESOURCE_FAILED"))[:120]},
+    )
+
+
+def _mcp_prompt_jsonrpc_error(
+    request_id: Any,
+    exc: McpPromptFederationError | UpstreamMcpError,
+) -> JSONResponse:
+    http_status = int(getattr(exc, "http_status", 502))
+    safe_status = http_status if 400 <= http_status <= 599 else 502
+    if http_status == 404:
+        jsonrpc_code, message = -32012, "Prompt not found"
+    elif http_status == 403:
+        jsonrpc_code, message = -32013, "Prompt access denied"
+    elif http_status == 409:
+        jsonrpc_code, message = -32014, "Prompt revision unavailable"
+    elif http_status in {400, 422}:
+        jsonrpc_code, message = -32602, "Invalid prompt parameters"
+    else:
+        jsonrpc_code, message = -32015, "Prompt upstream unavailable"
+    return _mcp_jsonrpc_error(
+        request_id,
+        code=jsonrpc_code,
+        message=message,
+        status_code=safe_status,
+        data={"code": str(getattr(exc, "code", "MCP_PROMPT_FAILED"))[:120]},
+    )
+
+
+def _mcp_completion_jsonrpc_error(
+    request_id: Any,
+    exc: McpPromptFederationError | McpResourceFederationError | UpstreamMcpError,
+) -> JSONResponse:
+    http_status = int(getattr(exc, "http_status", 502))
+    safe_status = http_status if 400 <= http_status <= 599 else 502
+    if http_status == 404:
+        jsonrpc_code, message = -32022, "Completion reference not found"
+    elif http_status == 403:
+        jsonrpc_code, message = -32023, "Completion access denied"
+    elif http_status == 409:
+        jsonrpc_code, message = -32024, "Completion revision unavailable"
+    elif http_status in {400, 422}:
+        jsonrpc_code, message = -32602, "Invalid completion parameters"
+    else:
+        jsonrpc_code, message = -32025, "Completion upstream unavailable"
+    return _mcp_jsonrpc_error(
+        request_id,
+        code=jsonrpc_code,
+        message=message,
+        status_code=safe_status,
+        data={"code": str(getattr(exc, "code", "MCP_COMPLETION_FAILED"))[:120]},
+    )
+
+
 @router.get("/mcp")
 async def mcp_info(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     return {
@@ -1753,7 +1862,18 @@ async def mcp(
     method = body.get("method")
     request.state.mcp_method = (
         method
-        if method in {"initialize", "server/discover", "tools/list", "tools/call"}
+        if method in {
+            "initialize",
+            "server/discover",
+            "resources/list",
+            "resources/templates/list",
+            "resources/read",
+            "prompts/list",
+            "prompts/get",
+            "completion/complete",
+            "tools/list",
+            "tools/call",
+        }
         else "other"
     )
     request_id = body.get("id")
@@ -1773,6 +1893,36 @@ async def mcp(
             )
     ssh_profile = effective_ssh_command_profile(user, settings)
     presentation = resolve_presentation_context(request, db, user)
+    task_progress_apps = task_progress_apps_negotiated(
+        settings, modern_admission, presentation
+    )
+    resource_roles = set(user.roles or [])
+    resource_scopes = set(presentation.scopes)
+    generic_resources_available = public_resources_available(
+        db,
+        owner_subject=user.subject,
+        roles=resource_roles,
+        scopes=resource_scopes,
+    )
+    resources_available = (
+        settings.gateway_task_progress_ui_enabled or generic_resources_available
+    )
+    prompts_available = bool(
+        public_prompt_catalog(
+            db,
+            owner_subject=user.subject,
+            roles=resource_roles,
+            scopes=resource_scopes,
+            limit=1,
+        )
+    )
+    resource_templates_available = public_resource_templates_available(
+        db,
+        owner_subject=user.subject,
+        roles=resource_roles,
+        scopes=resource_scopes,
+    )
+    completions_available = prompts_available or resource_templates_available
     chat_context_mode = (
         presentation.chat_context_mode if settings.gateway_chat_context_enabled else "off"
     )
@@ -1782,6 +1932,7 @@ async def mcp(
         db=db,
         user=user,
         presentation=presentation,
+        task_progress_apps=task_progress_apps,
     )
     tool_call = None
     try:
@@ -1802,7 +1953,10 @@ async def mcp(
             result = {
                 "protocolVersion": protocol_version,
                 "capabilities": gateway_public_server_capabilities(
-                    tools_list_changed=presentation.supports_list_changed
+                    tools_list_changed=presentation.supports_list_changed,
+                    resources=resources_available,
+                    prompts=prompts_available,
+                    completions=completions_available,
                 ),
                 "serverInfo": {
                     "name": settings.app_name,
@@ -1829,7 +1983,243 @@ async def mcp(
                 server_name=settings.app_name,
                 server_version=settings.gateway_release_version,
                 tools_list_changed=presentation.supports_list_changed,
+                extensions=task_progress_server_extensions(task_progress_apps),
+                resources=resources_available,
+                prompts=prompts_available,
+                completions=completions_available,
             )
+        elif method == "resources/list":
+            if not resources_available:
+                return _mcp_jsonrpc_error(
+                    request_id, code=-32601, message="Method not found: resources/list"
+                )
+            resources: list[dict[str, Any]] = []
+            if settings.gateway_task_progress_ui_enabled:
+                resources.extend(task_progress_resource_list_result()["resources"])
+            if generic_resources_available:
+                resources.extend(
+                    public_resource_catalog(
+                        db,
+                        owner_subject=user.subject,
+                        entity_kind="resource",
+                        roles=resource_roles,
+                        scopes=resource_scopes,
+                    )
+                )
+            result = {"resources": resources}
+        elif method == "resources/templates/list":
+            if not resources_available:
+                return _mcp_jsonrpc_error(
+                    request_id,
+                    code=-32601,
+                    message="Method not found: resources/templates/list",
+                )
+            result = {
+                "resourceTemplates": (
+                    public_resource_catalog(
+                        db,
+                        owner_subject=user.subject,
+                        entity_kind="resource_template",
+                        roles=resource_roles,
+                        scopes=resource_scopes,
+                    )
+                    if generic_resources_available
+                    else []
+                )
+            }
+        elif method == "resources/read":
+            params = body.get("params") if isinstance(body.get("params"), dict) else {}
+            public_uri = str(params.get("uri") or "")
+            result = None
+            if settings.gateway_task_progress_ui_enabled:
+                try:
+                    result = task_progress_resource_read_result(public_uri)
+                except ValueError:
+                    pass
+            if result is None:
+                if not generic_resources_available:
+                    if not settings.gateway_task_progress_ui_enabled:
+                        return _mcp_jsonrpc_error(
+                            request_id,
+                            code=-32601,
+                            message="Method not found: resources/read",
+                        )
+                    return _mcp_jsonrpc_error(
+                        request_id,
+                        code=-32002,
+                        message="Resource not found",
+                        status_code=404,
+                    )
+                try:
+                    server, entity, revision, _exposure, arguments = (
+                        resolve_public_resource_binding(
+                            db,
+                            owner_subject=user.subject,
+                            uri=public_uri,
+                            roles=resource_roles,
+                            scopes=resource_scopes,
+                        )
+                    )
+                except McpResourceFederationError as exc:
+                    return _mcp_resource_jsonrpc_error(request_id, exc)
+                upstream_started = time.monotonic()
+                try:
+                    result = await request.app.state.upstream_mcp_manager.read_exact_resource(
+                        db,
+                        owner_subject=user.subject,
+                        server=server,
+                        entity=entity,
+                        revision=revision,
+                        arguments=arguments,
+                        public_uri=public_uri,
+                    )
+                except UpstreamMcpError as exc:
+                    return _mcp_resource_jsonrpc_error(request_id, exc)
+                finally:
+                    request.state.upstream_duration_seconds = max(
+                        0.0, time.monotonic() - upstream_started
+                    )
+        elif method == "prompts/list":
+            if not prompts_available:
+                return _mcp_jsonrpc_error(
+                    request_id, code=-32601, message="Method not found: prompts/list"
+                )
+            result = {
+                "prompts": public_prompt_catalog(
+                    db,
+                    owner_subject=user.subject,
+                    roles=resource_roles,
+                    scopes=resource_scopes,
+                )
+            }
+        elif method == "prompts/get":
+            if not prompts_available:
+                return _mcp_jsonrpc_error(
+                    request_id, code=-32601, message="Method not found: prompts/get"
+                )
+            params = body.get("params") if isinstance(body.get("params"), dict) else {}
+            if set(params).difference({"name", "arguments", "_meta"}):
+                return _mcp_jsonrpc_error(
+                    request_id, code=-32602, message="Invalid prompt parameters", status_code=400
+                )
+            name = str(params.get("name") or "")
+            raw_arguments = params.get("arguments")
+            if raw_arguments is None:
+                raw_arguments = {}
+            if not isinstance(raw_arguments, dict):
+                return _mcp_jsonrpc_error(
+                    request_id, code=-32602, message="Invalid prompt parameters", status_code=400
+                )
+            try:
+                server, entity, revision, _exposure = resolve_public_prompt_binding(
+                    db,
+                    owner_subject=user.subject,
+                    name=name,
+                    roles=resource_roles,
+                    scopes=resource_scopes,
+                )
+            except McpPromptFederationError as exc:
+                return _mcp_prompt_jsonrpc_error(request_id, exc)
+            upstream_started = time.monotonic()
+            try:
+                result = await request.app.state.upstream_mcp_manager.get_exact_prompt(
+                    db,
+                    owner_subject=user.subject,
+                    server=server,
+                    entity=entity,
+                    revision=revision,
+                    arguments=dict(raw_arguments),
+                )
+            except UpstreamMcpError as exc:
+                return _mcp_prompt_jsonrpc_error(request_id, exc)
+            finally:
+                request.state.upstream_duration_seconds = max(
+                    0.0, time.monotonic() - upstream_started
+                )
+        elif method == "completion/complete":
+            if not completions_available:
+                return _mcp_jsonrpc_error(
+                    request_id, code=-32601, message="Method not found: completion/complete"
+                )
+            params = body.get("params") if isinstance(body.get("params"), dict) else {}
+            if set(params).difference({"ref", "argument", "context", "_meta"}):
+                return _mcp_jsonrpc_error(
+                    request_id, code=-32602, message="Invalid completion parameters", status_code=400
+                )
+            ref = params.get("ref")
+            argument = params.get("argument")
+            context = params.get("context")
+            if not isinstance(ref, dict) or not isinstance(argument, dict):
+                return _mcp_jsonrpc_error(
+                    request_id, code=-32602, message="Invalid completion parameters", status_code=400
+                )
+            if context is None:
+                context = {}
+            if not isinstance(context, dict) or set(context).difference({"arguments"}):
+                return _mcp_jsonrpc_error(
+                    request_id, code=-32602, message="Invalid completion parameters", status_code=400
+                )
+            context_arguments = context.get("arguments") or {}
+            if not isinstance(context_arguments, dict):
+                return _mcp_jsonrpc_error(
+                    request_id, code=-32602, message="Invalid completion parameters", status_code=400
+                )
+            try:
+                ref_type = str(ref.get("type") or "")
+                if ref_type == "ref/prompt":
+                    if set(ref).difference({"type", "name", "title"}):
+                        raise McpPromptFederationError(
+                            "MCP_COMPLETION_BINDING_INVALID",
+                            "Completion prompt reference contains unsupported fields",
+                        )
+                    server, entity, revision, _exposure = resolve_public_prompt_binding(
+                        db,
+                        owner_subject=user.subject,
+                        name=str(ref.get("name") or ""),
+                        roles=resource_roles,
+                        scopes=resource_scopes,
+                    )
+                elif ref_type == "ref/resource":
+                    if set(ref).difference({"type", "uri"}):
+                        raise McpResourceFederationError(
+                            "MCP_RESOURCE_BINDING_INVALID",
+                            "Completion resource reference contains unsupported fields",
+                        )
+                    server, entity, revision, _exposure = (
+                        resolve_public_resource_template_reference(
+                            db,
+                            owner_subject=user.subject,
+                            uri=str(ref.get("uri") or ""),
+                            roles=resource_roles,
+                            scopes=resource_scopes,
+                        )
+                    )
+                else:
+                    return _mcp_jsonrpc_error(
+                        request_id,
+                        code=-32602,
+                        message="Invalid completion parameters",
+                        status_code=400,
+                    )
+            except (McpPromptFederationError, McpResourceFederationError) as exc:
+                return _mcp_completion_jsonrpc_error(request_id, exc)
+            upstream_started = time.monotonic()
+            try:
+                result = await request.app.state.upstream_mcp_manager.complete_exact_reference(
+                    db,
+                    owner_subject=user.subject,
+                    server=server,
+                    entity=entity,
+                    revision=revision,
+                    argument=dict(argument),
+                    context_arguments=dict(context_arguments),
+                )
+            except UpstreamMcpError as exc:
+                return _mcp_completion_jsonrpc_error(request_id, exc)
+            finally:
+                request.state.upstream_duration_seconds = max(
+                    0.0, time.monotonic() - upstream_started
+                )
         elif method == "tools/list":
             result = {
                 "tools": decorate_public_tools(
@@ -1888,6 +2278,7 @@ async def mcp(
                         presentation=presentation,
                         chat_context_id=admission.context_id,
                         chat_context_telemetry=request.app.state.chat_context_telemetry,
+                        task_progress_apps=task_progress_apps,
                     )
                 finally:
                     request.state.upstream_duration_seconds = max(
@@ -1902,16 +2293,17 @@ async def mcp(
                 session_id=str(session_id) if session_id else None,
                 error=str(structured.get("error")) if result.get("isError") else None,
             )
-            structured["background_session_tails"] = (
-                []
-                if chat_context_mode == "required" and tool_call.chat_context_id is None
-                else monitoring_service.background_tails(
-                    db,
-                    owner_subject=user.subject,
-                    tool_call_id=tool_call.id,
-                    chat_context_id=tool_call.chat_context_id,
+            if name not in TASK_PROGRESS_TOOL_NAMES:
+                structured["background_session_tails"] = (
+                    []
+                    if chat_context_mode == "required" and tool_call.chat_context_id is None
+                    else await asyncio.to_thread(
+                        monitoring_service.background_tails_detached,
+                        owner_subject=user.subject,
+                        tool_call_id=tool_call.id,
+                        chat_context_id=tool_call.chat_context_id,
+                    )
                 )
-            )
             result["structuredContent"] = structured
             result = _refresh_result_content(result)
         else:
@@ -1932,7 +2324,7 @@ async def mcp(
                 ),
             }
             result.setdefault("resultType", "complete")
-            if method == "tools/list":
+            if method in {"tools/list", "resources/list", "prompts/list"}:
                 result.setdefault("ttlMs", 0)
                 result.setdefault("cacheScope", "private")
         payload = {"jsonrpc": "2.0", "id": request_id, "result": result}
@@ -2074,6 +2466,7 @@ async def _call_tool(
     presentation: PresentationContext | None = None,
     chat_context_id: str | None = None,
     chat_context_telemetry: ChatContextTelemetry | None = None,
+    task_progress_apps: bool = False,
 ) -> dict[str, Any]:
     if name == "chat_context_start":
         try:
@@ -2116,6 +2509,51 @@ async def _call_tool(
             )
         except McpChatContextAdmissionError as exc:
             return _result(exc.payload(), is_error=True)
+    if name in TASK_PROGRESS_TOOL_NAMES:
+        if not settings.gateway_task_progress_ui_enabled:
+            raise HTTPException(status_code=404, detail=f"Unknown tool: {name}")
+        run_id = str(args.get("run_id") or "")
+        snapshot = project_task_progress(
+            db, owner_subject=user.subject, run_id=run_id
+        )
+        if name == TASK_PROGRESS_CANCEL_TOOL:
+            running_session_ids = [
+                evidence.id
+                for evidence in snapshot.artifacts
+                if evidence.kind == "command_session" and evidence.status == "running"
+            ]
+            if not running_session_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Task Progress run has no safely cancellable command session",
+                )
+            for session_id in running_session_ids:
+                await _call_tool(
+                    "monitoring_terminate_session",
+                    {"session_id": session_id, "force": False},
+                    user,
+                    db,
+                    settings,
+                    upstream=upstream,
+                    tool_call_id=tool_call_id,
+                    presentation=presentation,
+                    chat_context_id=chat_context_id,
+                    chat_context_telemetry=chat_context_telemetry,
+                    task_progress_apps=task_progress_apps,
+                )
+            snapshot = project_task_progress(
+                db, owner_subject=user.subject, run_id=run_id
+            )
+        last_sequence = (
+            int(args["last_sequence"])
+            if name == TASK_PROGRESS_GET_TOOL and args.get("last_sequence") is not None
+            else None
+        )
+        return task_progress_tool_result(
+            snapshot,
+            apps_negotiated=task_progress_apps,
+            last_sequence=last_sequence,
+        )
     if dispatch_target is not None and dispatch_target.provider == "native_projection":
         if presentation is None:
             raise HTTPException(status_code=409, detail="Presentation context is required")

@@ -108,6 +108,7 @@ export type GatewayCommandOutputLine = {
 };
 
 export type GatewayCommandSession = {
+  chat_context_id?: string | null;
   command: string;
   completed_at: string | null;
   cwd: string;
@@ -132,6 +133,7 @@ export type GatewayCommandSessionOutput = {
 
 export type GatewayAgentToolCall = {
   arguments: Record<string, unknown>;
+  chat_context_id?: string | null;
   completed_at: string | null;
   created_at: string;
   error: string | null;
@@ -165,6 +167,7 @@ export type GatewayFileChangeDiff = {
 
 export type GatewayFileChange = {
   added_lines: number;
+  chat_context_id?: string | null;
   bytes_after: number;
   bytes_before: number;
   created_at: string;
@@ -179,6 +182,23 @@ export type GatewayFileChange = {
   suppressed: boolean;
   tool_call_id: string | null;
   truncated: boolean;
+};
+
+export type GatewayChatContextSummary = {
+  alias_expires_at: string | null;
+  bound: boolean;
+  chat_context: string | null;
+  command_session_count: number;
+  context_id: string;
+  created_at: string;
+  file_change_count: number;
+  generation: number;
+  host_kind: string;
+  last_seen_at: string;
+  project_ref: string | null;
+  state: string;
+  tool_call_count: number;
+  updated_at: string;
 };
 
 export type GatewayDataStateProps = {
@@ -1267,6 +1287,7 @@ export function AuditEventsTable({
 }
 
 export function MonitoringSessionsPanel({
+  chatContexts,
   emptyMessage = tr("monitoring.empty"),
   errorMessage,
   fileChanges,
@@ -1283,6 +1304,7 @@ export function MonitoringSessionsPanel({
   sessions,
   toolCalls,
 }: {
+  chatContexts: GatewayChatContextSummary[];
   fileChanges: GatewayFileChange[];
   fileChangesErrorMessage?: string | null;
   fileChangesIsLoading?: boolean;
@@ -1296,16 +1318,31 @@ export function MonitoringSessionsPanel({
   sessions: GatewayCommandSession[];
   toolCalls: GatewayAgentToolCall[];
 } & GatewayDataStateProps) {
+  const [chatContextFilter, setChatContextFilter] = useState("all");
+  const filteredSessions = sessions.filter((session) =>
+    chatContextFilter === "all"
+      ? true
+      : chatContextFilter === "unscoped"
+        ? !session.chat_context_id
+        : session.chat_context_id === chatContextFilter,
+  );
+  const filteredFileChanges = fileChanges.filter((change) =>
+    chatContextFilter === "all"
+      ? true
+      : chatContextFilter === "unscoped"
+        ? !change.chat_context_id
+        : change.chat_context_id === chatContextFilter,
+  );
   const selected = selectedId
-    ? sessions.find((session) => session.id === selectedId)
+    ? filteredSessions.find((session) => session.id === selectedId)
     : undefined;
   const rowsPerPage = 10;
   const [page, setPage] = useState(1);
-  const totalPages = Math.max(1, Math.ceil(sessions.length / rowsPerPage));
+  const totalPages = Math.max(1, Math.ceil(filteredSessions.length / rowsPerPage));
   const safePage = Math.min(page, totalPages);
-  const pageStart = sessions.length === 0 ? 0 : (safePage - 1) * rowsPerPage;
-  const pageEnd = Math.min(pageStart + rowsPerPage, sessions.length);
-  const visibleSessions = sessions.slice(pageStart, pageEnd);
+  const pageStart = filteredSessions.length === 0 ? 0 : (safePage - 1) * rowsPerPage;
+  const pageEnd = Math.min(pageStart + rowsPerPage, filteredSessions.length);
+  const visibleSessions = filteredSessions.slice(pageStart, pageEnd);
 
   useEffect(() => {
     setPage((current) => Math.min(Math.max(current, 1), totalPages));
@@ -1316,8 +1353,22 @@ export function MonitoringSessionsPanel({
       <div className="monitoring-main-column">
         <div className="monitoring-sessions-panel">
           <div className="monitoring-panel-title">
-            <strong>{tr("monitoring.sessions")}</strong>
-            <span className="muted">{tr("monitoring.sessionCount", { count: sessions.length })}</span>
+            <div>
+              <strong>{tr("monitoring.sessions")}</strong>
+              <span className="muted">{tr("monitoring.sessionCount", { count: filteredSessions.length })}</span>
+            </div>
+            <label className="monitoring-chat-filter">
+              <span>{tr("monitoring.chatFilter")}</span>
+              <select value={chatContextFilter} onChange={(event) => { setChatContextFilter(event.target.value); setPage(1); }}>
+                <option value="all">{tr("monitoring.allChats")}</option>
+                {chatContexts.map((context) => (
+                  <option key={context.context_id} value={context.context_id}>
+                    {context.chat_context ? "#" + context.chat_context : context.context_id} {context.project_ref ? "· " + context.project_ref : ""}
+                  </option>
+                ))}
+                <option value="unscoped">{tr("monitoring.unscoped")}</option>
+              </select>
+            </label>
           </div>
           <TableFrame compact>
             <table>
@@ -1326,6 +1377,7 @@ export function MonitoringSessionsPanel({
                   <th>{tr("common.fields.status")}</th>
                   <th>{tr("common.fields.origin")}</th>
                   <th>{tr("common.fields.resource")}</th>
+                  <th>{tr("monitoring.chat")}</th>
                   <th>{tr("common.fields.command")}</th>
                   <th>{tr("common.fields.lines")}</th>
                   <th>{tr("common.fields.updated")}</th>
@@ -1334,11 +1386,11 @@ export function MonitoringSessionsPanel({
               </thead>
               <tbody>
                 {isLoading ? (
-                  <TableNoticeRow colSpan={7} state="loading" title={tr("monitoring.loadingSessions")} />
+                  <TableNoticeRow colSpan={8} state="loading" title={tr("monitoring.loadingSessions")} />
                 ) : errorMessage ? (
-                  <TableNoticeRow colSpan={7} state="error" title={tr("monitoring.sessionsUnavailable")} description={errorMessage} />
-                ) : sessions.length === 0 ? (
-                  <TableNoticeRow colSpan={7} state="empty" title={emptyMessage} />
+                  <TableNoticeRow colSpan={8} state="error" title={tr("monitoring.sessionsUnavailable")} description={errorMessage} />
+                ) : filteredSessions.length === 0 ? (
+                  <TableNoticeRow colSpan={8} state="empty" title={emptyMessage} />
                 ) : (
                   visibleSessions.map((session) => (
                     <tr
@@ -1353,6 +1405,7 @@ export function MonitoringSessionsPanel({
                         </span>
                       </td>
                       <td className="resource-cell">{sessionResourceLabel(session)}</td>
+                      <td><ChatContextBadge contextId={session.chat_context_id} contexts={chatContexts} /></td>
                       <td className="command-cell">
                         <strong>{session.name ?? session.command}</strong>
                         <span>{session.cwd}</span>
@@ -1373,12 +1426,12 @@ export function MonitoringSessionsPanel({
               </tbody>
             </table>
           </TableFrame>
-          {!isLoading && !errorMessage && sessions.length > 0 ? (
+          {!isLoading && !errorMessage && filteredSessions.length > 0 ? (
             <div className="pager monitoring-pager">
               <span>{tr("common.rowsPerPage")}</span>
               <Button type="button">{rowsPerPage}</Button>
               <span className="spacer" />
-              <span>{tr("common.range", { start: pageStart + 1, end: pageEnd, total: sessions.length })}</span>
+              <span>{tr("common.range", { start: pageStart + 1, end: pageEnd, total: filteredSessions.length })}</span>
               <IconButton aria-label={tr("monitoring.previousSessionsPage")} disabled={safePage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">
                 <ChevronLeft size={16} />
               </IconButton>
@@ -1401,9 +1454,12 @@ export function MonitoringSessionsPanel({
           <div className="session-title-block">
             <strong>{selected ? selected.name ?? selected.command : tr("monitoring.sessionOutput")}</strong>
             {selected ? (
-              <span className="muted">
-                {originLabel(selected.origin)} · {sessionResourceLabel(selected)}
-              </span>
+              <>
+                <span className="muted">
+                  {originLabel(selected.origin)} · {sessionResourceLabel(selected)}
+                </span>
+                <ChatContextBadge contextId={selected.chat_context_id} contexts={chatContexts} />
+              </>
             ) : null}
           </div>
           {selected ? <StatusPill status={selected.status} /> : null}
@@ -1437,6 +1493,7 @@ export function MonitoringSessionsPanel({
               <div className="tool-call-row" key={call.id}>
                 <StatusPill status={call.status} />
                 <span>{call.tool_name}</span>
+                <ChatContextBadge contextId={call.chat_context_id} contexts={chatContexts} />
                 <code>{JSON.stringify(call.arguments)}</code>
               </div>
             ))
@@ -1448,22 +1505,23 @@ export function MonitoringSessionsPanel({
       <div className="file-changes-panel">
         <div className="panel-heading">
           <strong>{tr("monitoring.recentFileChanges")}</strong>
-          <span className="muted">{tr("monitoring.changeCount", { count: fileChanges.length })}</span>
+          <span className="muted">{tr("monitoring.changeCount", { count: filteredFileChanges.length })}</span>
         </div>
         {fileChangesIsLoading ? (
           <DataNotice state="loading" title={tr("monitoring.loadingChanges")} />
         ) : fileChangesErrorMessage ? (
           <DataNotice state="error" title={tr("monitoring.changesUnavailable")} description={fileChangesErrorMessage} />
-        ) : fileChanges.length === 0 ? (
+        ) : filteredFileChanges.length === 0 ? (
           <DataNotice title={tr("monitoring.noChanges")} />
         ) : (
           <div className="file-change-list">
-            {fileChanges.map((change) => (
+            {filteredFileChanges.map((change) => (
               <article className="file-change-card" key={change.id}>
                 <header>
                   <div>
                     <strong>{change.path}</strong>
                     <span>{change.operation} · {change.origin}</span>
+                    <ChatContextBadge contextId={change.chat_context_id} contexts={chatContexts} />
                   </div>
                   <div className="diff-stats" aria-label={tr("monitoring.diffStats", { path: change.path })}>
                     <span className="diff-added">+{change.added_lines}</span>
@@ -1480,6 +1538,15 @@ export function MonitoringSessionsPanel({
       </div>
     </div>
   );
+}
+
+function ChatContextBadge({ contextId, contexts }: { contextId?: string | null; contexts: GatewayChatContextSummary[] }) {
+  if (!contextId) {
+    return <span className="context-badge chat unscoped">{tr("monitoring.unscopedBadge")}</span>;
+  }
+  const context = contexts.find((item) => item.context_id === contextId);
+  const label = context?.chat_context ? "#" + context.chat_context : tr("monitoring.identifiedChat");
+  return <span className="context-badge chat identified" title={context?.context_id}>{label}</span>;
 }
 
 function FileDiffView({ change }: { change: GatewayFileChange }) {

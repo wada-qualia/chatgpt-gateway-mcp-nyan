@@ -27,6 +27,15 @@ from gateway_api.schema_migrations import (
 )
 from sqlalchemy import create_engine, inspect, text
 
+CHAT_CONTEXT_INDEX_REVISION = "20260908_0018"
+AUTOVACUUM_REVISION = "20260908_0019"
+
+CHAT_CONTEXT_COUNT_INDEXES = (
+    "ix_agent_tool_calls_owner_chat_context",
+    "ix_command_sessions_owner_chat_context",
+    "ix_file_change_sets_owner_chat_context",
+)
+
 CAPACITY_INDEX_DROPS = (
     "ix_outbox_events_audit_event_id",
     "ix_outbox_events_published_at",
@@ -100,7 +109,7 @@ def test_validate_cli_is_read_only(monkeypatch, capsys) -> None:
 
 def test_revision_forward_compatibility_is_strict() -> None:
     assert schema_migrations.revision_is_forward(
-        "20260829_0001", HEAD_REVISION
+        "20260909_0001", HEAD_REVISION
     ) is True
     assert schema_migrations.revision_is_forward(HEAD_REVISION, HEAD_REVISION) is False
     assert schema_migrations.revision_is_forward(
@@ -140,9 +149,17 @@ def test_live_deployment_plan_from_0011_declares_online_indexes(
         "20260818_0013",
         "20260818_0014",
         "20260828_0015",
+        "20260828_0016",
+        "20260904_0017",
+        CHAT_CONTEXT_INDEX_REVISION,
+        AUTOVACUUM_REVISION,
         HEAD_REVISION,
     )
     assert plan.compatibility == (
+        "expand",
+        "expand",
+        "expand",
+        "expand",
         "expand",
         "expand",
         "expand",
@@ -155,7 +172,7 @@ def test_live_deployment_plan_from_0011_declares_online_indexes(
         "ix_outbox_events_stale_claim",
         "ix_agent_tool_calls_lup_pending_schedule",
         "ix_outbox_events_active_created_at",
-    ) + CAPACITY_INDEX_DROPS
+    ) + CAPACITY_INDEX_DROPS + CHAT_CONTEXT_COUNT_INDEXES
 
 
 def test_live_deployment_plan_from_0012_is_hot_path_index_only(
@@ -171,13 +188,19 @@ def test_live_deployment_plan_from_0012_is_hot_path_index_only(
         "20260818_0013",
         "20260818_0014",
         "20260828_0015",
+        "20260828_0016",
+        "20260904_0017",
+        CHAT_CONTEXT_INDEX_REVISION,
+        AUTOVACUUM_REVISION,
         HEAD_REVISION,
     )
-    assert plan.compatibility == ("expand", "expand", "expand", "expand")
+    assert plan.compatibility == (
+        "expand", "expand", "expand", "expand", "expand", "expand", "expand", "expand"
+    )
     assert plan.safe_for_live_expand is True
     assert plan.online_index_operations == (
         "ix_outbox_events_active_created_at",
-    ) + CAPACITY_INDEX_DROPS
+    ) + CAPACITY_INDEX_DROPS + CHAT_CONTEXT_COUNT_INDEXES
 
 
 def test_live_deployment_plan_from_0013_only_drops_capacity_indexes(
@@ -192,11 +215,17 @@ def test_live_deployment_plan_from_0013_only_drops_capacity_indexes(
     assert plan.pending_revisions == (
         "20260818_0014",
         "20260828_0015",
+        "20260828_0016",
+        "20260904_0017",
+        CHAT_CONTEXT_INDEX_REVISION,
+        AUTOVACUUM_REVISION,
         HEAD_REVISION,
     )
-    assert plan.compatibility == ("expand", "expand", "expand")
+    assert plan.compatibility == (
+        "expand", "expand", "expand", "expand", "expand", "expand", "expand"
+    )
     assert plan.safe_for_live_expand is True
-    assert plan.online_index_operations == CAPACITY_INDEX_DROPS
+    assert plan.online_index_operations == CAPACITY_INDEX_DROPS + CHAT_CONTEXT_COUNT_INDEXES
 
 
 def test_live_deployment_plan_from_0014_includes_chat_context_expands(
@@ -208,10 +237,19 @@ def test_live_deployment_plan_from_0014_includes_chat_context_expands(
     plan = get_migration_plan(target_engine)
 
     assert plan.current_revision == "20260818_0014"
-    assert plan.pending_revisions == ("20260828_0015", HEAD_REVISION)
-    assert plan.compatibility == ("expand", "expand")
+    assert plan.pending_revisions == (
+        "20260828_0015",
+        "20260828_0016",
+        "20260904_0017",
+        CHAT_CONTEXT_INDEX_REVISION,
+        AUTOVACUUM_REVISION,
+        HEAD_REVISION,
+    )
+    assert plan.compatibility == (
+        "expand", "expand", "expand", "expand", "expand", "expand"
+    )
     assert plan.safe_for_live_expand is True
-    assert plan.online_index_operations == ()
+    assert plan.online_index_operations == CHAT_CONTEXT_COUNT_INDEXES
 
 
 def test_live_deployment_plan_from_0015_is_mcp_policy_expand_only(
@@ -223,6 +261,57 @@ def test_live_deployment_plan_from_0015_is_mcp_policy_expand_only(
     plan = get_migration_plan(target_engine)
 
     assert plan.current_revision == "20260828_0015"
+    assert plan.pending_revisions == (
+        "20260828_0016",
+        "20260904_0017",
+        CHAT_CONTEXT_INDEX_REVISION,
+        AUTOVACUUM_REVISION,
+        HEAD_REVISION,
+    )
+    assert plan.compatibility == ("expand", "expand", "expand", "expand", "expand")
+    assert plan.safe_for_live_expand is True
+    assert plan.online_index_operations == CHAT_CONTEXT_COUNT_INDEXES
+
+
+def test_live_deployment_plan_from_0017_adds_chat_context_count_indexes(
+    tmp_path: Path,
+) -> None:
+    target_engine = sqlite_engine(tmp_path / "deployment-plan-0017.sqlite")
+    command.upgrade(alembic_config(str(target_engine.url)), "20260904_0017")
+
+    plan = get_migration_plan(target_engine)
+
+    assert plan.current_revision == "20260904_0017"
+    assert plan.pending_revisions == (
+        CHAT_CONTEXT_INDEX_REVISION, AUTOVACUUM_REVISION, HEAD_REVISION
+    )
+    assert plan.compatibility == ("expand", "expand", "expand")
+    assert plan.safe_for_live_expand is True
+    assert plan.online_index_operations == CHAT_CONTEXT_COUNT_INDEXES
+
+
+def test_live_deployment_plan_from_0018_tunes_autovacuum_then_prompt_exposure(
+    tmp_path: Path,
+) -> None:
+    target_engine = sqlite_engine(tmp_path / "deployment-plan-0018.sqlite")
+    command.upgrade(alembic_config(str(target_engine.url)), CHAT_CONTEXT_INDEX_REVISION)
+
+    plan = get_migration_plan(target_engine)
+
+    assert plan.current_revision == CHAT_CONTEXT_INDEX_REVISION
+    assert plan.pending_revisions == (AUTOVACUUM_REVISION, HEAD_REVISION)
+    assert plan.compatibility == ("expand", "expand")
+    assert plan.safe_for_live_expand is True
+    assert plan.online_index_operations == ()
+
+
+def test_live_deployment_plan_from_0019_adds_prompt_exposure(tmp_path: Path) -> None:
+    target_engine = sqlite_engine(tmp_path / "deployment-plan-0019.sqlite")
+    command.upgrade(alembic_config(str(target_engine.url)), AUTOVACUUM_REVISION)
+
+    plan = get_migration_plan(target_engine)
+
+    assert plan.current_revision == AUTOVACUUM_REVISION
     assert plan.pending_revisions == (HEAD_REVISION,)
     assert plan.compatibility == ("expand",)
     assert plan.safe_for_live_expand is True
@@ -296,7 +385,7 @@ def test_module_cli_loads_typed_online_operations_once(tmp_path: Path) -> None:
         "ix_outbox_events_stale_claim",
         "ix_agent_tool_calls_lup_pending_schedule",
         "ix_outbox_events_active_created_at",
-    ] + list(CAPACITY_INDEX_DROPS)
+    ] + list(CAPACITY_INDEX_DROPS) + list(CHAT_CONTEXT_COUNT_INDEXES)
 
 
 def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
@@ -350,9 +439,15 @@ def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
         "mcp_federated_tasks",
         "mcp_capability_events",
     }
-    table_names = set(inspect(target_engine).get_table_names())
+    inspector = inspect(target_engine)
+    table_names = set(inspector.get_table_names())
     assert capability_tables <= table_names
     assert "mcp_oauth_discovery_snapshots" in table_names
+    exposure_constraints = {
+        item["name"]: item["sqltext"]
+        for item in inspector.get_check_constraints("mcp_capability_exposures")
+    }
+    assert "prompt" in exposure_constraints["ck_mcp_capability_exposure_kind"]
     traffic_columns = {
         column["name"]
         for column in inspect(target_engine).get_columns("agent_tool_calls")
@@ -405,7 +500,11 @@ def test_clean_database_upgrades_to_head(tmp_path: Path) -> None:
             item["name"]: item
             for item in inspect(target_engine).get_columns(table_name)
         }
+        indexes = {
+            item["name"] for item in inspect(target_engine).get_indexes(table_name)
+        }
         assert columns["chat_context_id"]["nullable"] is True
+        assert f"ix_{table_name}_owner_chat_context" in indexes
 
 
 def test_chat_context_sqlite_downgrade_restores_0014_schema(tmp_path: Path) -> None:
